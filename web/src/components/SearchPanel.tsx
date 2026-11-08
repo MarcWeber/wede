@@ -5,6 +5,7 @@ import {
   FileSearch, SlidersHorizontal,
 } from 'lucide-react'
 import { workspaceUrl } from '../api'
+import Selectable, { type MenuEntry } from './Selectable'
 import type { AuthFetch, WorkspaceSummary, FileEntry } from '../types'
 
 // Context lines requested from the backend on each text search.
@@ -75,6 +76,8 @@ type SearchRoot = Pick<WorkspaceSummary, 'id' | 'name'>
 // different roots must not be merged into one result group.
 const NUL = String.fromCharCode(0)
 const groupKey = (m: SearchMatch) => `${m.workspaceId || ""}${NUL}${m.file}`
+const matchKey = (m: SearchMatch) => `${groupKey(m)}${NUL}${m.line}${NUL}${m.matchStart}`
+const fileResultKey = (f: FileMatch) => `${f.workspaceId || ""}${NUL}${f.path}`
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
@@ -120,6 +123,7 @@ export default function SearchPanel({ authFetch, onOpenFile, readOnly = false, w
   const [truncated, setTruncated]   = useState(false)
   const [count, setCount]           = useState(0)
   const [fileCount, setFileCount]   = useState(0)
+  const [selected, setSelected]     = useState<Set<string>>(() => new Set())
 
   // ── replace state (hidden when readOnly) ────────────────────────────────────
   const [replaceMode, setReplaceMode]         = useState(false)
@@ -135,7 +139,7 @@ export default function SearchPanel({ authFetch, onOpenFile, readOnly = false, w
   const debounceRef   = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queryInputRef = useRef<HTMLInputElement>(null)
   // Flat array of refs to result buttons for keyboard navigation.
-  const resultButtonsRef = useRef<(HTMLButtonElement | null)[]>([])
+  const resultButtonsRef = useRef<(HTMLDivElement | null)[]>([])
 
   // ── derived ─────────────────────────────────────────────────────────────────
   const grouped        = useMemo(() => results      ? groupByFile(results)      : null, [results])
@@ -315,8 +319,41 @@ export default function SearchPanel({ authFetch, onOpenFile, readOnly = false, w
     onOpenFile?.({ workspaceId: fileMatch.workspaceId, rel: fileMatch.path, path: fileMatch.path, name: fileMatch.path.split('/').pop(), isDir: false }, 1)
   }
 
+  // ── selection ────────────────────────────────────────────────────────────────
+  const toggleSelect = useCallback((key: string) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  }), [])
+
+  const currentKeys = useMemo(() => (
+    searchMode === 'files'
+      ? (fileResults || []).map(fileResultKey)
+      : (displayResults || []).map(matchKey)
+  ), [searchMode, fileResults, displayResults])
+
+  const selectAll   = () => setSelected(new Set(currentKeys))
+  const unselectAll = () => setSelected(new Set())
+
+  const openSelected = () => {
+    if (searchMode === 'files') {
+      for (const f of fileResults || []) if (selected.has(fileResultKey(f))) handleFileResultClick(f)
+    } else {
+      for (const m of displayResults || []) if (selected.has(matchKey(m))) handleResultClick(m)
+    }
+  }
+
+  const makeMenu = (onOpen: () => void): MenuEntry[] => [
+    { key: 'open', label: 'Open', onSelect: onOpen },
+    { key: 'sep', kind: 'separator' },
+    { key: 'selectAll', label: 'Select all', onSelect: selectAll },
+    { key: 'unselectAll', label: 'Unselect all', onSelect: unselectAll },
+    { key: 'openSelected', label: `Open selected${selected.size ? ` (${selected.size})` : ''}`, onSelect: openSelected },
+  ]
+
   // Navigate result buttons with arrow keys; Escape returns focus to query.
-  const handleResultKeyDown = (e: KeyboardEvent<HTMLButtonElement>, idx: number) => {
+  const handleResultKeyDown = (e: KeyboardEvent<HTMLDivElement>, idx: number) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       const next = resultButtonsRef.current[idx + 1]
@@ -663,6 +700,9 @@ export default function SearchPanel({ authFetch, onOpenFile, readOnly = false, w
                 resultButtonsRef={resultButtonsRef}
                 isPreview={isPreviewMode}
                 totalMatches={flatMatches.length}
+                selected={selected}
+                onToggleSelect={toggleSelect}
+                makeMenu={makeMenu}
               />
             ))}
           </>
@@ -685,6 +725,9 @@ export default function SearchPanel({ authFetch, onOpenFile, readOnly = false, w
                 onClick={() => handleFileResultClick(fm)}
                 onKeyDown={(e) => handleResultKeyDown(e, idx)}
                 buttonRef={(el) => { resultButtonsRef.current[idx] = el }}
+                checked={selected.has(fileResultKey(fm))}
+                onToggle={() => toggleSelect(fileResultKey(fm))}
+                menu={makeMenu(() => handleFileResultClick(fm))}
               />
             ))}
           </>
@@ -715,13 +758,16 @@ interface FileGroupProps {
   matches: SearchMatch[]
   groupStartIdx: number
   onResultClick: (match: SearchMatch) => void
-  onResultKeyDown: (e: KeyboardEvent<HTMLButtonElement>, idx: number) => void
-  resultButtonsRef: RefObject<(HTMLButtonElement | null)[]>
+  onResultKeyDown: (e: KeyboardEvent<HTMLDivElement>, idx: number) => void
+  resultButtonsRef: RefObject<(HTMLDivElement | null)[]>
   isPreview: boolean
   totalMatches?: number
+  selected: Set<string>
+  onToggleSelect: (key: string) => void
+  makeMenu: (onOpen: () => void) => MenuEntry[]
 }
 
-function FileGroup({ file, rootName, matches, groupStartIdx, onResultClick, onResultKeyDown, resultButtonsRef, isPreview }: FileGroupProps) {
+function FileGroup({ file, rootName, matches, groupStartIdx, onResultClick, onResultKeyDown, resultButtonsRef, isPreview, selected, onToggleSelect, makeMenu }: FileGroupProps) {
   const [open, setOpen] = useState(true)
   const filename = file.split('/').pop()
   const dir      = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : ''
@@ -751,9 +797,12 @@ function FileGroup({ file, rootName, matches, groupStartIdx, onResultClick, onRe
                 match={m}
                 globalIdx={globalIdx}
                 onClick={() => onResultClick(m)}
-                onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => onResultKeyDown(e, globalIdx)}
-                buttonRef={(el: HTMLButtonElement | null) => { resultButtonsRef.current[globalIdx] = el }}
+                onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => onResultKeyDown(e, globalIdx)}
+                buttonRef={(el: HTMLDivElement | null) => { resultButtonsRef.current[globalIdx] = el }}
                 isPreview={isPreview}
+                checked={selected.has(matchKey(m))}
+                onToggle={() => onToggleSelect(matchKey(m))}
+                menu={makeMenu(() => onResultClick(m))}
               />
             )
           })}
@@ -769,12 +818,15 @@ interface MatchLineProps {
   match: SearchMatch
   globalIdx?: number
   onClick: () => void
-  onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => void
-  buttonRef: (el: HTMLButtonElement | null) => void
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void
+  buttonRef: (el: HTMLDivElement | null) => void
   isPreview: boolean
+  checked: boolean
+  onToggle: () => void
+  menu: MenuEntry[]
 }
 
-function MatchLine({ match, onClick, onKeyDown, buttonRef, isPreview }: MatchLineProps) {
+function MatchLine({ match, onClick, onKeyDown, buttonRef, isPreview, checked, onToggle, menu }: MatchLineProps) {
   const text  = match.text
   const start = match.matchStart
   const len   = match.matchLen
@@ -783,7 +835,7 @@ function MatchLine({ match, onClick, onKeyDown, buttonRef, isPreview }: MatchLin
     <div className="group">
       {/* Before-context lines */}
       {match.before && match.before.map((ctx, i) => (
-        <div key={`b${i}`} className="flex items-baseline gap-2 px-4 py-0.5 overflow-hidden">
+        <div key={`b${i}`} className="flex items-baseline gap-2 pl-8 pr-4 py-0.5 overflow-hidden">
           <span className="shrink-0 font-mono text-[10px] text-text-muted/40 w-7 text-right select-none">
             {match.line - (match.before?.length ?? 0) + i}
           </span>
@@ -792,11 +844,15 @@ function MatchLine({ match, onClick, onKeyDown, buttonRef, isPreview }: MatchLin
       ))}
 
       {/* Match line */}
-      <button
-        ref={buttonRef}
-        onClick={onClick}
+      <Selectable
+        checked={checked}
+        onToggle={onToggle}
+        onActivate={onClick}
+        menu={menu}
+        tabIndex={0}
+        itemRef={buttonRef}
         onKeyDown={onKeyDown}
-        className="w-full flex items-baseline gap-2 px-4 py-1 hover:bg-bg-hover focus:bg-bg-hover focus:outline-none transition-colors text-left overflow-hidden"
+        className="w-full flex items-baseline gap-2 pl-8 pr-4 py-1 hover:bg-bg-hover focus:bg-bg-hover focus:outline-none transition-colors text-left overflow-hidden"
       >
         <span className="shrink-0 font-mono text-[10px] text-text-muted w-7 text-right">{match.line}</span>
         <span className="text-[11px] text-text-secondary font-mono truncate leading-relaxed">
@@ -813,11 +869,11 @@ function MatchLine({ match, onClick, onKeyDown, buttonRef, isPreview }: MatchLin
             )
           }
         </span>
-      </button>
+      </Selectable>
 
       {/* After-context lines */}
       {match.after && match.after.map((ctx, i) => (
-        <div key={`a${i}`} className="flex items-baseline gap-2 px-4 py-0.5 overflow-hidden">
+        <div key={`a${i}`} className="flex items-baseline gap-2 pl-8 pr-4 py-0.5 overflow-hidden">
           <span className="shrink-0 font-mono text-[10px] text-text-muted/40 w-7 text-right select-none">
             {match.line + i + 1}
           </span>
@@ -837,11 +893,14 @@ interface FileResultRowProps {
   query: string
   caseSensitive: boolean
   onClick: () => void
-  onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => void
-  buttonRef: (el: HTMLButtonElement | null) => void
+  onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void
+  buttonRef: (el: HTMLDivElement | null) => void
+  checked: boolean
+  onToggle: () => void
+  menu: MenuEntry[]
 }
 
-function FileResultRow({ fileMatch, rootName, idx, query, caseSensitive, onClick, onKeyDown, buttonRef }: FileResultRowProps) {
+function FileResultRow({ fileMatch, rootName, idx, query, caseSensitive, onClick, onKeyDown, buttonRef, checked, onToggle, menu }: FileResultRowProps) {
   const parts = fileMatch.path.split('/')
   const filename = parts.pop() || ''
   const dir      = parts.join('/')
@@ -850,17 +909,21 @@ function FileResultRow({ fileMatch, rootName, idx, query, caseSensitive, onClick
   const hiFilename = highlightText(filename, query, caseSensitive)
 
   return (
-    <button
-      ref={buttonRef}
-      onClick={onClick}
+    <Selectable
+      checked={checked}
+      onToggle={onToggle}
+      onActivate={onClick}
+      menu={menu}
+      tabIndex={0}
+      itemRef={buttonRef}
       onKeyDown={onKeyDown}
-      className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover focus:bg-bg-hover focus:outline-none transition-colors text-left overflow-hidden"
+      className="w-full flex items-center gap-2 pl-8 pr-3 py-1.5 hover:bg-bg-hover focus:bg-bg-hover focus:outline-none transition-colors text-left overflow-hidden"
     >
       <span className="text-[10px] text-text-muted font-mono shrink-0 w-5 text-right">{idx + 1}</span>
       <span className="text-[12px] font-medium text-text-primary truncate">{hiFilename}</span>
       {dir && <span className="text-[10px] text-text-muted truncate shrink">{dir}</span>}
       {rootName && <span className="ml-auto shrink-0 text-[9px] px-1 py-px rounded bg-bg-hover text-text-muted">{rootName}</span>}
-    </button>
+    </Selectable>
   )
 }
 

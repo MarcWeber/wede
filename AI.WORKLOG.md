@@ -1,0 +1,3 @@
+- **Dockerfile** at repo root: 3-stage build (node:20-alpine frontend → golang:1.25-alpine backend with -tags embed_frontend → alpine:3.20 runtime, unprivileged dev user, git+ripgrep).
+- **docker-compose.yml**: port 9090 (wede default), workspace volume, wede-data state volume, config file mount.
+- **wede.config.json**: host 0.0.0.0, password wede-local-2026 — started via docker compose, HTTP 200 on :9090.

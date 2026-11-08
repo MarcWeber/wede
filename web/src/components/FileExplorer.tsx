@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type ComponentType, type FormEvent, type MouseEvent } from 'react'
 import {
   ChevronRight, ChevronDown, File, Folder, FolderOpen,
-  FilePlus, FolderPlus, RefreshCw, Copy, Clipboard, Trash2, Pencil, FolderPlus as AddRoot, X as XIcon,
+  FilePlus, FolderPlus, RefreshCw, Copy, Clipboard, Pencil, FolderPlus as AddRoot, X as XIcon,
 } from 'lucide-react'
 import { makeWsFetch } from '../lib/wsScope'
 import { fileKey } from '../lib/fileKey'
+import Selectable, { type MenuEntry } from './Selectable'
 import type { AuthFetch, WorkspaceSummary, FileEntry, PresenceMember, ExplorerActions } from '../types'
 
 interface TreeEntry {
@@ -20,13 +21,6 @@ interface ClipboardEntry {
   path: string
   op: 'copy'
   isDir: boolean
-}
-
-interface ContextMenuItem {
-  label?: string
-  icon?: ComponentType<{ className?: string }>
-  action?: () => void
-  separator?: boolean
 }
 
 /* ── File type icon colours (VS Code style) ── */
@@ -99,42 +93,6 @@ const GIT_BADGE: Record<GitStatus, { label: string; cls: string }> = {
   renamed:   { label: 'R', cls: 'text-accent' },
 }
 
-interface ContextMenuProps {
-  x: number
-  y: number
-  items: ContextMenuItem[]
-  onClose: () => void
-}
-
-/* ── Context menu ── */
-function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handler = (e: globalThis.MouseEvent) => { if (!ref.current?.contains(e.target as Node)) onClose() }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [onClose])
-
-  const clamped = { left: Math.min(x, window.innerWidth - 180), top: Math.min(y, window.innerHeight - 200) }
-
-  return (
-    <div ref={ref} className="fixed z-50 animate-fade-in" style={clamped}>
-      <div className="bg-bg-elevated border border-border rounded-lg shadow-xl shadow-shadow-lg py-1.5 min-w-[160px]">
-        {items.map((item, i) => item.separator ? (
-          <div key={i} className="border-t border-border/60 my-1" />
-        ) : (
-          <button key={i} onClick={() => { item.action?.(); onClose() }}
-            className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[12px] text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors text-left">
-            {item.icon && <item.icon className="w-3.5 h-3.5 text-text-muted shrink-0" />}
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 interface InlineInputProps {
   placeholder: string
   value: string
@@ -178,22 +136,38 @@ interface TreeNodeProps {
   onDelete: (path: string) => void
   onRename: (path: string) => void
   onFocusDir: (path: string) => void
+  selectedFiles: Set<string>
+  onToggleSelect: (key: string) => void
+  onSelectAll?: () => void
+  onUnselectAll?: () => void
+  onOpenSelected?: () => void
+  onOpenAll?: () => void
+  onDeleteSelected?: () => void
 }
 
 /* ── Tree node ── */
 function TreeNode({
   entry, depth, rootId, onSelect, onToggle, expanded, authFetch,
   onRefresh, selectedPath, gitMap, presenceMap, clipboard, setClipboard,
-  onPaste, onDelete, onRename, onFocusDir,
+  onPaste, onDelete, onRename, onFocusDir, selectedFiles, onToggleSelect,
+  onSelectAll, onUnselectAll, onOpenSelected, onOpenAll, onDeleteSelected,
 }: TreeNodeProps) {
   const [children, setChildren] = useState<TreeEntry[] | null>(null)
-  const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null)
+  const key        = fileKey(rootId, entry.path)
+  const isChecked  = selectedFiles.has(key)
   const isOpen     = expanded.has(entry.path)
-  const isSelected = selectedPath === fileKey(rootId, entry.path)
+  const isSelected = selectedPath === key
   const gitStatus  = gitMap?.[entry.path]
   const viewers    = presenceMap?.[entry.path]
   const nameColor  = gitStatus ? GIT_COLOR[gitStatus] : 'text-text-primary'
   const badge      = gitStatus ? GIT_BADGE[gitStatus] : null
+
+  const rootPrefix = fileKey(rootId, '')
+  const rootSelectedCount = useMemo(() => {
+    let n = 0
+    for (const k of selectedFiles) if (k.startsWith(rootPrefix)) n++
+    return n
+  }, [selectedFiles, rootPrefix])
 
   const loadChildren = useCallback(async () => {
     if (!entry.isDir) return
@@ -225,27 +199,53 @@ function TreeNode({
     if (!entry.isDir) onSelect(entry, { preview: false })
   }
 
-  const contextItems = [
-    ...(entry.isDir ? [] : [
-      { label: 'Open', icon: File, action: () => onSelect(entry) },
-    ]),
+  const menu: MenuEntry[] = [
+    ...(entry.isDir ? [] : [{
+      key: 'openSplit',
+      kind: 'split' as const,
+      segments: [
+        { key: 'open', label: 'Open', onSelect: () => onSelect(entry) },
+        {
+          key: 'selected',
+          label: rootSelectedCount > 0 ? `Selected (${rootSelectedCount})` : 'Selected',
+          tint: 'yellow' as const,
+          onSelect: () => { if (rootSelectedCount > 0) onOpenSelected?.(); else onSelect(entry) },
+        },
+        { key: 'all', label: 'All', onSelect: () => onOpenAll?.() },
+      ],
+    }]),
     // Copy available for both files and directories (directories use recursive backend copy).
-    { label: 'Copy', icon: Copy, action: () => setClipboard({ path: entry.path, op: 'copy', isDir: entry.isDir }) },
-    ...(entry.isDir ? [{ label: 'Paste', icon: Clipboard, action: () => onPaste(entry.path) }] : []),
-    { separator: true },
-    { label: 'Rename', icon: Pencil, action: () => onRename(entry.path) },
-    { label: 'Delete', icon: Trash2, action: () => onDelete(entry.path) },
+    { key: 'copy', label: 'Copy', icon: <Copy className="w-4 h-4" />, onSelect: () => setClipboard({ path: entry.path, op: 'copy', isDir: entry.isDir }) },
+    ...(entry.isDir ? [{ key: 'paste', label: 'Paste', icon: <Clipboard className="w-4 h-4" />, onSelect: () => onPaste(entry.path) }] : []),
+    { key: 'sep', kind: 'separator' as const },
+    { key: 'rename', label: 'Rename', icon: <Pencil className="w-4 h-4" />, onSelect: () => onRename(entry.path) },
+    {
+      key: 'deleteSplit',
+      kind: 'split' as const,
+      segments: [
+        { key: 'delete', label: 'Delete', tint: 'red' as const, onSelect: () => onDelete(entry.path) },
+        { key: 'deleteSelected', label: rootSelectedCount > 0 ? `Selected (${rootSelectedCount})` : 'Selected', tint: 'yellow' as const, onSelect: () => onDeleteSelected?.() },
+      ],
+    },
+    ...(onSelectAll ? [
+      { key: 'sep2', kind: 'separator' as const },
+      { key: 'selectAll', label: 'Select all', onSelect: onSelectAll },
+      { key: 'unselectAll', label: 'Unselect all', onSelect: onUnselectAll },
+    ] : []),
   ]
 
   const indentPx = depth * 12 + 4
 
   return (
     <div>
-      <div
-        onClick={handleClick}
+      <Selectable
+        checked={isChecked}
+        onToggle={() => onToggleSelect(key)}
+        onActivate={handleClick}
         onDoubleClick={handleDoubleClick}
-        onContextMenu={(e: MouseEvent<HTMLDivElement>) => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY }) }}
-        className={`relative flex items-center h-[26px] cursor-pointer text-[12px] transition-colors select-none group ${
+        menu={menu}
+        label={`Select ${entry.name}`}
+        className={`flex items-center h-[26px] cursor-pointer text-[12px] transition-colors select-none group ${
           isSelected
             ? 'bg-accent/10 text-text-primary'
             : 'hover:bg-bg-hover/80'
@@ -304,9 +304,7 @@ function TreeNode({
         {badge && (
           <span className={`text-[10px] font-bold mr-2.5 shrink-0 ${badge.cls}`}>{badge.label}</span>
         )}
-      </div>
-
-      {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={contextItems} onClose={() => setCtx(null)} />}
+      </Selectable>
 
       {entry.isDir && isOpen && Array.isArray(children) && children.length > 0 && (
         <div className="relative">
@@ -317,7 +315,9 @@ function TreeNode({
               authFetch={authFetch} onRefresh={onRefresh} selectedPath={selectedPath}
               gitMap={gitMap} presenceMap={presenceMap} clipboard={clipboard} setClipboard={setClipboard}
               onPaste={onPaste} onDelete={onDelete} onRename={onRename}
-              onFocusDir={onFocusDir}
+              onFocusDir={onFocusDir} selectedFiles={selectedFiles} onToggleSelect={onToggleSelect}
+              onSelectAll={onSelectAll} onUnselectAll={onUnselectAll} onOpenSelected={onOpenSelected} onOpenAll={onOpenAll}
+              onDeleteSelected={onDeleteSelected}
             />
           ))}
         </div>
@@ -370,12 +370,15 @@ interface RootSectionProps {
   onClose: () => void
   canClose: boolean
   showHeader: boolean
+  selectedFiles: Set<string>
+  onToggleSelect: (key: string) => void
+  onSelectMany: (keys: string[], select: boolean) => void
 }
 
 /* ── One workspace root: a collapsible section with its own scoped file tree. ──
    `ws` is { id, name, root }. All file/git calls are rewritten to this root's
    /api/workspaces/<id>/... endpoints, so several roots coexist independently. */
-function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, register, collapsed, onToggleCollapse, onFocus, onClose, canClose, showHeader }: RootSectionProps) {
+function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, register, collapsed, onToggleCollapse, onFocus, onClose, canClose, showHeader, selectedFiles, onToggleSelect, onSelectMany }: RootSectionProps) {
   // wsFetch mirrors authFetch but pins every legacy /api/<service> path to THIS
   // workspace, so the tree, git status, and mutations act on this root alone.
   const wsFetch = useMemo(() => makeWsFetch(authFetch, ws.id), [authFetch, ws.id])
@@ -398,7 +401,7 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
   const [gitMap, setGitMap] = useState<GitMap>({})
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameName, setRenameName] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null)
   const [focusedDir, setFocusedDir] = useState('')
 
   const loadRoot = useCallback(async () => {
@@ -483,14 +486,23 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
     } catch { /* ignore */ }
   }
 
-  const handleDelete = (path: string) => setConfirmDelete(path)
+  const handleDelete = (path: string) => setConfirmDelete([path])
+
+  const handleDeleteSelected = () => {
+    const prefix = fileKey(ws.id, '')
+    const paths: string[] = []
+    for (const k of selectedFiles) if (k.startsWith(prefix)) paths.push(k.slice(prefix.length))
+    if (paths.length) setConfirmDelete(paths)
+  }
 
   const confirmAndDelete = async () => {
     if (!confirmDelete) return
-    const path = confirmDelete
+    const paths = confirmDelete
     setConfirmDelete(null)
     try {
-      await wsFetch(`/api/files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
+      for (const path of paths) {
+        await wsFetch(`/api/files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
+      }
     } catch {
       alert('Failed to delete — check your connection and try again.')
       return
@@ -531,6 +543,35 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
   const selectFromRoot = useCallback((entry: TreeEntry, opts?: { preview?: boolean }) => {
     onFileSelect({ ...entry, workspaceId: ws.id, rel: entry.path }, opts)
   }, [onFileSelect, ws.id])
+
+  // Flat file list for this root (used by Select all / Open selected).
+  const allFiles = useCallback(async () => {
+    try {
+      const res = await wsFetch('/api/files/tree')
+      const data: { files?: string[] } = await res.json()
+      const list = Array.isArray(data.files) ? data.files : []
+      return list.map((rel) => ({ rel, key: fileKey(ws.id, rel) }))
+    } catch { return [] }
+  }, [wsFetch, ws.id])
+
+  const handleSelectAll = () => { void allFiles().then((list) => onSelectMany(list.map((f) => f.key), true)) }
+  const handleUnselectAll = () => { void allFiles().then((list) => onSelectMany(list.map((f) => f.key), false)) }
+  const handleOpenSelected = () => {
+    void allFiles().then((list) => {
+      for (const f of list) {
+        if (!selectedFiles.has(f.key)) continue
+        onFileSelect({ workspaceId: ws.id, rel: f.rel, path: f.rel, name: f.rel.split('/').pop() || f.rel, isDir: false }, { preview: false })
+      }
+    })
+  }
+
+  const handleOpenAll = () => {
+    void allFiles().then((list) => {
+      for (const f of list) {
+        onFileSelect({ workspaceId: ws.id, rel: f.rel, path: f.rel, name: f.rel.split('/').pop() || f.rel, isDir: false }, { preview: false })
+      }
+    })
+  }
 
   const isCollapsed = showHeader && collapsed
 
@@ -581,7 +622,9 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
                 authFetch={wsFetch} onRefresh={() => { void loadRoot() }} selectedPath={selectedPath}
                 gitMap={gitMap} presenceMap={presenceMap} clipboard={clipboard} setClipboard={setClipboard}
                 onPaste={(dir) => { void handlePaste(dir) }} onDelete={handleDelete} onRename={handleRename}
-                onFocusDir={setFocusedDir}
+                onFocusDir={setFocusedDir} selectedFiles={selectedFiles} onToggleSelect={onToggleSelect}
+                onSelectAll={handleSelectAll} onUnselectAll={handleUnselectAll} onOpenSelected={handleOpenSelected}
+                onOpenAll={handleOpenAll} onDeleteSelected={handleDeleteSelected}
               />
             ))}
             {files.length === 0 && (
@@ -593,7 +636,9 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
 
       {confirmDelete && (
         <ConfirmDialog
-          message={`Delete "${confirmDelete.split('/').pop()}"? This cannot be undone.`}
+          message={confirmDelete.length === 1
+            ? `Delete "${confirmDelete[0].split('/').pop()}"? This cannot be undone.`
+            : `Delete ${confirmDelete.length} items? This cannot be undone.`}
           onConfirm={() => { void confirmAndDelete() }}
           onCancel={() => setConfirmDelete(null)}
         />
@@ -617,7 +662,24 @@ export interface FileExplorerProps {
 export default function FileExplorer({ authFetch, workspaces = [], onFileSelect, selectedPath, onRegisterActions, onAddFolder, onCloseWorkspace, roster = [] }: FileExplorerProps) {
   const [focusedRoot, setFocusedRoot] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(() => new Set())
   const sectionActions = useRef<Record<string, ExplorerActions>>({})
+
+  const onToggleSelect = useCallback((key: string) => setSelectedFiles((prev) => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  }), [])
+
+  const onSelectMany = useCallback((keys: string[], select: boolean) => setSelectedFiles((prev) => {
+    const next = new Set(prev)
+    for (const k of keys) {
+      if (select) next.add(k)
+      else next.delete(k)
+    }
+    return next
+  }), [])
 
   const register = useCallback((wsId: string, actions: ExplorerActions | null) => {
     if (actions) sectionActions.current[wsId] = actions
@@ -675,6 +737,9 @@ export default function FileExplorer({ authFetch, workspaces = [], onFileSelect,
             onFocus={() => setFocusedRoot(ws.id)}
             canClose={roots.length > 1 && !!onCloseWorkspace}
             onClose={() => onCloseWorkspace?.(ws.id)}
+            selectedFiles={selectedFiles}
+            onToggleSelect={onToggleSelect}
+            onSelectMany={onSelectMany}
           />
         ))}
       </div>

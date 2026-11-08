@@ -20,6 +20,7 @@ export interface Tab {
   modified?: boolean
   manual?: boolean
   preview?: boolean
+  locked?: boolean
   fileType?: 'image' | 'binary' | (string & {})
   dataUrl?: string
   size?: number
@@ -55,6 +56,7 @@ export interface TerminalSession {
   name: string
   manual?: boolean
   initial?: string
+  locked?: boolean
 }
 
 // Imperative handle exposed by the <Terminal> component (via useImperativeHandle)
@@ -103,6 +105,9 @@ export interface EditorSettings {
   formatOnSave: boolean
   collab?: boolean
   shareCursors?: boolean
+  // 'smart' renders one digit per gutter row (stacked, width = 1 char) with
+  // bold 10s and 5s as orientation marks — the phone-friendly default.
+  numbering?: 'normal' | 'smart' | 'hidden'
   [key: string]: unknown
 }
 

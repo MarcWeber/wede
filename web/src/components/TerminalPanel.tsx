@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Plus, X, TerminalSquare, Maximize2, Minimize2, PictureInPicture2 } from 'lucide-react'
+import { Plus, TerminalSquare, Maximize2, Minimize2, PictureInPicture2 } from 'lucide-react'
 import Terminal from './Terminal'
 import TerminalToolbar from './TerminalToolbar'
+import Selectable, { type MenuEntry } from './Selectable'
 import { useTheme } from '../hooks/useTheme'
 import type { useTerminals } from '../hooks/useTerminals'
 
@@ -21,13 +22,20 @@ interface TerminalPanelProps {
 // floating window manager.
 export default function TerminalPanel({ token, workspaceId, term, visible, isFullscreen, onToggleFullscreen, onPopOut, isMobile }: TerminalPanelProps) {
   const { terminalTheme } = useTheme()
-  const { terminals, activeId, setActiveId, addTerminal, closeTerminal, clearInitial, renameTerminal, autoNameTerminal, termRefs } = term
+  const { terminals, activeId, setActiveId, addTerminal, closeTerminal, closeSelected, setLocked, clearInitial, renameTerminal, autoNameTerminal, termRefs } = term
 
   // Inline rename: double-click a tab to edit its name.
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
+  const [selected, setSelected] = useState<Set<number>>(new Set())
   const startRename = (t: { id: number; name: string }) => { setEditingId(t.id); setEditName(t.name) }
   const commitRename = () => { if (editingId != null) renameTerminal(editingId, editName); setEditingId(null) }
+  const toggle = (id: number) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
 
   const handleToolbarSend = (data: string) => {
     const ref = termRefs.current[activeId]
@@ -47,17 +55,54 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
         <div className="flex items-center flex-1 overflow-x-auto h-full" style={{ scrollbarWidth: 'none' }}>
           {terminals.map((t) => {
             const isActive = activeId === t.id
+            const isChecked = selected.has(t.id)
+            const targets = selected.size > 0 ? Array.from(selected) : [t.id]
+            const allIds = terminals.map((x) => x.id)
+            const menu: MenuEntry[] = [
+              {
+                key: 'closeSplit',
+                kind: 'split',
+                segments: [
+                  { key: 'close', label: 'Close', onSelect: () => closeTerminal(t.id) },
+                  { key: 'selected', label: 'Selected', tint: 'yellow', onSelect: () => closeSelected(targets, false) },
+                  { key: 'all', label: 'All', onSelect: () => closeSelected(allIds, false) },
+                  { key: 'locked', label: 'Locked', tint: 'red', onSelect: () => closeSelected(allIds, true) },
+                ],
+              },
+              { key: 'sep1', kind: 'separator' },
+              {
+                key: 'lockSplit',
+                kind: 'split',
+                segments: [
+                  { key: 'lock', label: 'Lock', onSelect: () => setLocked([t.id], true) },
+                  { key: 'lockSel', label: 'Selected', tint: 'yellow', onSelect: () => setLocked(targets, true) },
+                ],
+              },
+              {
+                key: 'unlockSplit',
+                kind: 'split',
+                segments: [
+                  { key: 'unlock', label: 'Unlock', onSelect: () => setLocked([t.id], false) },
+                  { key: 'unlockSel', label: 'Selected', tint: 'yellow', onSelect: () => setLocked(targets, false) },
+                ],
+              },
+            ]
             return (
-              <button
+              <Selectable
                 key={t.id}
-                onClick={() => setActiveId(t.id)}
-                className={`relative flex items-center gap-1.5 px-3 h-full text-[12px] font-medium border-r border-border shrink-0 transition-colors ${
+                checked={isChecked}
+                locked={t.locked}
+                onToggle={() => toggle(t.id)}
+                onActivate={() => setActiveId(t.id)}
+                menu={menu}
+                label={`Select ${t.name}`}
+                className={`flex items-center gap-1.5 pl-1 pr-2 h-full min-w-[88px] text-[12px] font-medium border-r border-border shrink-0 cursor-pointer transition-colors ${
                   isActive
                     ? 'bg-bg-primary text-text-primary'
                     : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
                 }`}
               >
-                {isActive && <span className="absolute top-0 left-0 right-0 h-[1.5px] bg-accent" />}
+                {isActive && <span className="absolute top-0 left-0 right-0 h-[1.5px] bg-accent z-10" />}
                 {editingId === t.id ? (
                   <input
                     autoFocus
@@ -74,15 +119,7 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
                 ) : (
                   <span onDoubleClick={(e) => { e.stopPropagation(); startRename(t) }} title="Double-click to rename">{t.name}</span>
                 )}
-                {terminals.length > 1 && (
-                  <span
-                    onClick={(e) => { e.stopPropagation(); closeTerminal(t.id) }}
-                    className="ml-0.5 w-4 h-4 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-bg-active transition-colors"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </span>
-                )}
-              </button>
+              </Selectable>
             )
           })}
 

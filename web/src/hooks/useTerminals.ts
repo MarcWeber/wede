@@ -95,7 +95,7 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     try {
       // Never persist `initial` (a one-shot task command) — it must not re-run on reload.
       // `manual` is kept so a user-chosen name survives reload and still wins over OSC titles.
-      localStorage.setItem('wede_terminals', JSON.stringify(terminals.map((t) => ({ id: t.id, name: t.name, manual: t.manual || undefined }))))
+      localStorage.setItem('wede_terminals', JSON.stringify(terminals.map((t) => ({ id: t.id, name: t.name, manual: t.manual || undefined, locked: t.locked || undefined }))))
       localStorage.setItem('wede_terminal_active', String(activeId))
     } catch { /* ignore */ }
   }, [terminals, activeId])
@@ -132,6 +132,8 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
 
   const closeTerminal = useCallback((id: number) => {
     setTerminals((prev) => {
+      // Locked terminals refuse to close until unlocked.
+      if (prev.find((t) => t.id === id)?.locked) return prev
       const next = prev.filter((t) => t.id !== id)
       if (next.length === 0) {
         const newId = nextId++
@@ -144,5 +146,29 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     })
   }, [activeId])
 
-  return { terminals, activeId, setActiveId, addTerminal, closeTerminal, clearInitial, renameTerminal, autoNameTerminal, termRefs }
+  // closeSelected closes the given terminals, skipping locked ones unless
+  // includeLocked is set.
+  const closeSelected = useCallback((ids: number[], includeLocked: boolean) => {
+    const set = new Set(ids)
+    setTerminals((prev) => {
+      const next = prev.filter((t) => !set.has(t.id) || (!includeLocked && t.locked))
+      if (next.length === prev.length) return prev
+      if (next.length === 0) {
+        const newId = nextId++
+        next.push({ id: newId, name: `Terminal ${newId}` })
+        setActiveId(newId)
+      } else if (!next.some((t) => t.id === activeId)) {
+        setActiveId(next[next.length - 1].id)
+      }
+      return next
+    })
+  }, [activeId])
+
+  // setLocked locks/unlocks the given terminal ids.
+  const setLocked = useCallback((ids: number[], locked: boolean) => {
+    const set = new Set(ids)
+    setTerminals((prev) => prev.map((t) => (set.has(t.id) ? { ...t, locked } : t)))
+  }, [])
+
+  return { terminals, activeId, setActiveId, addTerminal, closeTerminal, closeSelected, setLocked, clearInitial, renameTerminal, autoNameTerminal, termRefs }
 }

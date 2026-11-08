@@ -1,4 +1,4 @@
-import { Files, Code, TerminalSquare, GitBranch, Menu } from 'lucide-react'
+import { Files, Search, Code, TerminalSquare, GitBranch, Menu } from 'lucide-react'
 
 export interface MobileNavProps {
   active: string
@@ -8,6 +8,7 @@ export interface MobileNavProps {
 
 const tabs = [
   { id: 'files', icon: Files, label: 'Files' },
+  { id: 'search', icon: Search, label: 'Search' },
   { id: 'code', icon: Code, label: 'Code' },
   { id: 'terminal', icon: TerminalSquare, label: 'Terminal' },
   { id: 'git', icon: GitBranch, label: 'Git' },

@@ -59,6 +59,13 @@ const bpTheme = EditorView.baseTheme({
   '.cm-debug-stop': { backgroundColor: 'color-mix(in srgb, var(--c-yellow) 20%, transparent)' },
 })
 
+// breakpointSupport — the breakpoint state + current-line highlight WITHOUT a
+// gutter column. Use this when the editor should not reserve any horizontal
+// space for a breakpoint gutter (e.g. a compact line-number-only gutter).
+export function breakpointSupport(): Extension[] {
+  return [bpField, stopLineDeco, bpTheme]
+}
+
 export function breakpointGutter(onToggle?: (line: number, lines: number[]) => void): Extension[] {
   return [
     bpField,
