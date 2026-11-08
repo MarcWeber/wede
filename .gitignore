@@ -19,6 +19,9 @@ wede.config.json
 .claude/
 .cursor/
 
+# Docker compose workspace mount (runtime project data)
+/projects/
+
 # screenshotter runtime artifacts in the demo workspace
 scripts/demo-workspace/.wede/
 

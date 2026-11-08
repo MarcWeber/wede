@@ -242,6 +242,45 @@ CLI flags: `wede [path]` opens a workspace directly; `--port`/`-p` overrides the
 port; `--version` prints the version. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 for the full reference.
 
+### Docker
+
+The repo ships a multi-stage `Dockerfile` (Node builds the React frontend,
+Go embeds it, alpine runtime with git + ripgrep) and a `docker-compose.yml`:
+
+```sh
+# 1. Set your password — the container requires a non-empty one
+#    The config is read from /home/dev/.config/wede/wede.config.json
+cat > wede.config.json <<'EOF'
+{
+  "password": "your-strong-password-here",
+  "port": "9090",
+  "host": "0.0.0.0"
+}
+EOF
+
+# 2. Point at the project you want to edit in the IDE
+export WEDE_WORKSPACE="$PWD/my-project"   # mounted at /home/dev/work
+
+# 3. Build and start
+docker compose up -d --build
+
+# 4. Open http://<your-host>:9090 and log in
+```
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `WEDE_PORT` | `9090` | Host port to publish |
+| `WEDE_WORKSPACE` | `./projects` | Local dir mounted as the IDE workspace (`/home/dev/work`) |
+
+The login password lives in `wede.config.json` (the compose file mounts it
+read-only into the container, so change it and `docker compose restart` —
+no rebuild needed). Share tokens and chat persist in the `wede-data` volume.
+
+> **Security:** an editor link grants a full login shell inside the container.
+> Bind the compose port to `127.0.0.1` unless you deliberately expose it, and
+> never push `wede.config.json` to a remote. See [DEPLOYMENT.md](docs/DEPLOYMENT.md)
+> and [SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md).
+
 ---
 
 ## Extensibility

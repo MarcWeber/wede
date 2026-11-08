@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, useCallback, type RefObject, type KeyboardEvent } from 'react'
 import {
-  EditorView, keymap, lineNumbers, highlightActiveLineGutter,
+  EditorView, keymap, highlightActiveLineGutter,
   highlightActiveLine, drawSelection, highlightSpecialChars,
   rectangularSelection, crosshairCursor,
 } from '@codemirror/view'
+import { numberingGutter, type NumberingMode } from '../lib/lineNumbering'
 import { EditorState, Compartment, type Extension, type StateField, type StateEffect } from '@codemirror/state'
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands'
 import {
   syntaxHighlighting, defaultHighlightStyle, bracketMatching,
-  foldGutter, indentOnInput,
+  indentOnInput,
 } from '@codemirror/language'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
@@ -43,7 +44,7 @@ import { properties } from '@codemirror/legacy-modes/mode/properties'
 import { swift } from '@codemirror/legacy-modes/mode/swift'
 import { powerShell } from '@codemirror/legacy-modes/mode/powershell'
 import { csharp, kotlin, scala, objectiveC } from '@codemirror/legacy-modes/mode/clike'
-import { breakpointGutter, setBreakpointsEffect, setStopLineEffect } from '../lib/breakpoints'
+import { breakpointSupport, setBreakpointsEffect, setStopLineEffect } from '../lib/breakpoints'
 import type { Tab, EditorSettings, EditorActions } from '../types'
 import type { UseYDocState } from '../hooks/useYDoc'
 
@@ -198,6 +199,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
   const wrapCompRef    = useRef(new Compartment())
   const tabCompRef     = useRef(new Compartment())
   const minimapCompRef = useRef(new Compartment())
+  const lineNumCompRef = useRef(new Compartment())
   const lspCompRef     = useRef(new Compartment())
   const editCompRef    = useRef(new Compartment())
 
@@ -224,6 +226,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
     const themeComp   = themeCompRef.current
     const wrapComp    = wrapCompRef.current
     const tabComp     = tabCompRef.current
+    const lineNumComp = lineNumCompRef.current
     const minimapComp = minimapCompRef.current
     const lspComp     = lspCompRef.current
     const editComp    = editCompRef.current
@@ -252,7 +255,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
       doc: collabOn ? yt.toString() : (content || ''),
       extensions: [
         ...collabExt,
-        lineNumbers(),
+        lineNumComp.of(numberingGutter((settings.numbering as NumberingMode | undefined) ?? 'smart')),
         highlightActiveLineGutter(),
         highlightActiveLine(),
         highlightSpecialChars(),
@@ -260,7 +263,6 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
         bracketMatching(),
         closeBrackets(),
         indentOnInput(),
-        foldGutter(),
         highlightSelectionMatches(),
         history(),
         // Multi-cursor support: Alt+Click adds a cursor; Alt+drag selects
@@ -278,7 +280,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
         // Read-only compartment — viewer role gets EditorState.readOnly + EditorView.editable(false).
         editComp.of(editable ? [] : [EditorState.readOnly.of(true), EditorView.editable.of(false)]),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        breakpointGutter((ln, lines) => onToggleBpRef.current?.(ln, lines)),
+        breakpointSupport(),
         getLang(file?.name || ''),
         keymap.of([
           ...closeBracketsKeymap, ...defaultKeymap,
@@ -366,6 +368,15 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
       effects: themeCompRef.current.reconfigure([isDark ? oneDark : [], makeEditorTheme(settings, isDark)]),
     })
   }, [settings.fontSize]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live settings: line-number mode.
+  useEffect(() => {
+    if (!viewRef.current) return
+    const mode = (settings.numbering as NumberingMode | undefined) ?? 'smart'
+    viewRef.current.dispatch({
+      effects: lineNumCompRef.current.reconfigure(numberingGutter(mode)),
+    })
+  }, [settings.numbering])
 
   // Live settings: minimap toggle.
   useEffect(() => {

@@ -71,6 +71,7 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
   const formatOnSave = s.formatOnSave ?? false
   const collab       = s.collab       ?? false
   const shareCursors = s.shareCursors ?? true
+  const numbering    = s.numbering ?? 'smart'
 
   // Derive LSP status hint for the user.
   // lspAvailable: null = not yet fetched, {} = fetched (possibly empty), { go: '...' } = servers found
@@ -224,6 +225,23 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Line numbers */}
+            <div className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5">
+              <div>
+                <span className="text-xs text-text-secondary">Line numbers</span>
+                <span className="block text-[10px] text-text-muted">Smart = one digit per line, bold 10s, 5s as markers</span>
+              </div>
+              <select
+                value={numbering}
+                onChange={(e) => update({ numbering: e.target.value as 'normal' | 'smart' | 'hidden' })}
+                className="bg-bg-input border border-border rounded-md px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent"
+              >
+                <option value="smart">Smart</option>
+                <option value="normal">Show</option>
+                <option value="hidden">Hide</option>
+              </select>
             </div>
 
             {/* Word wrap */}

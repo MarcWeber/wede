@@ -1,0 +1,21 @@
+services:
+  wede:
+    build: .
+    image: wede:local
+    container_name: wede
+    ports:
+      - "${WEDE_PORT:-9090}:9090"
+    volumes:
+      # Point at any project you want to open in the IDE
+      - ${WEDE_WORKSPACE:-$PWD/projects}:/home/dev/work
+      # wede state: share tokens, lockouts, chat, API clients
+      - wede-data:/home/dev/.wede
+      # Config lives in the repo. NOTE: it contains the login password —
+      # do NOT push it to a remote, or use a separate secret volume.
+      - ./wede.config.json:/home/dev/.config/wede/wede.config.json:ro
+    environment:
+      - WEDE_WORKSPACE_ROOT=/home/dev/work
+    restart: unless-stopped
+
+volumes:
+  wede-data:

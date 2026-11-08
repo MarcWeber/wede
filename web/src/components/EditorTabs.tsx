@@ -1,56 +1,92 @@
-import { X, Globe } from 'lucide-react'
+import { useState } from 'react'
+import { Globe } from 'lucide-react'
 import type { Tab } from '../types'
+import Selectable, { type MenuEntry } from './Selectable'
 
 export interface EditorTabsProps {
   tabs: Tab[]
   activeTab: string | null
   onSelect: (path: string) => void
   onClose: (path: string) => void
+  onCloseSelected: (paths: string[], includeLocked: boolean) => void
+  onSetLocked: (paths: string[], locked: boolean) => void
 }
 
-export default function EditorTabs({ tabs, activeTab, onSelect, onClose }: EditorTabsProps) {
+export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onCloseSelected, onSetLocked }: EditorTabsProps) {
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+
   if (tabs.length === 0) return null
+
+  const toggle = (path: string) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (next.has(path)) next.delete(path)
+    else next.add(path)
+    return next
+  })
 
   return (
     <div className="flex bg-bg-secondary border-b border-border overflow-x-auto shrink-0 compact-touch" style={{ scrollbarWidth: 'none' }}>
       {tabs.map((tab) => {
         const isActive = activeTab === tab.path
         const isBrowser = tab.type === 'browser'
+        const isChecked = selected.has(tab.path)
+        const targets = selected.size > 0 ? Array.from(selected) : [tab.path]
+        const allTargets = tabs.map((t) => t.path)
+        const menu: MenuEntry[] = [
+          {
+            key: 'closeSplit',
+            kind: 'split',
+            segments: [
+              { key: 'close', label: 'Close', onSelect: () => onClose(tab.path) },
+              { key: 'selected', label: 'Selected', tint: 'yellow', onSelect: () => onCloseSelected(targets, false) },
+              { key: 'all', label: 'All', onSelect: () => onCloseSelected(allTargets, false) },
+              { key: 'locked', label: 'Locked', tint: 'red', onSelect: () => onCloseSelected(allTargets, true) },
+            ],
+          },
+          { key: 'sep1', kind: 'separator' },
+          {
+            key: 'lockSplit',
+            kind: 'split',
+            segments: [
+              { key: 'lock', label: 'Lock', onSelect: () => onSetLocked([tab.path], true) },
+              { key: 'lockSel', label: 'Selected', tint: 'yellow', onSelect: () => onSetLocked(targets, true) },
+            ],
+          },
+          {
+            key: 'unlockSplit',
+            kind: 'split',
+            segments: [
+              { key: 'unlock', label: 'Unlock', onSelect: () => onSetLocked([tab.path], false) },
+              { key: 'unlockSel', label: 'Selected', tint: 'yellow', onSelect: () => onSetLocked(targets, false) },
+            ],
+          },
+        ]
         return (
-          <div
+          <Selectable
             key={tab.path}
-            className={`relative flex items-center gap-1.5 px-3 py-0 h-9 cursor-pointer border-r border-border shrink-0 transition-colors select-none ${
+            checked={isChecked}
+            locked={tab.locked}
+            onToggle={() => toggle(tab.path)}
+            onActivate={() => onSelect(tab.path)}
+            menu={menu}
+            label={`Select ${tab.name}`}
+            className={`flex items-center gap-1.5 pl-1 pr-2 h-10 min-w-[88px] border-r border-border shrink-0 select-none cursor-pointer transition-colors ${
               isActive
                 ? 'bg-bg-primary text-text-primary'
                 : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
             }`}
-            onClick={() => onSelect(tab.path)}
           >
-            {/* Active indicator — top edge line */}
             {isActive && (
-              <span className="absolute top-0 left-0 right-0 h-[1.5px] bg-accent rounded-b" />
+              <span className="absolute top-0 left-0 right-0 h-[1.5px] bg-accent rounded-b z-10" />
             )}
-
             {isBrowser && <Globe className="w-3 h-3 text-cyan shrink-0" />}
             {!isBrowser && tab.modified && (
               <span className="w-1.5 h-1.5 rounded-full bg-yellow shrink-0" />
             )}
-
             <span className={`text-[12px] truncate max-w-40 font-medium leading-none ${
-              isActive ? 'text-text-primary' : ''
-            } ${tab.preview && !tab.modified ? 'italic' : ''}`}>{tab.name}</span>
-
-            <button
-              onClick={(e) => { e.stopPropagation(); onClose(tab.path) }}
-              className={`ml-0.5 w-4 h-4 flex items-center justify-center rounded transition-colors shrink-0 ${
-                isActive
-                  ? 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
-                  : 'text-transparent group-hover:text-text-muted hover:text-text-primary hover:bg-bg-hover'
-              }`}
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
+              tab.preview && !tab.modified ? 'italic' : ''
+            }`}>{tab.name}</span>
+          </Selectable>
         )
       })}
     </div>

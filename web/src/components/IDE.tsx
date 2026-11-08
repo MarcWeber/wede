@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react'
 import {
   Files, GitBranch, TerminalSquare, LogOut, Save, FolderOpen,
   Globe, Settings as SettingsIcon, Moon, Sun, ChevronLeft, Search as SearchIcon,
-  Share2, MessageSquare, Webhook, PanelLeft, ListChecks, Bug,
+  Share2, MessageSquare, Webhook, PanelLeft, ListChecks, Bug, X,
   type LucideIcon,
 } from 'lucide-react'
 import { useMobile } from '../hooks/useMobile'
@@ -177,7 +177,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   const [sidebarTab, setSidebarTab] = useState('files')
   const [showSettings, setShowSettings] = useState(false)
 
-  type MobilePanel = 'files' | 'code' | 'terminal' | 'git' | 'settings'
+  type MobilePanel = 'files' | 'search' | 'code' | 'terminal' | 'git' | 'settings'
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('files')
   const [mobileMenu, setMobileMenu] = useState(false)
   const [termFullscreen, setTermFullscreen] = useState(false)
@@ -199,7 +199,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     })
   }, [])
 
-  const DEFAULT_EDITOR_SETTINGS: EditorSettings = { fontSize: 13, tabWidth: 2, wordWrap: false, autoSave: true, minimap: false, lsp: true, formatOnSave: false }
+  const DEFAULT_EDITOR_SETTINGS: EditorSettings = { fontSize: 13, tabWidth: 2, wordWrap: false, autoSave: true, minimap: false, lsp: true, formatOnSave: false, numbering: 'smart' }
 
   // Editor settings — persisted to localStorage
   const [editorSettings, setEditorSettings] = useState<EditorSettings>(() => {
@@ -212,6 +212,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       if (s.lsp === undefined) s.lsp = true
       if (s.formatOnSave === undefined) s.formatOnSave = false
       if (s.collab === undefined) s.collab = false
+      if (s.numbering === undefined) s.numbering = 'smart'
       return s
     } catch {
       return DEFAULT_EDITOR_SETTINGS
@@ -222,7 +223,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     setEditorSettings(s)
     try { localStorage.setItem('wede_editor_settings', JSON.stringify(s)) } catch (_ignored) { void _ignored }
   }, [])
-
 
   // Expose FileExplorer's refresh + new-file/folder triggers for the command palette and SSE watcher.
   const explorerActionsRef = useRef<ExplorerActions | null>(null)
@@ -380,6 +380,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   // a const binding is referenced before its declaration in the same scope.)
   const closeTab = useCallback((path: string) => {
     setTabs((prev) => {
+      // Locked tabs refuse to close until unlocked.
+      if (prev.find((t) => t.path === path)?.locked) return prev
       const next = prev.filter((t) => t.path !== path)
       if (activeTab === path) {
         const idx = prev.findIndex((t) => t.path === path)
@@ -388,6 +390,24 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       return next
     })
   }, [activeTab])
+
+  // closeSelectedTabs closes the given tabs, skipping locked ones unless
+  // includeLocked is set.
+  const closeSelectedTabs = useCallback((paths: string[], includeLocked: boolean) => {
+    const set = new Set(paths)
+    const next = tabs.filter((t) => !set.has(t.path) || (!includeLocked && t.locked))
+    if (next.length === tabs.length) return
+    setTabs(next)
+    if (activeTab && !next.some((t) => t.path === activeTab)) {
+      setActiveTab(next.length ? next[next.length - 1].path : null)
+    }
+  }, [tabs, activeTab])
+
+  // setTabsLocked locks/unlocks the given tab paths.
+  const setTabsLocked = useCallback((paths: string[], locked: boolean) => {
+    const set = new Set(paths)
+    setTabs((prev) => prev.map((t) => (set.has(t.path) ? { ...t, locked } : t)))
+  }, [])
 
   // ── Global keyboard shortcuts ──
   useEffect(() => {
@@ -539,6 +559,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       if (!a) return
       const href = a.getAttribute('href')
       if (!href) return
+      // Let explicit external links / downloads / modified clicks use the real
+      // browser instead of being hijacked into the in-app preview iframe.
+      if (a.target === '_blank' || a.hasAttribute('download') ||
+          e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
       if (href.startsWith('http://') || href.startsWith('https://')) {
         e.preventDefault()
         e.stopPropagation()
@@ -891,16 +915,20 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   // ── Mobile menu overlay ──
   const MobileMenuOverlay = () => (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" onClick={() => setMobileMenu(false)}>
-      <div className="absolute bottom-16 left-0 right-0 bg-bg-elevated border-t border-border rounded-t-2xl p-4 animate-slide-up"
+      <div className="absolute bottom-16 left-0 right-0 bg-bg-elevated border-t border-border rounded-t-2xl p-4"
         onClick={(e) => e.stopPropagation()}>
         <div className="w-8 h-1 bg-bg-active rounded-full mx-auto mb-4" />
         <div className="grid grid-cols-3 gap-2.5">
           {[
+            ...(role !== 'viewer' && currentTab?.modified && currentTab.type !== 'browser'
+              ? [{ icon: Save, label: saving ? 'Saving…' : 'Save', action: () => { void saveFile(); setMobileMenu(false) } }]
+              : []),
+            { icon: FolderOpen, label: 'Select Folder', action: () => { setShowFolderPicker(true); setMobileMenu(false) } },
             { icon: Globe, label: 'Browser', action: () => { openBrowser(); setMobileMenu(false) } },
             { icon: SettingsIcon, label: 'Settings', action: () => { setMobilePanel('settings'); setMobileMenu(false) } },
-            { icon: FolderOpen, label: 'Open Folder', action: () => { setShowFolderPicker(true); setMobileMenu(false) } },
             { icon: isDark ? Sun : Moon, label: isDark ? 'Light' : 'Dark', action: () => { toggleTheme(); setMobileMenu(false) } },
             { icon: LogOut, label: 'Logout', action: () => { onLogout(); setMobileMenu(false) } },
+            { icon: X, label: 'Close', action: () => setMobileMenu(false) },
           ].map(({ icon: Icon, label, action }) => (
             <button key={label} onClick={action}
               className="flex flex-col items-center gap-2 p-3 rounded-xl bg-bg-secondary border border-border text-text-secondary hover:text-accent hover:border-accent/30 transition-colors">
@@ -939,38 +967,28 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   if (isMobile) {
     return (
       <div className="h-[100dvh] flex flex-col bg-bg-primary">
-        {/* Mobile top bar */}
-        <div className="flex items-center justify-between px-3 py-2 bg-bg-tertiary border-b border-border shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <Logo size={18} showName nameClass="text-sm font-semibold text-text-primary" />
-            <button onClick={() => setShowFolderPicker(true)}
-              className="flex items-center gap-1 text-xs text-text-secondary truncate max-w-32 hover:text-text-primary transition-colors">
-              <FolderOpen className="w-3 h-3 text-yellow shrink-0" />
-              <span className="truncate">{folderName}</span>
-            </button>
-          </div>
-          <div className="flex items-center gap-1">
-            {role !== 'viewer' && currentTab?.modified && currentTab.type !== 'browser' && (
-              <button onClick={() => { void saveFile() }} disabled={saving}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs bg-accent/15 text-accent rounded-lg font-medium hover:bg-accent/25 transition-colors">
-                <Save className="w-3 h-3" />{saving ? '...' : 'Save'}
-              </button>
-            )}
-          </div>
-        </div>
 
         <div className="flex-1 min-h-0 relative">
-          {mobilePanel === 'files' && (
-            <div className="h-full animate-fade-in">
-              <FileExplorer authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={handleRegisterExplorerActions} onAddFolder={openAddFolder} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
-            </div>
-          )}
-          {mobilePanel === 'code' && (
-            <div className="h-full flex flex-col animate-fade-in">
-              <EditorTabs tabs={tabs} activeTab={activeTab} onSelect={setActiveTab} onClose={closeTab} />
-              <div className="flex-1 min-h-0">{renderTabContent()}</div>
-            </div>
-          )}
+          {/* Panels stay mounted (hidden, not unmounted) so switching mobile tabs
+              preserves explorer location, search query/results and editor state. */}
+          <div className="h-full" style={{ display: mobilePanel === 'files' ? 'block' : 'none' }}>
+            <FileExplorer authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={handleRegisterExplorerActions} onAddFolder={openAddFolder} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
+          </div>
+          <div className="h-full" style={{ display: mobilePanel === 'search' ? 'block' : 'none' }}>
+            <SearchPanel authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} readOnly={role === 'viewer'} onOpenFile={(entry, line) => {
+              const key = fileKey(entry.workspaceId || workspaceId, entry.rel ?? entry.path)
+              void openFile(entry)
+              setTimeout(() => {
+                setTabs((prev) => prev.map((t) =>
+                  t.path === key ? { ...t, targetLine: line } : t
+                ))
+              }, 50)
+            }} />
+          </div>
+          <div className="h-full flex flex-col" style={{ display: mobilePanel === 'code' ? 'flex' : 'none' }}>
+            <EditorTabs tabs={tabs} activeTab={activeTab} onSelect={setActiveTab} onClose={closeTab} onCloseSelected={closeSelectedTabs} onSetLocked={setTabsLocked} />
+            <div className="flex-1 min-h-0">{renderTabContent()}</div>
+          </div>
           {role !== 'viewer' && (
             <div className={termFullscreen ? 'fixed inset-0 z-50' : 'absolute inset-0 z-10'} style={{ display: mobilePanel === 'terminal' ? 'block' : 'none' }}>
               <TerminalPanel key={terminalKey} token={token} workspaceId={workspaceId} term={terminalsApi} visible={mobilePanel === 'terminal'}
@@ -983,7 +1001,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
           {mobilePanel === 'settings' && (
             <div className="h-full animate-fade-in">
               <Settings
-                onClose={() => setShowSettings(false)}
+                onClose={() => setMobilePanel('code')}
                 authFetch={authFetch}
                 username={username}
                 onUsernameChange={onUsernameChange}
@@ -1236,7 +1254,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
         {/* Center: editor + terminal */}
         <div className="flex-1 flex flex-col min-w-0 bg-bg-primary">
           <div className="flex-1 flex flex-col min-h-0">
-            <EditorTabs tabs={tabs} activeTab={activeTab} onSelect={setActiveTab} onClose={closeTab} />
+            <EditorTabs tabs={tabs} activeTab={activeTab} onSelect={setActiveTab} onClose={closeTab} onCloseSelected={closeSelectedTabs} onSetLocked={setTabsLocked} />
             {currentTab && currentTab.type !== 'browser' && currentTab.type !== 'apiclient' && currentTab.type !== 'gitgraph' && currentTab.fileType == null && (
               <Breadcrumbs path={currentTab.rel} />
             )}
