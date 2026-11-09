@@ -34,6 +34,7 @@ export function useRowMenu(items: MenuEntry[]) {
   const timer = useRef<number | null>(null)
   const longFired = useRef(false)
   const origin = useRef<{ x: number; y: number } | null>(null)
+  const openedAt = useRef(0)
 
   const clearTimer = () => {
     if (timer.current !== null) {
@@ -55,10 +56,13 @@ export function useRowMenu(items: MenuEntry[]) {
     }
   }, [pos])
 
-  const openMenu = (x: number, y: number) => setPos({
-    x: Math.max(8, Math.min(x, window.innerWidth - 220)),
-    y: Math.max(8, Math.min(y, window.innerHeight - 260)),
-  })
+  const openMenu = (x: number, y: number) => {
+    openedAt.current = performance.now()
+    setPos({
+      x: Math.max(8, Math.min(x, window.innerWidth - 220)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 260)),
+    })
+  }
 
   const consumeLongPress = () => {
     const v = longFired.current
@@ -99,7 +103,14 @@ export function useRowMenu(items: MenuEntry[]) {
     <>
       <div
         className="fixed inset-0 z-40"
-        onPointerDown={() => setPos(null)}
+        onPointerDown={(e) => {
+          // Only the primary button dismisses. Some platforms deliver the
+          // contextmenu event before the right-button pointerdown; ignoring
+          // non-primary buttons (and a brief grace window) keeps the menu open.
+          if (e.button !== 0) return
+          if (performance.now() - openedAt.current < 250) return
+          setPos(null)
+        }}
         onContextMenu={(e) => { e.preventDefault(); setPos(null) }}
       />
       <div
@@ -173,13 +184,14 @@ export interface SelectableProps {
   tabIndex?: number
   itemRef?: (el: HTMLDivElement | null) => void
   onKeyDown?: (e: ReactKeyboardEvent<HTMLDivElement>) => void
+  onMiddleClick?: () => void
   children: ReactNode
 }
 
 // Selectable — wraps a row (file, search hit, editor tab, terminal tab).
 //  * Renders a left overlay tap target that is always tinted 15% yellow so the
 //    selection region is discoverable; a soft red overlay marks a locked row.
-//    The checkbox is drawn when the row is selected (or locked). The overlay is
+//    The checkbox is drawn only when the row is selected. The overlay is
 //    absolutely positioned, so it costs zero layout width.
 //  * A long press / right-click anywhere on the row opens `menu`.
 //  * A plain tap on the row calls `onActivate`; a tap on the overlay toggles
@@ -187,7 +199,7 @@ export interface SelectableProps {
 export default function Selectable({
   checked, locked, onToggle, onActivate, onDoubleClick,
   menu = [], className = '', style, overlayOffset = 0, label,
-  tabIndex, itemRef, onKeyDown, children,
+  tabIndex, itemRef, onKeyDown, onMiddleClick, children,
 }: SelectableProps) {
   const { bind, consumeLongPress, menuNode } = useRowMenu(menu)
 
@@ -201,6 +213,13 @@ export default function Selectable({
       style={style}
       onClick={() => { if (consumeLongPress()) return; onActivate?.() }}
       onDoubleClick={onDoubleClick}
+      onMouseDown={onMiddleClick ? (e) => { if (e.button === 1) e.preventDefault() } : undefined}
+      onAuxClick={onMiddleClick ? (e) => {
+        if (e.button !== 1) return
+        e.preventDefault()
+        e.stopPropagation()
+        onMiddleClick()
+      } : undefined}
     >
       <button
         type="button"
@@ -214,11 +233,9 @@ export default function Selectable({
         className={`absolute top-0 bottom-0 w-7 z-20 flex items-center justify-center select-none ${locked ? 'bg-red/25' : 'bg-yellow/15'}`}
         style={{ left: overlayOffset, WebkitTouchCallout: 'none' }}
       >
-        {(checked || locked) && (
+        {checked && (
           <span
-            className={`flex items-center justify-center w-4 h-4 -translate-y-[10px] rounded-[3px] border ${
-              checked ? 'bg-yellow border-yellow text-black' : 'border-red/70 text-transparent'
-            }`}
+            className="flex items-center justify-center w-4 h-4 rounded-[3px] border bg-yellow border-yellow text-black"
           >
             <Check className="w-3 h-3" strokeWidth={3} />
           </span>

@@ -341,6 +341,9 @@ func searchFilePaths(ws, query string, caseSensitive, useRegex bool, includeGlob
 			}
 			return nil
 		}
+		if isNoiseName(info.Name()) {
+			return nil
+		}
 
 		relPath, _ := filepath.Rel(ws, p)
 		relPath = filepath.ToSlash(relPath)
@@ -395,6 +398,9 @@ func searchWithRg(rgPath, ws string, opts searchOpts) ([]Match, error) {
 		"--glob", "!**/dist/**",
 		"--glob", "!**/.next/**",
 		"--glob", "!**/build/**",
+		// NFS silly-rename artifacts and other OS noise.
+		"--glob", "!**/.nfs*",
+		"--glob", "!**/.DS_Store",
 	}
 
 	if !opts.caseSensitive {
@@ -560,6 +566,27 @@ var skipDirs = map[string]bool{
 	"vendor": true, "dist": true, ".next": true, "build": true,
 }
 
+// isNoiseName reports OS/tooling artifacts to skip: .DS_Store and NFS
+// "silly-rename" files (.nfs.<hex>.<pid> / .nfs<hex>) left behind when a file
+// is deleted while still open.
+func isNoiseName(name string) bool {
+	if name == ".DS_Store" {
+		return true
+	}
+	if !strings.HasPrefix(name, ".nfs") {
+		return false
+	}
+	rest := name[len(".nfs"):]
+	if strings.HasPrefix(rest, ".") {
+		rest = rest[1:]
+	}
+	if rest == "" {
+		return false
+	}
+	c := rest[0]
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
 // textExtensions is an allowlist of extensions we attempt to search.
 var textExtensions = map[string]bool{
 	"go": true, "js": true, "jsx": true, "ts": true, "tsx": true,
@@ -597,6 +624,9 @@ func searchWithWalk(ws string, opts searchOpts) ([]Match, error) {
 			if skipDirs[info.Name()] {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if isNoiseName(info.Name()) {
 			return nil
 		}
 		if info.Size() > 2*1024*1024 {

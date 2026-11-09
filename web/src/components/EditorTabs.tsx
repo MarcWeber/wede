@@ -68,6 +68,7 @@ export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onClose
             locked={tab.locked}
             onToggle={() => toggle(tab.path)}
             onActivate={() => onSelect(tab.path)}
+            onMiddleClick={() => onClose(tab.path)}
             menu={menu}
             label={`Select ${tab.name}`}
             className={`flex items-center gap-1.5 pl-1 pr-2 h-10 min-w-[88px] border-r border-border shrink-0 select-none cursor-pointer transition-colors ${

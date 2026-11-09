@@ -10,6 +10,8 @@ tmp/
 *.test
 *.out
 .DS_Store
+# NFS silly-rename artifacts (deleted-but-open files)
+.nfs*
 /wede
 /wede-*
 # Live config (contains password — never commit). Copy from wede.config.example.json.

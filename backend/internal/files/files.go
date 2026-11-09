@@ -30,6 +30,28 @@ var treeSkipDirs = map[string]bool{
 	".next": true, "vendor": true, ".cache": true, "target": true,
 }
 
+// isNoiseFile reports whether name is OS/tooling noise that should never appear
+// in the explorer, Quick Open, or search. In particular, NFS "silly-rename"
+// artifacts (.nfs.<hex>.<pid> / .nfs<hex>) are created when a file is deleted
+// while still open; they hold the old contents and are not real project files.
+func isNoiseFile(name string) bool {
+	if name == ".DS_Store" {
+		return true
+	}
+	if !strings.HasPrefix(name, ".nfs") {
+		return false
+	}
+	rest := name[len(".nfs"):]
+	if strings.HasPrefix(rest, ".") {
+		rest = rest[1:]
+	}
+	if rest == "" {
+		return false
+	}
+	c := rest[0]
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
 const treeMaxFiles = 10000
 
 // Tree returns a flat, sorted list of file paths (relative to the workspace root,
@@ -56,7 +78,7 @@ func (h *Handler) Tree(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		}
-		if d.Name() == ".DS_Store" {
+		if isNoiseFile(d.Name()) {
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, p)
@@ -178,7 +200,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	result := make([]FileEntry, 0, len(entries))
 	for _, e := range entries {
 		name := e.Name()
-		if name == ".git" || name == "node_modules" || name == ".DS_Store" {
+		if name == ".git" || name == "node_modules" || isNoiseFile(name) {
 			continue
 		}
 		info, _ := e.Info()

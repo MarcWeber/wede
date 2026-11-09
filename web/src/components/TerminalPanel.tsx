@@ -94,6 +94,7 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
                 locked={t.locked}
                 onToggle={() => toggle(t.id)}
                 onActivate={() => setActiveId(t.id)}
+                onMiddleClick={() => closeTerminal(t.id)}
                 menu={menu}
                 label={`Select ${t.name}`}
                 className={`flex items-center gap-1.5 pl-1 pr-2 h-full min-w-[88px] text-[12px] font-medium border-r border-border shrink-0 cursor-pointer transition-colors ${
