@@ -1,16 +1,17 @@
-import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react'
 import {
-  Files, GitBranch, TerminalSquare, LogOut, Save, FolderOpen,
-  Globe, Settings as SettingsIcon, Moon, Sun, ChevronLeft, Search as SearchIcon,
-  Share2, MessageSquare, Webhook, PanelLeft, ListChecks, Bug, X,
-  type LucideIcon,
+  Files, GitBranch, TerminalSquare, Save, FolderOpen,
+  Globe, Settings as SettingsIcon, ChevronLeft, Search as SearchIcon,
+  MessageSquare, Webhook, ScrollText, Boxes,
+  HelpCircle, Menu, Code2, Minimize2,
 } from 'lucide-react'
 import { useMobile } from '../hooks/useMobile'
+import { useDesktopMode } from '../hooks/useDesktopMode'
 import { useTheme } from '../hooks/useTheme'
+import type { ViewMode } from '../lib/viewTypes'
 import Logo from './Logo'
 import FileExplorer from './FileExplorer'
 import Editor from './Editor'
-import EditorTabs from './EditorTabs'
 import TerminalPanel from './TerminalPanel'
 import GitPanels from './GitPanels'
 import FolderPicker from './FolderPicker'
@@ -18,8 +19,8 @@ import WorkspaceSwitcher from './WorkspaceSwitcher'
 import PresenceRoster from './PresenceRoster'
 import Browser from './Browser'
 import Settings from './Settings'
+import HelpView from './HelpView'
 import SearchPanel from './SearchPanel'
-import MobileNav from './MobileNav'
 import CommandPalette from './CommandPalette'
 import QuickOpen from './QuickOpen'
 import Breadcrumbs from './Breadcrumbs'
@@ -28,16 +29,16 @@ import { ImagePreview, BinaryNotice } from './ImagePreview'
 import { useLSP } from '../hooks/useLSP'
 import { useCollab } from '../hooks/useCollab'
 import { useYDoc } from '../hooks/useYDoc'
-import ShareModal from './ShareModal'
 import Chat from './Chat'
 import ApiClient from './ApiClient'
-import ApiCollections from './ApiCollections'
+import { ApiInstance } from './ApiView'
+import LogView from './LogView'
 import { useApiClient } from '../hooks/useApiClient'
 import GitGraphView from './GitGraphView'
 import FloatingTerminals from './FloatingTerminals'
 import RemoteCursors from './RemoteCursors'
-import TasksPanel from './TasksPanel'
-import DebugPanel from './DebugPanel'
+import ViewTabs, { type ViewTab } from './ViewTabs'
+import ViewMenu from './ViewMenu'
 import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
 import { workspaceUrl } from '../api'
@@ -69,6 +70,107 @@ export interface IDEProps {
   role: string
 }
 
+export type MenuPlacement =
+  | 'left-icons'
+  | 'left-icons-and-text'
+  | 'bottom-icons'
+  | 'left-of-tabs'
+  | 'right-of-tabs'
+
+export interface ContainerInfo {
+  id: number
+  visible: boolean
+}
+
+type ViewKind = 'files' | 'search' | 'code' | 'web' | 'git' | 'api' | 'settings' | 'log' | 'help' | 'terminals' | 'chat'
+
+// The layout a fresh install starts with (and what "Reset view" restores).
+const DEFAULT_VISIBLE: Record<ViewKind, boolean> = {
+  files: true, search: false, code: true, web: false, git: false, api: false,
+  settings: false, log: false, help: false, terminals: false, chat: false,
+}
+
+// Geometry of a `float` tab: it stays on top of the main container and is moved
+// by dragging its title bar.
+interface FloatGeom {
+  x: number
+  y: number
+  w: number
+  h: number
+  z: number
+}
+
+interface FloatWindowProps {
+  geom: FloatGeom
+  title: string
+  icon: ViewTab['icon']
+  onChange: (g: FloatGeom) => void
+  onRaise: () => void
+  onRestore: () => void
+  children: ReactNode
+}
+
+function FloatWindow({ geom, title, icon: Icon, onChange, onRaise, onRestore, children }: FloatWindowProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ dx: number; dy: number; rect: DOMRect } | null>(null)
+
+  const startDrag = (e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    const el = ref.current
+    const parent = el?.parentElement
+    if (!el || !parent) return
+    e.preventDefault()
+    onRaise()
+    const rect = parent.getBoundingClientRect()
+    drag.current = {
+      dx: e.clientX - rect.left - geom.x,
+      dy: e.clientY - rect.top - geom.y,
+      rect,
+    }
+    const move = (ev: PointerEvent) => {
+      const d = drag.current
+      if (!d) return
+      const x = Math.max(0, Math.min(ev.clientX - d.rect.left - d.dx, d.rect.width - 80))
+      const y = Math.max(0, Math.min(ev.clientY - d.rect.top - d.dy, d.rect.height - 40))
+      onChange({ ...geom, x, y })
+    }
+    const up = () => {
+      drag.current = null
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  return (
+    <div
+      ref={ref}
+      data-float
+      onPointerDown={onRaise}
+      style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h, zIndex: geom.z, maxWidth: 'calc(100% - 16px)', maxHeight: 'calc(100% - 16px)' }}
+      className="absolute flex flex-col rounded-lg border border-border shadow-2xl overflow-hidden bg-bg-primary"
+    >
+      <div
+        onPointerDown={startDrag}
+        className="flex items-center gap-2 h-8 px-2.5 border-b border-border bg-bg-secondary shrink-0 cursor-move select-none touch-none"
+      >
+        <Icon className="w-3.5 h-3.5 text-text-muted shrink-0" />
+        <span className="text-[12px] font-medium text-text-secondary truncate">{title}</span>
+        <span className="text-[10px] text-text-muted uppercase tracking-wide">float</span>
+        <button
+          onClick={onRestore}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="ml-auto p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover"
+          title="Restore to center">
+          <Minimize2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="flex-1 min-h-0">{children}</div>
+    </div>
+  )
+}
+
 interface FileReadResponse {
   content?: string
   fileType?: 'image' | 'binary'
@@ -78,6 +180,7 @@ interface FileReadResponse {
 
 export default function IDE({ token, authFetch, onLogout, workspace, recents, onWorkspaceChange, workspacesApi, workspaceId, username, onUsernameChange, role }: IDEProps) {
   const isMobile = useMobile()
+  const { desktopMode, setDesktopMode } = useDesktopMode()
   const { isDark, toggle: toggleTheme } = useTheme()
 
   const [tabs, setTabs] = useState<Tab[]>(() => {
@@ -104,6 +207,294 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   // and synced across collaborators (list + window positions).
   const terminalsApi = useTerminals(authFetch, workspaceId, { sendTerminals, onTerminals })
 
+  // ── Unified flat tabs ──
+  // Every open thing is a sibling tab in one container: the explorer, search,
+  // each file, each web view, git, each API client, settings, log, help, each
+  // terminal, chat. The hamburger menu controls which types are visible; it is
+  // the only place that adds instances (swipe right) or hides a type.
+  const VIEW_TABS: ViewTab[] = [
+    { kind: 'files', label: 'Files', icon: Files },
+    { kind: 'search', label: 'Search', icon: SearchIcon },
+    { kind: 'code', label: 'Code', icon: Code2 },
+    { kind: 'web', label: 'Web', icon: Globe },
+    { kind: 'git', label: 'Git', icon: GitBranch },
+    { kind: 'api', label: 'API', icon: Webhook },
+    { kind: 'settings', label: 'Settings', icon: SettingsIcon },
+    { kind: 'log', label: 'Log', icon: ScrollText },
+    { kind: 'help', label: 'Help', icon: HelpCircle },
+    { kind: 'terminals', label: 'Terminals', icon: TerminalSquare },
+    { kind: 'chat', label: 'Chat', icon: MessageSquare },
+  ]
+  const [visible, setVisible] = useState<Record<ViewKind, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('wede_visible')
+      if (saved) return { ...DEFAULT_VISIBLE, ...(JSON.parse(saved) as Partial<Record<ViewKind, boolean>>) }
+    } catch { /* ignore */ }
+    return DEFAULT_VISIBLE
+  })
+  const [tabOrder, setTabOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('wede_tab_order')
+      if (saved) return JSON.parse(saved) as string[]
+    } catch { /* ignore */ }
+    return []
+  })
+  const [activeShell, setActiveShell] = useState<string>(() => localStorage.getItem('wede_active_shell') || 'view:files')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPlacement, setMenuPlacement] = useState<MenuPlacement>(() => {
+    const saved = localStorage.getItem('wede_menu_placement') as MenuPlacement | null
+    return saved || (desktopMode ? 'left-icons-and-text' : 'left-of-tabs')
+  })
+  const [containers, setContainers] = useState<ContainerInfo[]>(() => {
+    try {
+      const saved = localStorage.getItem('wede_containers')
+      if (saved) return JSON.parse(saved) as ContainerInfo[]
+    } catch { /* ignore */ }
+    return [{ id: 1, visible: false }]
+  })
+  const [lockedShells, setLockedShells] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('wede_locked_shells')
+      if (saved) return JSON.parse(saved) as string[]
+    } catch { /* ignore */ }
+    return []
+  })
+  const [viewModes, setViewModes] = useState<Record<string, ViewMode>>(() => {
+    try {
+      const saved = localStorage.getItem('wede_view_modes')
+      if (saved) {
+        const raw = JSON.parse(saved) as Record<string, string>
+        const next: Record<string, ViewMode> = {}
+        for (const [id, mode] of Object.entries(raw)) {
+          next[id] = (
+            mode === 'float-left' ? 'docked-left'
+              : mode === 'float-right' ? 'docked-right'
+                : mode === 'float-bottom' ? 'docked-bottom'
+                  : mode
+          ) as ViewMode
+        }
+        return next
+      }
+    } catch { /* ignore */ }
+    return {}
+  })
+  const [floatGeom, setFloatGeom] = useState<Record<string, FloatGeom>>(() => {
+    try {
+      const saved = localStorage.getItem('wede_float_geom')
+      if (saved) return JSON.parse(saved) as Record<string, FloatGeom>
+    } catch { /* ignore */ }
+    return {}
+  })
+  const floatZ = useRef(30)
+  const [apiIds, setApiIds] = useState<number[]>([1])
+  const [activeApiId, setActiveApiId] = useState(1)
+  const nextApiId = useRef(2)
+  const [searchIds, setSearchIds] = useState<number[]>([1])
+  const [activeSearchId, setActiveSearchId] = useState(1)
+  const nextSearchId = useRef(2)
+  const [logIds, setLogIds] = useState<number[]>([1])
+  const [activeLogId, setActiveLogId] = useState(1)
+  const nextLogId = useRef(2)
+
+  const addWeb = useCallback((url = 'https://wede.vulos.org') => {
+    const id = `browser:${++browserIdCounter}`
+    setTabs((prev) => [...prev, { path: id, name: urlToName(url), type: 'browser', url, content: '', originalContent: '', modified: false }])
+    setVisible((v) => ({ ...v, web: true }))
+    setActiveTab(id)
+    setActiveShell(`web:${id}`)
+    return id
+  }, [])
+
+  const addApi = useCallback(() => {
+    const id = nextApiId.current++
+    setApiIds((prev) => [...prev, id])
+    setActiveApiId(id)
+    setVisible((v) => ({ ...v, api: true }))
+    setActiveShell(`api:${id}`)
+    return id
+  }, [])
+
+  const addSearch = useCallback(() => {
+    const id = nextSearchId.current++
+    setSearchIds((prev) => [...prev, id])
+    setActiveSearchId(id)
+    setVisible((v) => ({ ...v, search: true }))
+    setActiveShell(`search:${id}`)
+    return id
+  }, [])
+
+  const addLog = useCallback(() => {
+    const id = nextLogId.current++
+    setLogIds((prev) => [...prev, id])
+    setActiveLogId(id)
+    setVisible((v) => ({ ...v, log: true }))
+    setActiveShell(`log:${id}`)
+    return id
+  }, [])
+
+  const addTerminalTab = useCallback(() => {
+    const id = terminalsApi.addTerminal()
+    setVisible((v) => ({ ...v, terminals: true }))
+    setActiveShell(`term:${id}`)
+    return id
+  }, [terminalsApi])
+
+  const toggleVisible = useCallback((kind: ViewKind) => {
+    const noInstances =
+      (kind === 'web' && !tabs.some((t) => t.type === 'browser')) ||
+      (kind === 'api' && apiIds.length === 0) ||
+      (kind === 'terminals' && terminalsApi.terminals.length === 0) ||
+      (kind === 'search' && searchIds.length === 0) ||
+      (kind === 'log' && logIds.length === 0)
+    const turningOn = !visible[kind] || noInstances
+    if (turningOn) {
+      if (kind === 'web') {
+        const existing = tabs.find((t) => t.type === 'browser')
+        if (!existing) { addWeb(); return }
+        setActiveTab(existing.path)
+        setActiveShell(`web:${existing.path}`)
+      } else if (kind === 'api') {
+        if (apiIds.length === 0) { addApi(); return }
+        setActiveShell(`api:${activeApiId}`)
+      } else if (kind === 'terminals') {
+        if (terminalsApi.terminals.length === 0) { addTerminalTab(); return }
+        const id = terminalsApi.activeId ?? terminalsApi.terminals[0].id
+        terminalsApi.setActiveId(id)
+        setActiveShell(`term:${id}`)
+      } else if (kind === 'search') {
+        if (searchIds.length === 0) { addSearch(); return }
+        setActiveShell(`search:${activeSearchId}`)
+      } else if (kind === 'log') {
+        if (logIds.length === 0) { addLog(); return }
+        setActiveShell(`log:${activeLogId}`)
+      } else {
+        setActiveShell(`view:${kind}`)
+      }
+    }
+    setVisible((v) => ({ ...v, [kind]: turningOn }))
+  }, [visible, tabs, apiIds, activeApiId, terminalsApi, searchIds, activeSearchId, logIds, activeLogId, addWeb, addApi, addTerminalTab, addSearch, addLog])
+
+  const showView = useCallback((kind: ViewKind) => {
+    setVisible((v) => ({ ...v, [kind]: true }))
+    if (kind === 'search') {
+      if (searchIds.length === 0) { addSearch(); return }
+      setActiveShell(`search:${activeSearchId}`)
+    } else if (kind === 'log') {
+      if (logIds.length === 0) { addLog(); return }
+      setActiveShell(`log:${activeLogId}`)
+    } else if (kind === 'web') {
+      const existing = tabs.find((t) => t.type === 'browser')
+      if (!existing) { addWeb(); return }
+      setActiveTab(existing.path)
+      setActiveShell(`web:${existing.path}`)
+    } else if (kind === 'api') {
+      if (apiIds.length === 0) { addApi(); return }
+      setActiveShell(`api:${activeApiId}`)
+    } else if (kind === 'terminals') {
+      if (terminalsApi.terminals.length === 0) { addTerminalTab(); return }
+      const id = terminalsApi.activeId ?? terminalsApi.terminals[0].id
+      terminalsApi.setActiveId(id)
+      setActiveShell(`term:${id}`)
+    } else {
+      setActiveShell(`view:${kind}`)
+    }
+  }, [searchIds, activeSearchId, logIds, activeLogId, tabs, apiIds, activeApiId, terminalsApi, addSearch, addLog, addWeb, addApi, addTerminalTab])
+
+  const addContainer = useCallback(() => {
+    const id = (containers[containers.length - 1]?.id || 0) + 1
+    setContainers((prev) => [...prev, { id, visible: true }])
+    setActiveShell(`container:${id}`)
+  }, [containers])
+  const toggleContainer = useCallback((id: number) => {
+    const target = containers.find((c) => c.id === id)
+    const nextVisible = !target?.visible
+    setContainers((prev) => prev.map((c) => (c.id === id ? { ...c, visible: nextVisible } : c)))
+    if (nextVisible) setActiveShell(`container:${id}`)
+  }, [containers])
+
+  interface ShellEntry {
+    id: string
+    kind: ViewKind | 'container'
+    title: string
+    icon: ViewTab['icon']
+    filePath?: string
+    webPath?: string
+    apiId?: number
+    termId?: number
+    searchId?: number
+    logId?: number
+    containerId?: number
+  }
+
+  const entries = useMemo<ShellEntry[]>(() => {
+    const list: ShellEntry[] = []
+    const pushView = (kind: ViewKind, title: string, icon: ViewTab['icon']) =>
+      list.push({ id: `view:${kind}`, kind, title, icon })
+    if (visible.files) pushView('files', 'Files', Files)
+    if (visible.search) for (const id of searchIds) list.push({ id: `search:${id}`, kind: 'search', title: `Search ${id}`, icon: SearchIcon, searchId: id })
+    if (visible.code) {
+      const fileTabs = tabs.filter((t) => !t.type || t.type === 'gitgraph')
+      for (const t of fileTabs) list.push({ id: `file:${t.path}`, kind: 'code', title: t.name || 'Editor', icon: Code2, filePath: t.path })
+    }
+    if (visible.web) {
+      for (const t of tabs.filter((t) => t.type === 'browser')) {
+        list.push({ id: `web:${t.path}`, kind: 'web', title: t.name || 'Web', icon: Globe, webPath: t.path })
+      }
+    }
+    if (visible.git) pushView('git', 'Git', GitBranch)
+    if (visible.api) for (const id of apiIds) list.push({ id: `api:${id}`, kind: 'api', title: `API ${id}`, icon: Webhook, apiId: id })
+    if (visible.settings) pushView('settings', 'Settings', SettingsIcon)
+    if (visible.log) for (const id of logIds) list.push({ id: `log:${id}`, kind: 'log', title: `Log ${id}`, icon: ScrollText, logId: id })
+    if (visible.help) pushView('help', 'Help', HelpCircle)
+    for (const c of containers.filter((x) => x.visible)) {
+      list.push({ id: `container:${c.id}`, kind: 'container', title: `Container ${c.id}`, icon: Boxes, containerId: c.id })
+    }
+    if (visible.terminals) {
+      for (const t of terminalsApi.terminals) list.push({ id: `term:${t.id}`, kind: 'terminals', title: t.name, icon: TerminalSquare, termId: t.id })
+    }
+    if (visible.chat) pushView('chat', 'Chat', MessageSquare)
+    const order = (id: string) => {
+      const i = tabOrder.indexOf(id)
+      return i < 0 ? Number.MAX_SAFE_INTEGER : i
+    }
+    return list.sort((a, b) => order(a.id) - order(b.id))
+  }, [visible, tabs, apiIds, searchIds, logIds, containers, terminalsApi.terminals, tabOrder])
+
+  const activeEntry = entries.find((e) => e.id === activeShell) ?? entries[0] ?? null
+  const activeMode: ViewMode = activeEntry ? (viewModes[activeEntry.id] || 'center') : 'center'
+
+  const shellFrameClass = (mode: ViewMode): string => {
+    switch (mode) {
+      case 'max': return 'fixed inset-0 z-40 bg-bg-primary flex flex-col'
+      // docked-* are in-flow like CSS float: a bordered pane, not an overlay.
+      case 'docked-left': return 'absolute top-2 bottom-2 left-2 w-[46%] min-w-[280px] max-w-[720px] border border-border overflow-hidden bg-bg-primary flex flex-col'
+      case 'docked-right': return 'absolute top-2 bottom-2 right-2 w-[46%] min-w-[280px] max-w-[720px] border border-border overflow-hidden bg-bg-primary flex flex-col'
+      case 'docked-bottom': return 'absolute bottom-2 left-2 right-2 h-[46%] min-h-[180px] border border-border overflow-hidden bg-bg-primary flex flex-col'
+      // float is the always-on-top overlay.
+      case 'float': return 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[70%] h-[70%] min-w-[320px] min-h-[220px] rounded-lg border border-border shadow-2xl overflow-hidden bg-bg-primary z-20 flex flex-col'
+      default: return 'absolute inset-0 flex flex-col'
+    }
+  }
+
+  useEffect(() => {
+    if (!entries.length || entries.some((e) => e.id === activeShell)) return
+    const e = entries[0]
+    setActiveShell(e.id)
+    if (e.filePath) setActiveTab(e.filePath)
+    else if (e.webPath) setActiveTab(e.webPath)
+    else if (e.apiId != null) setActiveApiId(e.apiId)
+    else if (e.termId != null) terminalsApi.setActiveId(e.termId)
+    else setActiveTab(null)
+  }, [entries, activeShell, setActiveTab, terminalsApi])
+  useEffect(() => { try { localStorage.setItem('wede_visible', JSON.stringify(visible)) } catch { /* ignore */ } }, [visible])
+  useEffect(() => { try { localStorage.setItem('wede_tab_order', JSON.stringify(tabOrder)) } catch { /* ignore */ } }, [tabOrder])
+  useEffect(() => { try { localStorage.setItem('wede_active_shell', activeShell) } catch { /* ignore */ } }, [activeShell])
+  useEffect(() => { try { localStorage.setItem('wede_menu_placement', menuPlacement) } catch { /* ignore */ } }, [menuPlacement])
+  useEffect(() => { try { localStorage.setItem('wede_containers', JSON.stringify(containers)) } catch { /* ignore */ } }, [containers])
+  useEffect(() => { try { localStorage.setItem('wede_locked_shells', JSON.stringify(lockedShells)) } catch { /* ignore */ } }, [lockedShells])
+  useEffect(() => { try { localStorage.setItem('wede_view_modes', JSON.stringify(viewModes)) } catch { /* ignore */ } }, [viewModes])
+  useEffect(() => { try { localStorage.setItem('wede_float_geom', JSON.stringify(floatGeom)) } catch { /* ignore */ } }, [floatGeom])
+
   // Tasks (global + trusted project .wede/tasks.json) — run in a new terminal.
   const [tasks, setTasks] = useState<Task[]>([])
   const fetchTasks = useCallback(() => {
@@ -114,9 +505,17 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   const runTask = useCallback((task: Task) => {
     if (role === 'viewer' || !task?.command) return
     const cmd = task.cwd ? `cd '${task.cwd}' && ${task.command}` : task.command
-    setTerminalMode((m) => (m === 'hidden' ? 'docked' : m))
-    terminalsApi.addTerminal(task.name || 'Task', cmd)
+    const id = terminalsApi.addTerminal(task.name || 'Task', cmd)
+    setVisible((v) => ({ ...v, terminals: true }))
+    setActiveShell(`term:${id}`)
   }, [role, terminalsApi])
+
+  // Closing the last terminal leaves an empty terminal list. Uncheck the
+  // Terminals menu row too, so the UI doesn't claim a view exists with no tabs.
+  useEffect(() => {
+    if (terminalsApi.terminals.length > 0) return
+    setVisible((v) => (v.terminals ? { ...v, terminals: false } : v))
+  }, [terminalsApi.terminals.length])
 
   // Debugging (DAP) — adapter availability, breakpoints, and the live session.
   const dap = useDap({ workspaceId, token })
@@ -157,35 +556,22 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   const currentStopLine = (dap.stopLine && activeRel &&
     (dap.stopLine.path === absPath(activeRel) || dap.stopLine.path?.endsWith('/' + activeRel)))
     ? dap.stopLine.line : null
-  // Terminal placement: 'hidden' | 'floating' (movable windows) | 'docked' (bottom).
-  type TerminalMode = 'hidden' | 'floating' | 'docked'
-  const [terminalMode, setTerminalMode] = useState<TerminalMode>('hidden')
-  const lastTermModeRef = useRef<TerminalMode>('floating')
-  const toggleTerminal = useCallback(() => {
-    setTerminalMode((m) => {
-      if (m === 'hidden') return lastTermModeRef.current
-      lastTermModeRef.current = m
-      return 'hidden'
-    })
-  }, [])
-  const dockTerminal = useCallback(() => { lastTermModeRef.current = 'docked'; setTerminalMode('docked') }, [])
-  const floatTerminal = useCallback(() => { lastTermModeRef.current = 'floating'; setTerminalMode('floating') }, [])
-  const [terminalHeight, setTerminalHeight] = useState(260)
+  // Terminals live in their own view tab; floating windows are an overlay.
+  const [floatingTerminals, setFloatingTerminals] = useState(false)
+  const toggleTerminal = useCallback(() => { toggleVisible('terminals') }, [toggleVisible])
+  const dockTerminal = useCallback(() => {
+    setFloatingTerminals(false)
+    setVisible((v) => ({ ...v, terminals: true }))
+    const first = terminalsApi.terminals[0]
+    if (first) setActiveShell(`term:${first.id}`)
+  }, [terminalsApi.terminals])
+  const floatTerminal = useCallback(() => { setFloatingTerminals(true) }, [])
   useEffect(() => { setCollabViewing(parseFileKey(activeTab || '').rel, 0) }, [activeTab, setCollabViewing])
 
-  const [showSidebar, setShowSidebar] = useState(true)
-  const [sidebarTab, setSidebarTab] = useState('files')
-  const [showSettings, setShowSettings] = useState(false)
-
-  type MobilePanel = 'files' | 'search' | 'code' | 'terminal' | 'git' | 'settings'
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>('files')
-  const [mobileMenu, setMobileMenu] = useState(false)
   const [termFullscreen, setTermFullscreen] = useState(false)
 
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [pickerMode, setPickerMode] = useState<'open' | 'add'>('open') // 'open' = switch workspace; 'add' = add a root
-  const [showShareModal, setShowShareModal] = useState(false)
-  const [showUserMenu, setShowUserMenu] = useState(false)
   const [saving, setSaving] = useState(false)
   const [autoSaveStatus, setAutoSaveStatus] = useState<'' | 'saving' | 'saved'>('') // 'saving'|'saved'|''
   const [showCommandPalette, setShowCommandPalette] = useState(false)
@@ -239,8 +625,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     editorActionsRef.current = actions
   }, [])
 
-  const [sidebarWidth, setSidebarWidth] = useState(260)
-  const [settingsWidth, setSettingsWidth] = useState(320)
   const [terminalKey, setTerminalKey] = useState(0)
 
   // Status bar info
@@ -248,7 +632,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   const [gitChanges, setGitChanges] = useState(0)
   const [cursor, setCursor] = useState({ line: 1, col: 1 })
 
-  const resizingRef = useRef<{ type: 'sidebar' | 'terminal' | 'settings', startX: number, startY: number } | null>(null)
   const folderName = workspace?.split('/').pop() || 'wede'
 
   // Persist open tabs to localStorage (rel + workspaceId let multi-root tabs be
@@ -409,6 +792,131 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     setTabs((prev) => prev.map((t) => (set.has(t.path) ? { ...t, locked } : t)))
   }, [])
 
+  // reorderTabs moves tab `from` to `to`'s position (drag & drop). The order is
+  // persisted by the existing tabs effect, so it survives a reload.
+  const reorderTabs = useCallback((from: string, to: string) => {
+    setTabs((prev) => {
+      const fromIdx = prev.findIndex((t) => t.path === from)
+      const toIdx = prev.findIndex((t) => t.path === to)
+      if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return prev
+      const next = prev.slice()
+      const [moved] = next.splice(fromIdx, 1)
+      next.splice(toIdx, 0, moved)
+      return next
+    })
+  }, [])
+
+  // ── Flat shell tab handlers ──
+  const selectShell = useCallback((id: string) => {
+    setActiveShell(id)
+    const e = entries.find((x) => x.id === id)
+    if (!e) return
+    if (e.filePath) setActiveTab(e.filePath)
+    else if (e.webPath) setActiveTab(e.webPath)
+    else if (e.apiId != null) setActiveApiId(e.apiId)
+    else if (e.searchId != null) setActiveSearchId(e.searchId)
+    else if (e.logId != null) setActiveLogId(e.logId)
+    else if (e.termId != null) terminalsApi.setActiveId(e.termId)
+    else setActiveTab(null)
+    if (!desktopMode) setMenuOpen(false)
+  }, [entries, terminalsApi, desktopMode])
+
+  const setShellLock = useCallback((ids: string[], locked: boolean) => {
+    setLockedShells((prev) => {
+      const next = new Set(prev)
+      for (const id of ids) {
+        if (locked) next.add(id)
+        else next.delete(id)
+      }
+      return Array.from(next)
+    })
+  }, [])
+
+  const setShellViewMode = useCallback((ids: string[], mode: ViewMode) => {
+    setViewModes((prev) => {
+      const next = { ...prev }
+      for (const id of ids) next[id] = mode
+      return next
+    })
+  }, [])
+
+  // Reset view restores the fresh-install layout: every open tab is closed,
+  // optional views are hidden, and per-tab modes/locks/positions are cleared.
+  // Terminal sessions keep running (just hidden) so a layout reset never kills
+  // a process.
+  const resetView = useCallback(() => {
+    setTabs([])
+    setActiveTab(null)
+    setVisible({ ...DEFAULT_VISIBLE })
+    setViewModes({})
+    setFloatGeom({})
+    setLockedShells([])
+    setTabOrder([])
+    setActiveShell('view:files')
+    setApiIds([1])
+    setActiveApiId(1)
+    nextApiId.current = 2
+    setSearchIds([1])
+    setActiveSearchId(1)
+    nextSearchId.current = 2
+    setLogIds([1])
+    setActiveLogId(1)
+    nextLogId.current = 2
+    setContainers([{ id: 1, visible: false }])
+    setFloatingTerminals(false)
+    setTermFullscreen(false)
+    setMdPreviewPaths(new Set())
+    terminalsApi.resetTerminals()
+    setMenuOpen(false)
+  }, [terminalsApi])
+
+  const closeShell = useCallback((id: string) => {
+    if (lockedShells.includes(id)) return
+    const e = entries.find((x) => x.id === id)
+    if (!e) return
+    if (e.filePath) { closeTab(e.filePath); return }
+    if (e.webPath) { closeTab(e.webPath); return }
+    if (e.apiId != null) { setApiIds((prev) => prev.filter((x) => x !== e.apiId)); return }
+    if (e.searchId != null) { setSearchIds((prev) => prev.filter((x) => x !== e.searchId)); return }
+    if (e.logId != null) { setLogIds((prev) => prev.filter((x) => x !== e.logId)); return }
+    if (e.containerId != null) {
+      setContainers((prev) => prev.map((c) => (c.id === e.containerId ? { ...c, visible: false } : c)))
+      return
+    }
+    if (e.termId != null) { terminalsApi.closeTerminal(e.termId); return }
+    setVisible((v) => ({ ...v, [e.kind]: false }))
+  }, [entries, closeTab, terminalsApi, lockedShells])
+
+  const closeSelectedShells = useCallback((ids: string[]) => {
+    for (const id of ids) {
+      if (lockedShells.includes(id)) continue
+      const e = entries.find((x) => x.id === id)
+      if (!e) continue
+      if (e.filePath) closeTab(e.filePath)
+      else if (e.webPath) closeTab(e.webPath)
+      else if (e.apiId != null) setApiIds((prev) => prev.filter((x) => x !== e.apiId))
+      else if (e.searchId != null) setSearchIds((prev) => prev.filter((x) => x !== e.searchId))
+      else if (e.logId != null) setLogIds((prev) => prev.filter((x) => x !== e.logId))
+      else if (e.containerId != null) setContainers((prev) => prev.map((c) => (c.id === e.containerId ? { ...c, visible: false } : c)))
+      else if (e.termId != null) terminalsApi.closeTerminal(e.termId)
+      else setVisible((v) => ({ ...v, [e.kind]: false }))
+    }
+  }, [entries, closeTab, terminalsApi, lockedShells])
+
+  const reorderShell = useCallback((from: string, to: string) => {
+    setTabOrder((prev) => {
+      const ids = entries.map((e) => e.id)
+      const base = [...new Set([...prev.filter((id) => ids.includes(id)), ...ids])]
+      const a = base.indexOf(from)
+      const b = base.indexOf(to)
+      if (a < 0 || b < 0 || a === b) return prev
+      const next = base.slice()
+      const [moved] = next.splice(a, 1)
+      next.splice(b, 0, moved)
+      return next
+    })
+  }, [entries])
+
   // ── Global keyboard shortcuts ──
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -423,9 +931,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'F') {
         e.preventDefault()
-        // Open search sidebar.
-        setSidebarTab('search')
-        setShowSidebar(true)
+        showView('search')
       }
       // Ctrl+G — go to line (only when an editor tab is active; let the editor
       // keymap handle it when the editor has focus; this catches the case where
@@ -436,30 +942,30 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
           editorActionsRef.current?.goToLine()
         }
       }
-      // Ctrl/Cmd+B — toggle the sidebar (VS Code parity)
+      // Ctrl/Cmd+B — toggle the explorer (VS Code parity)
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'b') {
         e.preventDefault()
-        setShowSidebar((s) => !s)
+        setVisible((v) => ({ ...v, files: !v.files }))
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [activeTab])
+  }, [activeTab, showView])
 
   // Ctrl/Cmd+W — close active tab
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'w') {
-        // Only intercept if there is an active tab (let browser handle otherwise)
-        if (activeTab) {
+        // Close the active flat tab (file, web, API, terminal or a whole view).
+        if (activeShell) {
           e.preventDefault()
-          closeTab(activeTab)
+          closeShell(activeShell)
         }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [activeTab, closeTab])
+  }, [activeShell, closeShell])
 
   // ── Save All modified tabs ──
   const saveAll = useCallback(async () => {
@@ -504,58 +1010,33 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
   }, [authFetch])
 
-  // ── Open a browser tab ──
-  const openBrowser = useCallback((url = 'https://wede.vulos.org') => {
-    const existing = tabs.find((t) => t.type === 'browser')
-    if (existing) {
-      setTabs((prev) => prev.map((t) =>
-        t.path === existing.path ? { ...t, url, name: urlToName(url) } : t
-      ))
-      setActiveTab(existing.path)
-      if (isMobile) setMobilePanel('code')
-      return
-    }
-    const id = `browser:${++browserIdCounter}`
-    setTabs((prev) => [...prev, {
-      path: id, name: urlToName(url), type: 'browser', url,
-      content: '', originalContent: '', modified: false,
-    }])
-    setActiveTab(id)
-    if (isMobile) setMobilePanel('code')
-  }, [tabs, isMobile])
+  // ── Open a web view tab ──
+  const openBrowser = useCallback((url = 'https://wede.vulos.org') => addWeb(url), [addWeb])
 
-  // Open the git graph + commit history as a full-width editor tab (VS Code-style).
+  // Open the git graph + commit history as a flat code tab (VS Code-style).
   const openGitGraph = useCallback(() => {
     const existing = tabs.find((t) => t.type === 'gitgraph')
-    if (existing) { setActiveTab(existing.path); if (isMobile) setMobilePanel('code'); return }
-    const id = 'gitgraph:1'
-    setTabs((prev) => [...prev, { path: id, name: 'Git Graph', type: 'gitgraph', content: '', originalContent: '', modified: false }])
-    setActiveTab(id)
-    if (isMobile) setMobilePanel('code')
-  }, [tabs, isMobile])
-
-  // Open the built-in API client (Postman-style) as a full-width editor tab.
-  const openApiClient = useCallback(() => {
-    const existing = tabs.find((t) => t.type === 'apiclient')
     if (existing) {
+      setVisible((v) => ({ ...v, code: true }))
       setActiveTab(existing.path)
-      if (isMobile) setMobilePanel('code')
+      setActiveShell(`file:${existing.path}`)
       return
     }
-    const id = 'apiclient:1'
-    setTabs((prev) => [...prev, {
-      path: id, name: 'API Client', type: 'apiclient',
-      content: '', originalContent: '', modified: false,
-    }])
+    const id = 'gitgraph:1'
+    setTabs((prev) => [...prev, { path: id, name: 'Git Graph', type: 'gitgraph', content: '', originalContent: '', modified: false }])
+    setVisible((v) => ({ ...v, code: true }))
     setActiveTab(id)
-    if (isMobile) setMobilePanel('code')
-  }, [tabs, isMobile])
+    setActiveShell(`file:${id}`)
+  }, [tabs])
+
+  // Open another API client instance (flat tab, like terminals).
+  const openApiClient = useCallback(() => addApi(), [addApi])
 
   // Capture link clicks → open in preview browser
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null
-      const a = target?.closest('a[href]')
+      const a = target?.closest('a[href]') as HTMLAnchorElement | null
       if (!a) return
       const href = a.getAttribute('href')
       if (!href) return
@@ -576,41 +1057,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       document.removeEventListener('auxclick', handler, true)
     }
   }, [openBrowser])
-
-  const toggleSidebarTab = (tab: string) => {
-    if (sidebarTab === tab && showSidebar) setShowSidebar(false)
-    else { setSidebarTab(tab); setShowSidebar(true) }
-  }
-
-  const handleMouseDown = (type: 'sidebar' | 'terminal' | 'settings') => (e: React.MouseEvent) => {
-    e.preventDefault()
-    resizingRef.current = { type, startX: e.clientX, startY: e.clientY }
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!resizingRef.current) return
-      const { type, startX, startY } = resizingRef.current
-      if (type === 'sidebar') {
-        setSidebarWidth((w) => Math.max(180, Math.min(500, w + (e.clientX - startX))))
-        resizingRef.current.startX = e.clientX
-      } else if (type === 'terminal') {
-        setTerminalHeight((h) => Math.max(100, Math.min(600, h + (startY - e.clientY))))
-        resizingRef.current.startY = e.clientY
-      } else if (type === 'settings') {
-        setSettingsWidth((w) => Math.max(200, Math.min(500, w + (startX - e.clientX))))
-        resizingRef.current.startX = e.clientX
-      }
-    }
-    const handleMouseUp = () => {
-      resizingRef.current = null
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-    document.body.style.cursor = type === 'terminal' ? 'row-resize' : 'col-resize'
-    document.body.style.userSelect = 'none'
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-  }
 
   const handleWorkspaceOpen = (path: string) => {
     setTabs([])
@@ -648,10 +1094,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     try { await workspacesApi.closeWorkspace(id) } catch { /* ignore */ }
   }, [workspacesApi])
 
-  // openFile follows VS Code's preview-tab model: a single click opens the file
-  // in a reusable "preview" tab (italic) that the next single-click replaces;
-  // editing it — or a double-click ({ preview: false }) — pins it as a real tab.
-  const openFile = useCallback(async (entry: FileEntry, { preview = true }: { preview?: boolean } = {}) => {
+  // openFile opens (or focuses) a real tab. Single clicks accumulate tabs; the
+  // preview model is gone so browsing a folder does not replace the previous file.
+  const openFile = useCallback(async (entry: FileEntry, { preview = false }: { preview?: boolean } = {}) => {
     if (entry.isDir) return
     // Entries from the file tree carry {workspaceId, rel}; entries from search /
     // quick-open (which target the active workspace) carry only {path} — default
@@ -665,8 +1110,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       if (!preview && existing.preview) {
         setTabs((prev) => prev.map((t) => (t.path === key ? { ...t, preview: false } : t)))
       }
+      setVisible((v) => ({ ...v, code: true }))
       setActiveTab(key)
-      if (isMobile) setMobilePanel('code')
+      setActiveShell(`file:${key}`)
       return
     }
     try {
@@ -683,18 +1129,12 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
         tab.fileType = 'binary'
         tab.size = data.size
       }
-      setTabs((prev) => {
-        // Reuse the existing unedited preview tab so browsing files doesn't pile up tabs.
-        if (preview) {
-          const idx = prev.findIndex((t) => t.preview && !t.modified)
-          if (idx !== -1) { const next = prev.slice(); next[idx] = tab; return next }
-        }
-        return [...prev, tab]
-      })
+      setTabs((prev) => [...prev, tab])
+      setVisible((v) => ({ ...v, code: true }))
       setActiveTab(key)
-      if (isMobile) setMobilePanel('code')
+      setActiveShell(`file:${key}`)
     } catch { /* ignore */ }
-  }, [tabs, authFetch, isMobile, workspaceId])
+  }, [tabs, authFetch, workspaceId])
 
   const updateContent = useCallback((key: string, newContent: string) => {
     setTabs((prev) => prev.map((t) => {
@@ -733,8 +1173,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     } catch { /* ignore — format failure should not block save */ }
   }, [tabs, activeTab, authFetch]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const saveFile = useCallback(async () => {
-    const tab = tabs.find((t) => t.path === activeTab)
+  const saveFile = useCallback(async (key: string | null = activeTab) => {
+    const tab = tabs.find((t) => t.path === key)
     if (!tab?.modified || tab.type === 'browser') return
     // Format on save — run before writing so the formatted content is persisted.
     if (editorSettings.formatOnSave) {
@@ -777,7 +1217,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
         body: JSON.stringify({ path: tab.rel, content: tab.content }),
       })
       setTabs((prev) => prev.map((t) =>
-        t.path === activeTab ? { ...t, originalContent: t.content, modified: false } : t
+        t.path === tab.path ? { ...t, originalContent: t.content, modified: false } : t
       ))
     } catch { /* ignore */ }
     setSaving(false)
@@ -842,68 +1282,77 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     return () => window.removeEventListener('mousemove', onMove)
   }, [shareCursors, sendMouse])
 
-  const renderTabContent = (): ReactNode => {
+  // Render one tab's editor/content. Defaults to the active tab; a floating
+  // window passes its own tab so several floats can show different files.
+  const renderTabContent = (tabArg?: Tab | null): ReactNode => {
     const editable = role !== 'viewer'
-    if (!currentTab) {
+    const tab = tabArg ?? currentTab
+    if (!tab) {
       return <Editor file={null} content={null} onChange={() => {}} onSave={() => {}} settings={editorSettings} editable={editable} />
     }
-    if (currentTab.type === 'browser') {
+    const isActive = tab.path === activeTab
+    const tabRel = parseFileKey(tab.path).rel
+    const tabAbs = absPath(tabRel)
+    const tabStopLine = (dap.stopLine && tabRel &&
+      (dap.stopLine.path === tabAbs || dap.stopLine.path?.endsWith('/' + tabRel)))
+      ? dap.stopLine.line : null
+    if (tab.type === 'browser') {
       return (
         <Browser
-          url={currentTab.url}
+          url={tab.url}
           onUrlChange={(newUrl) => {
             setTabs((prev) => prev.map((t) =>
-              t.path === currentTab.path ? { ...t, url: newUrl, name: urlToName(newUrl) } : t
+              t.path === tab.path ? { ...t, url: newUrl, name: urlToName(newUrl) } : t
             ))
           }}
         />
       )
     }
-    if (currentTab.type === 'apiclient') {
+    if (tab.type === 'apiclient') {
       return <ApiClient api={apiClient} authFetch={authFetch} readOnly={role === 'viewer'} />
     }
-    if (currentTab.type === 'gitgraph') {
+    if (tab.type === 'gitgraph') {
       return <GitGraphView authFetch={authFetch} readOnly={role === 'viewer'} />
     }
-    if (currentTab.fileType === 'image') {
-      return <ImagePreview dataUrl={currentTab.dataUrl} filename={currentTab.name} />
+    if (tab.fileType === 'image') {
+      return <ImagePreview dataUrl={tab.dataUrl} filename={tab.name} />
     }
-    if (currentTab.fileType === 'binary') {
-      return <BinaryNotice filename={currentTab.name} size={currentTab.size} />
+    if (tab.fileType === 'binary') {
+      return <BinaryNotice filename={tab.name} size={tab.size} />
     }
     const editorEl = (
       <Editor
-        file={currentTab}
-        content={currentTab.content ?? null}
-        onChange={(c) => activeTab && updateContent(activeTab, c)}
-        onSave={() => { void saveFile() }}
-        onCursorChange={setCursor}
+        file={tab}
+        content={tab.content ?? null}
+        onChange={(c) => updateContent(tab.path, c)}
+        onSave={() => { void saveFile(tab.path) }}
+        onCursorChange={isActive ? setCursor : undefined}
         settings={editorSettings}
-        lspExtension={lspExtension}
-        onRegisterActions={handleRegisterEditorActions}
-        collab={collab}
+        lspExtension={isActive ? lspExtension : null}
+        onRegisterActions={isActive ? handleRegisterEditorActions : undefined}
+        collab={isActive ? collab : null}
         editable={editable}
-        breakpoints={breakpoints[absPath(activeRel)] || []}
-        onToggleBreakpoint={(ln, lines) => toggleBreakpoint(activeRel, lines)}
-        stopLine={currentStopLine}
+        breakpoints={breakpoints[tabAbs] || []}
+        onToggleBreakpoint={(ln, lines) => toggleBreakpoint(tabRel, lines)}
+        stopLine={tabStopLine}
       />
     )
 
     // Markdown: offer an Edit/Preview toggle that swaps the editor for rendered HTML.
-    const isMarkdown = /\.(md|markdown)$/i.test(currentTab.path || '')
+    const isMarkdown = /\.(md|markdown)$/i.test(tab.path || '')
     if (isMarkdown) {
-      const inPreview = mdPreviewPaths.has(currentTab.path)
+      const inPreview = mdPreviewPaths.has(tab.path)
       return (
         <div className="h-full flex flex-col">
           <div className="flex items-center justify-end px-3 h-7 border-b border-border/50 bg-bg-primary shrink-0">
             <button
-              onClick={() => toggleMdPreview(currentTab.path)}
+              onClick={() => toggleMdPreview(tab.path)}
               className="px-2 py-0.5 rounded-md text-[11px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors">
               {inPreview ? 'Edit' : 'Preview'}
             </button>
           </div>
           <div className="flex-1 min-h-0">
-            {inPreview ? <MarkdownPreview content={currentTab.content} /> : editorEl}
+            {inPreview ? <MarkdownPreview content={tab.content} /> : editorEl}
           </div>
         </div>
       )
@@ -911,35 +1360,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
 
     return editorEl
   }
-
-  // ── Mobile menu overlay ──
-  const MobileMenuOverlay = () => (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" onClick={() => setMobileMenu(false)}>
-      <div className="absolute bottom-16 left-0 right-0 bg-bg-elevated border-t border-border rounded-t-2xl p-4"
-        onClick={(e) => e.stopPropagation()}>
-        <div className="w-8 h-1 bg-bg-active rounded-full mx-auto mb-4" />
-        <div className="grid grid-cols-3 gap-2.5">
-          {[
-            ...(role !== 'viewer' && currentTab?.modified && currentTab.type !== 'browser'
-              ? [{ icon: Save, label: saving ? 'Saving…' : 'Save', action: () => { void saveFile(); setMobileMenu(false) } }]
-              : []),
-            { icon: FolderOpen, label: 'Select Folder', action: () => { setShowFolderPicker(true); setMobileMenu(false) } },
-            { icon: Globe, label: 'Browser', action: () => { openBrowser(); setMobileMenu(false) } },
-            { icon: SettingsIcon, label: 'Settings', action: () => { setMobilePanel('settings'); setMobileMenu(false) } },
-            { icon: isDark ? Sun : Moon, label: isDark ? 'Light' : 'Dark', action: () => { toggleTheme(); setMobileMenu(false) } },
-            { icon: LogOut, label: 'Logout', action: () => { onLogout(); setMobileMenu(false) } },
-            { icon: X, label: 'Close', action: () => setMobileMenu(false) },
-          ].map(({ icon: Icon, label, action }) => (
-            <button key={label} onClick={action}
-              className="flex flex-col items-center gap-2 p-3 rounded-xl bg-bg-secondary border border-border text-text-secondary hover:text-accent hover:border-accent/30 transition-colors">
-              <Icon className="w-5 h-5" />
-              <span className="text-[11px] font-medium">{label}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
 
   if (showFolderPicker) {
     const adding = pickerMode === 'add'
@@ -961,364 +1381,260 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     )
   }
 
-  // ══════════════════════════
-  // ── MOBILE ──
-  // ══════════════════════════
-  if (isMobile) {
-    return (
-      <div className="h-[100dvh] flex flex-col bg-bg-primary">
-
-        <div className="flex-1 min-h-0 relative">
-          {/* Panels stay mounted (hidden, not unmounted) so switching mobile tabs
-              preserves explorer location, search query/results and editor state. */}
-          <div className="h-full" style={{ display: mobilePanel === 'files' ? 'block' : 'none' }}>
-            <FileExplorer authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={handleRegisterExplorerActions} onAddFolder={openAddFolder} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
+  // One renderer per flat shell tab. Every tab fills the same content area;
+  // there are no nested tab strips inside a view.
+  const renderEntry = (e: ShellEntry): ReactNode => {
+    switch (e.kind) {
+      case 'files':
+        return <FileExplorer authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={handleRegisterExplorerActions} onAddFolder={openAddFolder} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
+      case 'search':
+        return <SearchPanel key={e.searchId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} readOnly={role === 'viewer'} onOpenFile={(entry, line) => {
+          const key = fileKey(entry.workspaceId || workspaceId, entry.rel ?? entry.path)
+          void openFile(entry)
+          setTimeout(() => {
+            setTabs((prev) => prev.map((t) => t.path === key ? { ...t, targetLine: line } : t))
+          }, 50)
+        }} />
+      case 'code':
+      case 'web': {
+        // Resolve this entry's own tab (floats render a specific file).
+        const key = e.kind === 'web' ? e.webPath : e.filePath
+        const tab = key ? tabs.find((t) => t.path === key) ?? null : currentTab ?? null
+        return (
+          <div className="h-full flex flex-col bg-bg-primary">
+            {tab && tab.type !== 'browser' && tab.type !== 'apiclient' && tab.type !== 'gitgraph' && tab.fileType == null && (
+              <Breadcrumbs path={tab.rel} />
+            )}
+            <div className="flex-1 min-h-0 relative">{renderTabContent(tab)}</div>
           </div>
-          <div className="h-full" style={{ display: mobilePanel === 'search' ? 'block' : 'none' }}>
-            <SearchPanel authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} readOnly={role === 'viewer'} onOpenFile={(entry, line) => {
-              const key = fileKey(entry.workspaceId || workspaceId, entry.rel ?? entry.path)
-              void openFile(entry)
-              setTimeout(() => {
-                setTabs((prev) => prev.map((t) =>
-                  t.path === key ? { ...t, targetLine: line } : t
-                ))
-              }, 50)
-            }} />
+        )
+      }
+      case 'terminals':
+        if (role === 'viewer') return <div className="h-full flex items-center justify-center text-[12px] text-text-muted">Terminals are disabled for viewers.</div>
+        return (
+          <div className={termFullscreen ? 'fixed inset-0 z-50 bg-bg-primary' : 'h-full'}>
+            <TerminalPanel key={`${terminalKey}-${e.termId}`} token={token} workspaceId={workspaceId} term={terminalsApi} visible onlyId={e.termId}
+              isFullscreen={termFullscreen} onToggleFullscreen={() => setTermFullscreen(!termFullscreen)}
+              onPopOut={floatTerminal} isMobile={!desktopMode} />
           </div>
-          <div className="h-full flex flex-col" style={{ display: mobilePanel === 'code' ? 'flex' : 'none' }}>
-            <EditorTabs tabs={tabs} activeTab={activeTab} onSelect={setActiveTab} onClose={closeTab} onCloseSelected={closeSelectedTabs} onSetLocked={setTabsLocked} />
-            <div className="flex-1 min-h-0">{renderTabContent()}</div>
-          </div>
-          {role !== 'viewer' && (
-            <div className={termFullscreen ? 'fixed inset-0 z-50' : 'absolute inset-0 z-10'} style={{ display: mobilePanel === 'terminal' ? 'block' : 'none' }}>
-              <TerminalPanel key={terminalKey} token={token} workspaceId={workspaceId} term={terminalsApi} visible={mobilePanel === 'terminal'}
-                isFullscreen={termFullscreen} onToggleFullscreen={() => setTermFullscreen(!termFullscreen)} isMobile />
+        )
+      case 'git':
+        return <GitPanels authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} visible readOnly={role === 'viewer'} onOpenGraph={openGitGraph} />
+      case 'chat':
+        return <Chat workspaceId={workspaceId} workspaceName={(workspacesApi?.workspaces || []).find((w) => w.id === workspaceId)?.name} token={token} username={username} color={colorFromName(username)} />
+      case 'api':
+        return <ApiInstance key={e.apiId} workspaceId={workspaceId} authFetch={authFetch} readOnly={role === 'viewer'} />
+      case 'log':
+        return <LogView key={e.logId} authFetch={authFetch} workspaceId={workspaceId} />
+      case 'container':
+        return (
+          <div className="h-full flex flex-col bg-bg-primary">
+            <div className="flex-1 flex flex-col items-center justify-center gap-2 text-text-muted">
+              <Boxes className="w-6 h-6" />
+              <span className="text-[12px]">Container {e.containerId}</span>
             </div>
-          )}
-          {mobilePanel === 'git' && (
-            <div className="h-full animate-fade-in"><GitPanels authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} visible readOnly={role === 'viewer'} /></div>
-          )}
-          {mobilePanel === 'settings' && (
-            <div className="h-full animate-fade-in">
-              <Settings
-                onClose={() => setMobilePanel('code')}
-                authFetch={authFetch}
-                username={username}
-                onUsernameChange={onUsernameChange}
-                onTrustChange={fetchTasks}
-                role={role}
-                workspaceId={workspaceId}
-                visible
-                onOpenFolder={() => setShowFolderPicker(true)}
-                workspace={workspace}
-                editorSettings={editorSettings}
-                onEditorSettingsChange={handleEditorSettingsChange}
-                lspAvailable={lspAvailable}
-              />
-            </div>
-          )}
-        </div>
-
-        <MobileNav active={mobilePanel}
-          onSelect={(id) => { if (id === 'menu') { setMobileMenu(true); return }; setMobilePanel(id as MobilePanel) }}
-          hasModified={hasModified} />
-        {mobileMenu && <MobileMenuOverlay />}
-        <QuickOpen visible={showQuickOpen} onClose={() => setShowQuickOpen(false)} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} onOpenFile={openFile} />
-        <CommandPalette
-          visible={showCommandPalette}
-          onClose={() => setShowCommandPalette(false)}
-          onSaveFile={() => { void saveFile() }}
-          onSaveAll={() => { void saveAll() }}
-          onNewFile={() => { setMobilePanel('files'); explorerActionsRef.current?.newFile() }}
-          onNewFolder={() => { setMobilePanel('files'); explorerActionsRef.current?.newFolder() }}
-          onOpenFolder={() => setShowFolderPicker(true)}
-          onToggleTerminal={() => setMobilePanel('terminal')}
-          onOpenSettings={() => setMobilePanel('settings')}
-          onFocusExplorer={() => setMobilePanel('files')}
-          onFocusGit={() => setMobilePanel('git')}
-          onOpenBrowser={() => openBrowser()}
-          onCloseTab={() => activeTab && closeTab(activeTab)}
-          onRefreshExplorer={() => explorerActionsRef.current?.refresh()}
-          onGitStageAll={() => { void gitStageAll() }}
-          onGitUnstageAll={() => { void gitUnstageAll() }}
-          onToggleTheme={toggleTheme}
-          onLogout={onLogout}
-          onGoToLine={() => editorActionsRef.current?.goToLine()}
-          onFormatFile={() => { void formatCurrentFile() }}
-          isDark={isDark}
-          hasActiveTab={!!activeTab}
-          hasModified={hasModified}
-        />
-      </div>
-    )
+          </div>
+        )
+      case 'help':
+        return <HelpView />
+      case 'settings':
+        return (
+          <Settings
+            onClose={() => setVisible((v) => ({ ...v, settings: false }))}
+            authFetch={authFetch}
+            username={username}
+            onUsernameChange={onUsernameChange}
+            onTrustChange={fetchTasks}
+            role={role}
+            workspaceId={workspaceId}
+            visible
+            onOpenFolder={() => setShowFolderPicker(true)}
+            workspace={workspace}
+            editorSettings={editorSettings}
+            onEditorSettingsChange={handleEditorSettingsChange}
+            lspAvailable={lspAvailable}
+            desktopMode={desktopMode}
+            onDesktopModeChange={setDesktopMode}
+          />
+        )
+    }
   }
 
-  // ══════════════════════════
-  // ── DESKTOP ──
-  // ══════════════════════════
+  const viewMenu = (desktop: boolean) => (
+    <ViewMenu
+      views={VIEW_TABS}
+      visible={visible}
+      onToggle={(kind) => toggleVisible(kind as ViewKind)}
+      onAdd={(kind) => {
+        if (kind === 'web') addWeb()
+        else if (kind === 'api') addApi()
+        else if (kind === 'terminals') addTerminalTab()
+        else if (kind === 'search') addSearch()
+        else if (kind === 'log') addLog()
+      }}
+      onOpenFolder={() => setShowFolderPicker(true)}
+      onLogout={onLogout}
+      onClose={() => setMenuOpen(false)}
+      desktop={desktop}
+      folderName={folderName}
+      workspaceSwitcher={<WorkspaceSwitcher workspacesApi={workspacesApi} menuUp />}
+      onToggleDesktop={() => setDesktopMode(!desktopMode)}
+      placement={menuPlacement}
+      onPlacement={setMenuPlacement}
+      containers={containers}
+      onToggleContainer={toggleContainer}
+      onAddContainer={addContainer}
+      onResetView={resetView}
+      username={username}
+      users={collabRoster}
+    />
+  )
+
   return (
-    <div className="h-screen flex flex-col bg-bg-base">
-      {/* ── Top bar ── */}
-      <div className="flex items-center justify-between px-2 h-10 bg-bg-tertiary border-b border-border shrink-0 select-none">
-        {/* Left: logo + workspace */}
-        <div className="flex items-center gap-1.5">
-          <button onClick={() => setShowSidebar((s) => !s)}
-            className={`flex items-center px-1.5 py-1 rounded-md transition-colors ${
-              showSidebar ? 'text-text-secondary hover:text-text-primary hover:bg-bg-hover' : 'text-accent bg-accent/10'
-            }`}
-            title={showSidebar ? 'Hide sidebar (Ctrl/Cmd+B)' : 'Show sidebar (Ctrl/Cmd+B)'}>
-            <PanelLeft className="w-4 h-4" />
-          </button>
-          <div className="flex items-center gap-2 pr-2 mr-0.5 border-r border-border h-6">
-            <Logo size={18} showName nameClass="text-[13px] font-semibold text-text-primary tracking-tight" />
-          </div>
+    <div className="h-[100dvh] flex bg-bg-base overflow-hidden">
+      {desktopMode && viewMenu(true)}
 
-          <button onClick={() => setShowFolderPicker(true)}
-            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-            title="Open Folder (change workspace)">
-            <FolderOpen className="w-3.5 h-3.5 text-yellow" />
-            <span className="max-w-36 truncate font-medium">{folderName}</span>
-          </button>
-
-          {workspacesApi && <WorkspaceSwitcher workspacesApi={workspacesApi} />}
-
-          {collabRoster.length > 0 && (
-            <>
-              <div className="w-px h-4 bg-border mx-0.5" />
-              <PresenceRoster roster={collabRoster} />
-            </>
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top bar: menu button (mobile) + view tabs + file actions */}
+        <div className="flex items-center h-10 bg-bg-tertiary border-b border-border shrink-0 select-none">
+          {!desktopMode && (
+            <button onClick={() => setMenuOpen(true)}
+              className="flex items-center justify-center w-10 h-10 shrink-0 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              title="Menu">
+              <Menu className="w-4 h-4" />
+            </button>
           )}
-
-          <div className="w-px h-4 bg-border mx-0.5" />
-
-          <button onClick={() => openBrowser()}
-            className="flex items-center px-2 py-1 rounded-md text-[12px] text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
-            title="Open Browser Preview">
-            <Globe className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex-1 min-w-0">
+            <ViewTabs
+              tabs={entries.map((e) => ({ id: e.id, kind: e.kind, label: e.title, icon: e.icon }))}
+              active={activeShell}
+              lockedIds={lockedShells}
+              onSelect={selectShell}
+              onClose={closeShell}
+              onCloseSelected={closeSelectedShells}
+              onToggleLock={setShellLock}
+              onSetViewMode={setShellViewMode}
+              onReorder={reorderShell}
+            />
+          </div>
+          {!isMobile && (
+            <div className="flex items-center gap-0.5 px-1.5 shrink-0">
+              {collabRoster.length > 0 && <PresenceRoster roster={collabRoster} />}
+              {autoSaveStatus && (
+                <span className="text-[11px] text-text-muted px-1.5 animate-fade-in">
+                  {autoSaveStatus === 'saving' ? 'saving…' : 'saved'}
+                </span>
+              )}
+              {role !== 'viewer' && currentTab?.modified && currentTab.type !== 'browser' && (
+                <button onClick={() => { void saveFile() }} disabled={saving}
+                  className="flex items-center gap-1.5 px-3 py-1 text-[12px] bg-accent text-white rounded-md hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-all font-medium shadow-sm shadow-accent/20">
+                  <Save className="w-3 h-3" />
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Right: save + auto-save status + share + theme + logout */}
-        <div className="flex items-center gap-1">
-          {/* Auto-save status indicator */}
-          {autoSaveStatus && (
-            <span className="text-[11px] text-text-muted px-2 animate-fade-in">
-              {autoSaveStatus === 'saving' ? 'saving…' : 'saved'}
-            </span>
+        {/* Content area — one flat tab is active at a time */}
+        <div className="flex-1 min-h-0 relative bg-bg-primary">
+          {entries.length === 0 && (
+            <div className="h-full flex items-center justify-center px-6 text-center text-text-muted">
+              <span className="text-[12px]">open the hamburger menu in the corner to open files</span>
+            </div>
           )}
-          {role !== 'viewer' && currentTab?.modified && currentTab.type !== 'browser' && (
-            <button onClick={() => { void saveFile() }} disabled={saving}
-              className="flex items-center gap-1.5 px-3 py-1 text-[12px] bg-accent text-white rounded-md hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-all font-medium shadow-sm shadow-accent/20">
-              <Save className="w-3 h-3" />
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+          {activeEntry && activeMode !== 'float' && (
+            <div data-shell={activeEntry.id} data-view-mode={activeMode} className={shellFrameClass(activeMode)}>
+              {activeMode !== 'center' && (
+                <div className="flex items-center gap-2 h-8 px-2.5 border-b border-border bg-bg-secondary shrink-0">
+                  <activeEntry.icon className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                  <span className="text-[12px] font-medium text-text-secondary truncate">{activeEntry.title}</span>
+                  <span className="text-[10px] text-text-muted uppercase tracking-wide">{activeMode.replace('docked-', '')}</span>
+                  <button onClick={() => setShellViewMode([activeEntry.id], 'center')}
+                    className="ml-auto p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover"
+                    title="Restore to center">
+                    <Minimize2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              <div className="flex-1 min-h-0">{renderEntry(activeEntry)}</div>
+            </div>
           )}
-          {/* Dark / light selector — left of the avatar */}
-          <button onClick={toggleTheme}
-            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
-            title={isDark ? 'Light mode' : 'Dark mode'}>
-            {isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-          </button>
-          {/* User avatar menu — far right */}
-          <div className="relative ml-0.5">
-            <button onClick={() => setShowUserMenu((v) => !v)} title={username || 'Account'}
-              className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white shadow-sm transition-all ${showUserMenu ? 'ring-2 ring-accent/40' : 'hover:opacity-90'}`}
-              style={{ backgroundColor: colorFromName(username || 'user') }}>
-              {(username || '?').charAt(0).toUpperCase()}
-            </button>
-            {showUserMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-                <div className="absolute right-0 top-full mt-1.5 w-52 bg-bg-secondary border border-border rounded-lg shadow-xl z-50 py-1 animate-fade-in">
-                  <div className="px-3 py-2 border-b border-border">
-                    <div className="text-[12px] font-semibold text-text-primary truncate">{username || 'User'}</div>
-                    <div className="text-[10px] text-text-muted capitalize">{role}</div>
-                  </div>
-                  {role === 'owner' && (
-                    <button onClick={() => { setShowShareModal(true); setShowUserMenu(false) }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors">
-                      <Share2 className="w-3.5 h-3.5" /> Share / Invite
-                    </button>
+          {/* `float` tabs stay on the main container above the active tab and
+              can be dragged by their title bar. */}
+          {entries.filter((e) => (viewModes[e.id] || 'center') === 'float').map((e, i) => {
+            const g = floatGeom[e.id] ?? { x: 40 + (i % 6) * 28, y: 40 + (i % 6) * 28, w: 620, h: 420, z: 30 + i }
+            return (
+              <FloatWindow
+                key={e.id}
+                geom={g}
+                title={e.title}
+                icon={e.icon}
+                onChange={(ng) => setFloatGeom((prev) => ({ ...prev, [e.id]: ng }))}
+                onRaise={() => {
+                  const z = ++floatZ.current
+                  setFloatGeom((prev) => ({ ...prev, [e.id]: { ...(prev[e.id] ?? g), z } }))
+                }}
+                onRestore={() => setShellViewMode([e.id], 'center')}>
+                {renderEntry(e)}
+              </FloatWindow>
+            )
+          })}
+          {floatingTerminals && role !== 'viewer' && (
+            <FloatingTerminals token={token} workspaceId={workspaceId} term={terminalsApi} onDock={dockTerminal}
+              sendWindow={sendWindow} onWindow={onWindow} />
+          )}
+        </div>
+
+        {/* Status bar (desktop only — mobile has no space to waste) */}
+        {!isMobile && (
+          <div className="flex items-center justify-between px-1 h-6 bg-status-bar border-t border-border text-status-text text-[11px] font-medium shrink-0 select-none">
+            <div className="flex items-center">
+              {gitBranch && (
+                <button onClick={() => showView('git')}
+                  className="flex items-center gap-1 px-2 h-full hover:bg-bg-hover transition-colors rounded-sm">
+                  <GitBranch className="w-3 h-3" />
+                  <span className="font-mono">{gitBranch}</span>
+                  {gitChanges > 0 && (
+                    <span className="ml-0.5 px-1 py-px rounded text-[10px] bg-yellow/15 text-yellow font-semibold">
+                      {gitChanges}
+                    </span>
                   )}
-                  <button onClick={() => { setShowSettings(true); setShowUserMenu(false) }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors">
-                    <SettingsIcon className="w-3.5 h-3.5" /> Settings
-                  </button>
-                  <button onClick={() => { onLogout(); setShowUserMenu(false) }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-text-secondary hover:text-red hover:bg-bg-hover transition-colors">
-                    <LogOut className="w-3.5 h-3.5" /> Sign out
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Main area ── */}
-      <div className="flex flex-1 min-h-0">
-        {/* Activity bar — narrow icon rail */}
-        <div className="flex flex-col items-center pt-2 pb-2 gap-0.5 bg-bg-tertiary border-r border-border w-10 shrink-0">
-          <ActivityBtn
-            icon={Files}
-            title="Explorer"
-            active={sidebarTab === 'files' && showSidebar}
-            onClick={() => toggleSidebarTab('files')}
-          />
-          <ActivityBtn
-            icon={SearchIcon}
-            title="Search (Ctrl+Shift+F)"
-            active={sidebarTab === 'search' && showSidebar}
-            onClick={() => toggleSidebarTab('search')}
-          />
-          <ActivityBtn
-            icon={GitBranch}
-            title="Source Control"
-            active={sidebarTab === 'git' && showSidebar}
-            badge={gitChanges > 0 ? gitChanges : 0}
-            onClick={() => toggleSidebarTab('git')}
-          />
-          <ActivityBtn
-            icon={MessageSquare}
-            title="Chat"
-            active={sidebarTab === 'chat' && showSidebar}
-            onClick={() => toggleSidebarTab('chat')}
-          />
-          <ActivityBtn
-            icon={Webhook}
-            title="API Client"
-            active={sidebarTab === 'api' && showSidebar}
-            onClick={() => { toggleSidebarTab('api'); openApiClient() }}
-          />
-          {tasks.length > 0 && (
-            <ActivityBtn
-              icon={ListChecks}
-              title="Tasks"
-              active={sidebarTab === 'tasks' && showSidebar}
-              onClick={() => toggleSidebarTab('tasks')}
-            />
-          )}
-          {hasDebugAdapters && role !== 'viewer' && (
-            <ActivityBtn
-              icon={Bug}
-              title="Run & Debug"
-              active={sidebarTab === 'debug' && showSidebar}
-              onClick={() => toggleSidebarTab('debug')}
-            />
-          )}
-          {role !== 'viewer' && (
-            <ActivityBtn
-              icon={TerminalSquare}
-              title={terminalMode !== 'hidden' ? 'Hide terminals' : 'Open terminals'}
-              active={terminalMode !== 'hidden'}
-              onClick={toggleTerminal}
-            />
-          )}
-        </div>
-
-        {/* Sidebar */}
-        {showSidebar && (
-          <>
-            <div style={{ width: sidebarWidth }} className="shrink-0 flex flex-col border-r border-border overflow-hidden bg-bg-secondary">
-              {/* File explorer stays mounted (hidden when inactive) so its tree + expansion persist across tab switches. */}
-              <div className={`flex-1 min-h-0 ${sidebarTab === 'files' ? 'flex flex-col' : 'hidden'}`}>
-                <FileExplorer authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={handleRegisterExplorerActions} onAddFolder={openAddFolder} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
-              </div>
-              {sidebarTab === 'search' && <SearchPanel authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} readOnly={role === 'viewer'} onOpenFile={(entry, line) => {
-                // Search spans all roots; each result carries its own workspaceId,
-                // so the opened tab's key is the composite (that root, path).
-                const key = fileKey(entry.workspaceId || workspaceId, entry.rel ?? entry.path)
-                void openFile(entry)
-                // openFile is not synchronous, so set targetLine after a tick.
-                setTimeout(() => {
-                  setTabs((prev) => prev.map((t) =>
-                    t.path === key ? { ...t, targetLine: line } : t
-                  ))
-                }, 50)
-              }} />}
-              {sidebarTab === 'git' && <GitPanels authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} visible readOnly={role === 'viewer'} onOpenGraph={openGitGraph} />}
-              {sidebarTab === 'chat' && <Chat workspaceId={workspaceId} workspaceName={(workspacesApi?.workspaces || []).find((w) => w.id === workspaceId)?.name} token={token} username={username} color={colorFromName(username)} />}
-              {sidebarTab === 'api' && <ApiCollections api={apiClient} readOnly={role === 'viewer'} onOpenRequest={openApiClient} />}
-              {sidebarTab === 'tasks' && <TasksPanel tasks={tasks} onRun={runTask} readOnly={role === 'viewer'} />}
-              {sidebarTab === 'debug' && (
-                <DebugPanel dap={dap} canDebug={!!debugLang} targetName={activeTab || ''} targetLang={debugLang}
-                  onStart={startDebug} readOnly={role === 'viewer'}
-                  hint={hasDebugAdapters ? 'Open a Go or Python file to debug.' : 'Install a debug adapter (dlv, debugpy) to enable debugging.'} />
+                </button>
+              )}
+              {currentTab?.modified && currentTab.type !== 'browser' && (
+                <span className="px-2 text-yellow/80 font-medium">●</span>
               )}
             </div>
-            {/* Drag handle */}
-            <div className="resize-handle-h shrink-0" onMouseDown={handleMouseDown('sidebar')} />
-          </>
-        )}
-
-        {/* Center: editor + terminal */}
-        <div className="flex-1 flex flex-col min-w-0 bg-bg-primary">
-          <div className="flex-1 flex flex-col min-h-0">
-            <EditorTabs tabs={tabs} activeTab={activeTab} onSelect={setActiveTab} onClose={closeTab} onCloseSelected={closeSelectedTabs} onSetLocked={setTabsLocked} />
-            {currentTab && currentTab.type !== 'browser' && currentTab.type !== 'apiclient' && currentTab.type !== 'gitgraph' && currentTab.fileType == null && (
-              <Breadcrumbs path={currentTab.rel} />
-            )}
-            <div className="flex-1 min-h-0 relative">
-              {renderTabContent()}
-              {/* Floating terminal windows overlay the editor area. */}
-              {terminalMode === 'floating' && role !== 'viewer' && (
-                <FloatingTerminals token={token} workspaceId={workspaceId} term={terminalsApi} onDock={dockTerminal}
-                  sendWindow={sendWindow} onWindow={onWindow} />
+            <div className="flex items-center">
+              {currentTab && currentTab.type !== 'browser' && (
+                <>
+                  <span className="px-2 hover:bg-bg-hover rounded-sm cursor-default">Ln {cursor.line}, Col {cursor.col}</span>
+                  <span className="px-2 hover:bg-bg-hover rounded-sm cursor-default opacity-80">{extToLang(currentTab.name)}</span>
+                </>
               )}
+              {currentTab?.type === 'browser' && <span className="px-2 opacity-70">Web View</span>}
+              <span className="px-2 opacity-50">UTF-8</span>
             </div>
-            {/* Docked terminal — pinned to the bottom of the editor column. */}
-            {terminalMode === 'docked' && role !== 'viewer' && (
-              <>
-                <div className="resize-handle-v shrink-0" onMouseDown={handleMouseDown('terminal')} />
-                <div style={{ height: terminalHeight }} className="shrink-0">
-                  <TerminalPanel key={terminalKey} token={token} workspaceId={workspaceId} term={terminalsApi} visible
-                    onPopOut={floatTerminal} />
-                </div>
-              </>
-            )}
           </div>
-
-        </div>
-
-        {/* Right panel: settings */}
-        {showSettings && (
-          <>
-            <div className="resize-handle-h shrink-0" onMouseDown={handleMouseDown('settings')} />
-            <div style={{ width: settingsWidth }} className="shrink-0 border-l border-border bg-bg-secondary">
-              <Settings
-                onClose={() => setShowSettings(false)}
-                authFetch={authFetch}
-                username={username}
-                onUsernameChange={onUsernameChange}
-                onTrustChange={fetchTasks}
-                role={role}
-                workspaceId={workspaceId}
-                visible
-                onOpenFolder={() => setShowFolderPicker(true)}
-                workspace={workspace}
-                editorSettings={editorSettings}
-                onEditorSettingsChange={handleEditorSettingsChange}
-                lspAvailable={lspAvailable}
-              />
-            </div>
-          </>
         )}
       </div>
 
-      {/* ── Command palette ── */}
+      {!desktopMode && menuOpen && viewMenu(false)}
+
       <QuickOpen visible={showQuickOpen} onClose={() => setShowQuickOpen(false)} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} onOpenFile={openFile} />
       <CommandPalette
         visible={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
         onSaveFile={() => { void saveFile() }}
         onSaveAll={() => { void saveAll() }}
-        onNewFile={() => { toggleSidebarTab('files'); explorerActionsRef.current?.newFile() }}
-        onNewFolder={() => { toggleSidebarTab('files'); explorerActionsRef.current?.newFolder() }}
+        onNewFile={() => { showView('files'); explorerActionsRef.current?.newFile() }}
+        onNewFolder={() => { showView('files'); explorerActionsRef.current?.newFolder() }}
         onOpenFolder={() => setShowFolderPicker(true)}
-        onToggleTerminal={() => role !== 'viewer' && toggleTerminal()}
-        onOpenSettings={() => setShowSettings((v) => !v)}
-        onFocusExplorer={() => toggleSidebarTab('files')}
-        onFocusGit={() => toggleSidebarTab('git')}
+        onToggleTerminal={() => role !== 'viewer' && toggleVisible('terminals')}
+        onOpenSettings={() => showView('settings')}
+        onFocusExplorer={() => showView('files')}
+        onFocusGit={() => showView('git')}
         onOpenBrowser={() => openBrowser()}
         onCloseTab={() => activeTab && closeTab(activeTab)}
         onRefreshExplorer={() => explorerActionsRef.current?.refresh()}
@@ -1333,82 +1649,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
         hasModified={hasModified}
       />
 
-      {/* ── Share modal (owner only) ── */}
-      {showShareModal && role === 'owner' && (
-        <ShareModal authFetch={authFetch} onClose={() => setShowShareModal(false)} />
-      )}
-
-      {/* Collaborators' live mouse cursors */}
       {shareCursors && <RemoteCursors mice={collabMice} roster={collabRoster} />}
-
-      {/* ── Status bar ── */}
-      <div className="flex items-center justify-between px-1 h-6 bg-status-bar border-t border-border text-status-text text-[11px] font-medium shrink-0 select-none">
-        <div className="flex items-center">
-          {gitBranch && (
-            <button onClick={() => toggleSidebarTab('git')}
-              className="flex items-center gap-1 px-2 h-full hover:bg-bg-hover transition-colors rounded-sm">
-              <GitBranch className="w-3 h-3" />
-              <span className="font-mono">{gitBranch}</span>
-              {gitChanges > 0 && (
-                <span className="ml-0.5 px-1 py-px rounded text-[10px] bg-yellow/15 text-yellow font-semibold">
-                  {gitChanges}
-                </span>
-              )}
-            </button>
-          )}
-          {currentTab?.modified && currentTab.type !== 'browser' && (
-            <span className="px-2 text-yellow/80 font-medium">●</span>
-          )}
-        </div>
-        <div className="flex items-center">
-          {currentTab && currentTab.type !== 'browser' && (
-            <>
-              <span className="px-2 hover:bg-bg-hover rounded-sm cursor-default">Ln {cursor.line}, Col {cursor.col}</span>
-              <span className="px-2 hover:bg-bg-hover rounded-sm cursor-default opacity-80">{extToLang(currentTab.name)}</span>
-            </>
-          )}
-          {currentTab?.type === 'browser' && (
-            <span className="px-2 opacity-70">Browser Preview</span>
-          )}
-          <span className="px-2 opacity-50">UTF-8</span>
-        </div>
-      </div>
     </div>
   )
 }
 
-/* Activity bar button */
-interface ActivityBtnProps {
-  icon: LucideIcon
-  title: string
-  active: boolean
-  badge?: number
-  onClick: () => void
-}
-
-function ActivityBtn({ icon: Icon, title, active, badge, onClick }: ActivityBtnProps) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className={`relative w-8 h-8 flex items-center justify-center rounded-md transition-colors ${
-        active
-          ? 'text-accent bg-accent/10'
-          : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
-      }`}
-    >
-      {active && (
-        <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent" />
-      )}
-      <Icon className="w-4 h-4" />
-      {(badge ?? 0) > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-3.5 flex items-center justify-center rounded-full text-[9px] font-bold bg-accent text-white px-0.5 leading-none">
-          {(badge ?? 0) > 99 ? '99+' : badge}
-        </span>
-      )}
-    </button>
-  )
-}
 
 const EXT_LANGS: Record<string, string> = {
   js: 'JavaScript', jsx: 'JavaScript JSX', ts: 'TypeScript', tsx: 'TypeScript JSX',

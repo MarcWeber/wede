@@ -9,8 +9,9 @@ import { EditorState, Compartment, type Extension, type StateField, type StateEf
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands'
 import {
   syntaxHighlighting, defaultHighlightStyle, bracketMatching,
-  indentOnInput,
+  indentOnInput, HighlightStyle,
 } from '@codemirror/language'
+import { tags } from '@lezer/highlight'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -76,6 +77,12 @@ function getLang(filename: string): Extension {
   return langMap[ext]?.() || []
 }
 
+// Headings inherit the same level-aware text colour as the rest of the UI.
+const wedeHeadingHighlight = HighlightStyle.define([
+  { tag: tags.heading1, class: 'cm-wede-heading1' },
+  { tag: [tags.heading2, tags.heading3, tags.heading4, tags.heading5, tags.heading6], class: 'cm-wede-heading2' },
+])
+
 // Build a theme extension from editor settings.
 function makeEditorTheme(settings: EditorSettings, isDark: boolean): Extension {
   const fontSize = `${settings.fontSize || 13}px`
@@ -97,7 +104,9 @@ function makeEditorTheme(settings: EditorSettings, isDark: boolean): Extension {
     '.cm-activeLineGutter': { backgroundColor: 'var(--c-bg-hover)', color: 'var(--c-text-primary)' },
     '.cm-activeLine': { backgroundColor: 'var(--c-accent-glow)' },
     '.cm-cursor': { borderLeftColor: 'var(--c-accent)' },
-    '.cm-content': { fontFamily, fontSize },
+    '.cm-content': { fontFamily, fontSize, color: 'var(--c-text-primary)' },
+    '.cm-wede-heading1': { color: 'var(--c-text-primary) !important', fontWeight: '700' },
+    '.cm-wede-heading2': { color: 'var(--c-text-primary) !important', fontWeight: '600' },
     // Multi-cursor: secondary cursors are slightly dimmer.
     '.cm-cursor-secondary': { borderLeftColor: 'var(--c-accent)', opacity: '0.6' },
   }, { dark: isDark })
@@ -280,6 +289,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
         // Read-only compartment — viewer role gets EditorState.readOnly + EditorView.editable(false).
         editComp.of(editable ? [] : [EditorState.readOnly.of(true), EditorView.editable.of(false)]),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        syntaxHighlighting(wedeHeadingHighlight),
         breakpointSupport(),
         getLang(file?.name || ''),
         keymap.of([

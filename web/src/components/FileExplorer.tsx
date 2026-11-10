@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { makeWsFetch } from '../lib/wsScope'
 import { fileKey } from '../lib/fileKey'
-import Selectable, { type MenuEntry } from './Selectable'
+import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
 import type { AuthFetch, WorkspaceSummary, FileEntry, PresenceMember, ExplorerActions } from '../types'
 
 interface TreeEntry {
@@ -190,11 +190,11 @@ function TreeNode({
       if (!isOpen) void loadChildren()
       onFocusDir(entry.path)
     } else {
-      onSelect(entry) // single click → preview tab
+      onSelect(entry) // single click → open/focus the file tab
     }
   }
 
-  // Double-click pins the file as a permanent (non-preview) tab, like VS Code.
+  // Double-click is kept for muscle memory; it opens the same permanent tab.
   const handleDoubleClick = () => {
     if (!entry.isDir) onSelect(entry, { preview: false })
   }
@@ -722,7 +722,7 @@ export default function FileExplorer({ authFetch, workspaces = [], onFileSelect,
       </div>
 
       {/* Roots */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden select-none">
+      <SelectableGroup className="flex-1 overflow-y-auto overflow-x-hidden select-none" selectedCount={selectedFiles.size} showMenuSelectMode={false} onCancelSelection={() => setSelectedFiles(new Set())}>
         {roots.length === 0 && (
           <div className="px-3 py-4 text-[12px] text-text-muted">No folders open.</div>
         )}
@@ -742,7 +742,7 @@ export default function FileExplorer({ authFetch, workspaces = [], onFileSelect,
             onSelectMany={onSelectMany}
           />
         ))}
-      </div>
+      </SelectableGroup>
     </div>
   )
 }

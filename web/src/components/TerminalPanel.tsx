@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Plus, TerminalSquare, Maximize2, Minimize2, PictureInPicture2 } from 'lucide-react'
 import Terminal from './Terminal'
-import TerminalToolbar from './TerminalToolbar'
-import Selectable, { type MenuEntry } from './Selectable'
+import TerminalToolbar, { type TerminalInputDock } from './TerminalToolbar'
+import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
+import { TONE_WEAK, TONE_VAR } from '../lib/viewTypes'
 import { useTheme } from '../hooks/useTheme'
 import type { useTerminals } from '../hooks/useTerminals'
 
@@ -15,19 +16,47 @@ interface TerminalPanelProps {
   onToggleFullscreen?: () => void
   onPopOut?: () => void
   isMobile?: boolean
+  // When set, render only this terminal (it is a flat shell tab, so the tab
+  // strip belongs to the container, not this panel).
+  onlyId?: number
 }
 
 // TerminalPanel — the docked, tabbed terminal panel. Terminal state lives in the
 // shared useTerminals hook (passed in as `term`) so it stays in sync with the
 // floating window manager.
-export default function TerminalPanel({ token, workspaceId, term, visible, isFullscreen, onToggleFullscreen, onPopOut, isMobile }: TerminalPanelProps) {
+export default function TerminalPanel({ token, workspaceId, term, visible, isFullscreen, onToggleFullscreen, onPopOut, isMobile, onlyId }: TerminalPanelProps) {
   const { terminalTheme } = useTheme()
-  const { terminals, activeId, setActiveId, addTerminal, closeTerminal, closeSelected, setLocked, clearInitial, renameTerminal, autoNameTerminal, termRefs } = term
+  const { terminals, activeId, setActiveId, addTerminal, closeTerminal, closeSelected, setLocked, reorderTerminals, clearInitial, renameTerminal, autoNameTerminal, termRefs } = term
+  const shown = onlyId != null ? terminals.filter((t) => t.id === onlyId) : terminals
+  const currentActive = onlyId ?? activeId
 
   // Inline rename: double-click a tab to edit its name.
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [inputDock, setInputDock] = useState<TerminalInputDock>(() => {
+    try {
+      const raw = localStorage.getItem('wede_terminal_input_dock')
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<TerminalInputDock> & { hidden?: boolean }
+        if (parsed.position === 'top' || parsed.position === 'bottom') {
+          return {
+            position: parsed.position,
+            transparent: parsed.transparent ?? true,
+            inputSend: parsed.inputSend ?? !parsed.hidden,
+            more: parsed.more ?? false,
+          }
+        }
+      }
+    } catch { /* ignore */ }
+    return { position: 'bottom', transparent: true, inputSend: true, more: false }
+  })
+  const updateDock = (next: TerminalInputDock) => {
+    setInputDock(next)
+    try { localStorage.setItem('wede_terminal_input_dock', JSON.stringify(next)) } catch { /* ignore */ }
+  }
+  const inputVisible = inputDock.inputSend || inputDock.more
+  const docked = !inputDock.transparent && inputVisible
   const startRename = (t: { id: number; name: string }) => { setEditingId(t.id); setEditName(t.name) }
   const commitRename = () => { if (editingId != null) renameTerminal(editingId, editName); setEditingId(null) }
   const toggle = (id: number) => setSelected((prev) => {
@@ -38,7 +67,7 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
   })
 
   const handleToolbarSend = (data: string) => {
-    const ref = termRefs.current[activeId]
+    const ref = termRefs.current[currentActive]
     if (ref) ref.send(data)
   }
 
@@ -46,13 +75,14 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
 
   return (
     <div className="h-full flex flex-col bg-bg-tertiary">
-      {/* Terminal tab bar */}
+      {/* Terminal tab bar (hidden when this panel is a single flat tab) */}
+      {onlyId == null && (
       <div className="flex items-center border-b border-border compact-touch shrink-0" style={{ height: 34 }}>
         <div className="flex items-center shrink-0 px-2.5 border-r border-border h-full">
           <TerminalSquare className="w-3.5 h-3.5 text-text-muted" />
         </div>
 
-        <div className="flex items-center flex-1 overflow-x-auto h-full" style={{ scrollbarWidth: 'none' }}>
+        <SelectableGroup className="flex items-center flex-1 min-w-0 overflow-x-auto h-full touch-pan-x" style={{ scrollbarWidth: 'none' }} selectedCount={selected.size} showMenuSelectMode onCancelSelection={() => setSelected(new Set())}>
           {terminals.map((t) => {
             const isActive = activeId === t.id
             const isChecked = selected.has(t.id)
@@ -97,13 +127,15 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
                 onMiddleClick={() => closeTerminal(t.id)}
                 menu={menu}
                 label={`Select ${t.name}`}
-                className={`flex items-center gap-1.5 pl-1 pr-2 h-full min-w-[88px] text-[12px] font-medium border-r border-border shrink-0 cursor-pointer transition-colors ${
-                  isActive
-                    ? 'bg-bg-primary text-text-primary'
-                    : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
+                tone="green"
+                dragId={String(t.id)}
+                onReorder={(from, to) => reorderTerminals(Number(from), Number(to))}
+                onDragAway={(id) => closeTerminal(Number(id))}
+                className={`flex items-center gap-1.5 pl-1 pr-2 h-full min-w-[88px] text-[12px] font-medium border-r border-border shrink-0 cursor-pointer transition-colors ${TONE_WEAK.green} ${
+                  isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
                 }`}
               >
-                {isActive && <span className="absolute top-0 left-0 right-0 h-[1.5px] bg-accent z-10" />}
+                {isActive && <span className="absolute top-0 left-0 right-0 h-[1.5px] z-10" style={{ backgroundColor: `var(${TONE_VAR.green})` }} />}
                 {editingId === t.id ? (
                   <input
                     autoFocus
@@ -131,7 +163,7 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
-        </div>
+        </SelectableGroup>
 
         {onPopOut && (
           <button
@@ -152,26 +184,41 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
           </button>
         )}
       </div>
+      )}
 
-      {/* Terminal instances */}
-      <div className="flex-1 min-h-0">
-        {terminals.map((t) => (
-          <Terminal
-            key={t.id}
-            ref={(r) => { if (r) termRefs.current[t.id] = r; else delete termRefs.current[t.id] }}
-            token={token}
-            workspaceId={workspaceId}
-            sessionId={`term-${t.id}`}
-            visible={activeId === t.id && visible}
-            terminalTheme={terminalTheme}
-            initialCommand={t.initial}
-            onInitialRun={() => clearInitial?.(t.id)}
-            onTitle={(title) => autoNameTerminal(t.id, title)}
-          />
-        ))}
+      {/* Terminal instances + input bar (floating overlay or docked). */}
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        <div className="relative flex-1 min-h-0">
+          {shown.map((t) => (
+            <Terminal
+              key={t.id}
+              ref={(r) => { if (r) termRefs.current[t.id] = r; else delete termRefs.current[t.id] }}
+              token={token}
+              workspaceId={workspaceId}
+              sessionId={`term-${t.id}`}
+              visible={currentActive === t.id && visible}
+              terminalTheme={terminalTheme}
+              initialCommand={t.initial}
+              onInitialRun={() => clearInitial?.(t.id)}
+              onTitle={(title) => autoNameTerminal(t.id, title)}
+            />
+          ))}
+        </div>
+        {isMobile && inputVisible && (
+          <TerminalToolbar onSend={handleToolbarSend} dock={inputDock} onDockChange={updateDock} docked={docked} />
+        )}
+        {isMobile && !inputVisible && (
+          <button
+            onClick={() => updateDock({ ...inputDock, inputSend: true })}
+            title="Show input"
+            className={`absolute right-2 z-30 w-8 h-8 rounded-md border border-border bg-bg-secondary/90 text-[13px] font-bold text-text-secondary hover:text-text-primary active:bg-bg-active ${
+              inputDock.position === 'top' ? 'top-2' : 'bottom-2'
+            }`}
+          >
+            m
+          </button>
+        )}
       </div>
-
-      {isMobile && <TerminalToolbar onSend={handleToolbarSend} />}
     </div>
   )
 }

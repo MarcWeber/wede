@@ -28,8 +28,8 @@
 
   /* Typography */
   --c-text-primary:   #e8eaf2;  /* high-contrast body */
-  --c-text-secondary: #8b91ab;  /* subdued labels */
-  --c-text-muted:     #545b75;  /* placeholder / disabled */
+  --c-text-secondary: #aeb4ca;  /* subdued labels (brighter for dark UI) */
+  --c-text-muted:     #7c839d;  /* placeholder / disabled */
   --c-text-inverse:   #ffffff;
 
   /* Accent — electric indigo/violet */
@@ -49,7 +49,7 @@
 
   /* Status bar */
   --c-status-bar:  #1c1f2b;
-  --c-status-text: #8b91ab;
+  --c-status-text: #aeb4ca;
 
   /* Misc */
   --c-scrollbar: #252840;
@@ -105,6 +105,35 @@
   --c-selection: rgba(79, 95, 247, 0.12);
   --c-shadow:    rgba(0, 0, 0, 0.08);
   --c-shadow-lg: rgba(0, 0, 0, 0.15);
+}
+
+/* ── Theme levels ──
+   1–3 light (strong → soft), 4–6 dark (soft → strong). Level 2 is the light
+   default and level 5 is the dark default; only the non-default levels need
+   overrides. */
+:root[data-theme="light"][data-level="1"] {
+  --c-text-primary:   #0b1020;
+  --c-text-secondary: #374151;
+  --c-text-muted:     #5b6478;
+  --c-status-text:    #374151;
+}
+:root[data-theme="light"][data-level="3"] {
+  --c-text-primary:   #1f2937;
+  --c-text-secondary: #6b7280;
+  --c-text-muted:     #9ca3af;
+  --c-status-text:    #6b7280;
+}
+:root[data-theme="dark"][data-level="4"] {
+  --c-text-primary:   #d8dbe8;
+  --c-text-secondary: #8f95ad;
+  --c-text-muted:     #626984;
+  --c-status-text:    #8f95ad;
+}
+:root[data-theme="dark"][data-level="6"] {
+  --c-text-primary:   #f7f8fc;
+  --c-text-secondary: #c2c7da;
+  --c-text-muted:     #9ea5bd;
+  --c-status-text:    #c2c7da;
 }
 
 /* ── Tailwind @theme tokens ── */
@@ -172,6 +201,13 @@ body {
 
 ::selection {
   background: var(--c-selection);
+}
+
+/* Long-press rows: suppress iOS callout/selection without hiding the action. */
+.no-callout {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* ── Focus rings — keyboard only ── */
@@ -355,6 +391,7 @@ body {
 
 /* Markdown preview (MarkdownPreview.jsx) — restore readable defaults that the
    Tailwind reset strips, scoped so it never leaks into the rest of the UI. */
+.wede-markdown h1, .wede-markdown h2, .wede-markdown h3, .wede-markdown h4, .wede-markdown h5, .wede-markdown h6 { color: var(--c-text-primary); }
 .wede-markdown h1 { font-size: 1.6em; font-weight: 700; margin: 0.6em 0 0.4em; line-height: 1.25; }
 .wede-markdown h2 { font-size: 1.35em; font-weight: 700; margin: 0.6em 0 0.4em; border-bottom: 1px solid var(--c-border); padding-bottom: 0.2em; }
 .wede-markdown h3 { font-size: 1.15em; font-weight: 600; margin: 0.6em 0 0.3em; }

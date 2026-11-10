@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Globe } from 'lucide-react'
 import type { Tab } from '../types'
-import Selectable, { type MenuEntry } from './Selectable'
+import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
+import { TONE_WEAK, TONE_VAR, toneForTab } from '../lib/viewTypes'
 
 export interface EditorTabsProps {
   tabs: Tab[]
@@ -10,10 +11,12 @@ export interface EditorTabsProps {
   onClose: (path: string) => void
   onCloseSelected: (paths: string[], includeLocked: boolean) => void
   onSetLocked: (paths: string[], locked: boolean) => void
+  onReorder?: (fromPath: string, toPath: string) => void
 }
 
-export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onCloseSelected, onSetLocked }: EditorTabsProps) {
+export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onCloseSelected, onSetLocked, onReorder }: EditorTabsProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [dragPath, setDragPath] = useState<string | null>(null)
 
   if (tabs.length === 0) return null
 
@@ -25,10 +28,11 @@ export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onClose
   })
 
   return (
-    <div className="flex bg-bg-secondary border-b border-border overflow-x-auto shrink-0 compact-touch" style={{ scrollbarWidth: 'none' }}>
+    <SelectableGroup className="flex bg-bg-secondary border-b border-border overflow-x-auto shrink-0 compact-touch" style={{ scrollbarWidth: 'none' }} selectedCount={selected.size} showMenuSelectMode onCancelSelection={() => setSelected(new Set())}>
       {tabs.map((tab) => {
         const isActive = activeTab === tab.path
         const isBrowser = tab.type === 'browser'
+        const tone = toneForTab(tab)
         const isChecked = selected.has(tab.path)
         const targets = selected.size > 0 ? Array.from(selected) : [tab.path]
         const allTargets = tabs.map((t) => t.path)
@@ -71,14 +75,33 @@ export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onClose
             onMiddleClick={() => onClose(tab.path)}
             menu={menu}
             label={`Select ${tab.name}`}
-            className={`flex items-center gap-1.5 pl-1 pr-2 h-10 min-w-[88px] border-r border-border shrink-0 select-none cursor-pointer transition-colors ${
-              isActive
-                ? 'bg-bg-primary text-text-primary'
-                : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
+            tone={tone}
+            draggable={!!onReorder}
+            onDragStart={onReorder ? (e) => {
+              setDragPath(tab.path)
+              e.dataTransfer.effectAllowed = 'move'
+              try { e.dataTransfer.setData('text/plain', tab.path) } catch { /* ignore */ }
+            } : undefined}
+            onDragOver={onReorder ? (e) => {
+              if (!dragPath) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'move'
+            } : undefined}
+            onDrop={onReorder ? (e) => {
+              e.preventDefault()
+              const from = dragPath || e.dataTransfer.getData('text/plain')
+              if (from && from !== tab.path) onReorder(from, tab.path)
+              setDragPath(null)
+            } : undefined}
+            onDragEnd={onReorder ? () => setDragPath(null) : undefined}
+            className={`flex items-center gap-1.5 pl-1 pr-2 h-10 min-w-[88px] border-r border-border shrink-0 select-none cursor-pointer transition-colors ${TONE_WEAK[tone]} ${
+              dragPath === tab.path ? 'opacity-40' : ''
+            } ${
+              isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
             }`}
           >
             {isActive && (
-              <span className="absolute top-0 left-0 right-0 h-[1.5px] bg-accent rounded-b z-10" />
+              <span className="absolute top-0 left-0 right-0 h-[1.5px] rounded-b z-10" style={{ backgroundColor: `var(${TONE_VAR[tone]})` }} />
             )}
             {isBrowser && <Globe className="w-3 h-3 text-cyan shrink-0" />}
             {!isBrowser && tab.modified && (
@@ -90,6 +113,6 @@ export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onClose
           </Selectable>
         )
       })}
-    </div>
+    </SelectableGroup>
   )
 }

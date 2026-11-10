@@ -1,10 +1,13 @@
 # Stage 1: Frontend build (React + Vite, embedded via go:embed)
 FROM node:20-alpine AS web
 
-WORKDIR /src
-COPY web/ web/
+WORKDIR /src/web
+# Install deps in their own layer so editing web/src does not re-run npm ci.
+COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
-    cd web && npm ci && npm run build
+    npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
 
 # Stage 2: Go backend build
 FROM golang:1.25-alpine AS backend

@@ -22,7 +22,9 @@ function loadTerminals(): TerminalSession[] | null {
       // Array.isArray check, then assert — this function's own return type is
       // the declared boundary for the (trusted, our-own-write) localStorage blob.
       const parsed = JSON.parse(saved) as unknown
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as TerminalSession[]
+      // An empty array is meaningful: "Reset view" persists zero terminals so a
+      // later swipe-right adds exactly one instead of resurrecting old tabs.
+      if (Array.isArray(parsed)) return parsed as TerminalSession[]
     }
   } catch { /* ignore */ }
   return null
@@ -30,7 +32,7 @@ function loadTerminals(): TerminalSession[] | null {
 
 let nextId = (() => {
   const saved = loadTerminals()
-  return saved ? Math.max(...saved.map((t) => t.id)) + 1 : 1
+  return saved && saved.length > 0 ? Math.max(...saved.map((t) => t.id)) + 1 : 1
 })()
 
 export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceId: string | null | undefined, sync: UseTerminalsSync = {}) {
@@ -78,14 +80,11 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
         const serverSessions = new Set(data.sessions || [])
         if (serverSessions.size === 0) return
         setTerminals((prev) => {
+          // Only keep tabs whose PTY is still alive. Server sessions that are
+          // not in the persisted list are leftovers from closed tabs; importing
+          // them resurrected every old PTY as a phantom tab on each reload.
           const alive = prev.filter((t) => serverSessions.has(`term-${t.id}`))
-          const known = new Set(prev.map((t) => `term-${t.id}`))
-          const orphans = [...serverSessions].filter((s) => s.startsWith('term-') && !known.has(s)).map((s) => {
-            const id = Number(s.replace('term-', ''))
-            if (id >= nextId) nextId = id + 1
-            return { id, name: `Terminal ${id}` }
-          })
-          return (alive.length || orphans.length) ? [...alive, ...orphans] : prev
+          return alive.length ? alive : prev
         })
       })
       .catch(() => {})
@@ -135,13 +134,10 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
       // Locked terminals refuse to close until unlocked.
       if (prev.find((t) => t.id === id)?.locked) return prev
       const next = prev.filter((t) => t.id !== id)
-      if (next.length === 0) {
-        const newId = nextId++
-        next.push({ id: newId, name: `Terminal ${newId}` })
-        setActiveId(newId)
-      } else if (activeId === id) {
-        setActiveId(next[next.length - 1].id)
-      }
+      // Closing the last terminal is allowed: leave the list empty instead of
+      // resurrecting a fresh PTY (the menu can add one again on demand).
+      if (next.length === 0) setActiveId(0)
+      else if (activeId === id) setActiveId(next[next.length - 1].id)
       return next
     })
   }, [activeId])
@@ -153,16 +149,21 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     setTerminals((prev) => {
       const next = prev.filter((t) => !set.has(t.id) || (!includeLocked && t.locked))
       if (next.length === prev.length) return prev
-      if (next.length === 0) {
-        const newId = nextId++
-        next.push({ id: newId, name: `Terminal ${newId}` })
-        setActiveId(newId)
-      } else if (!next.some((t) => t.id === activeId)) {
+      if (next.length === 0) setActiveId(0)
+      else if (!next.some((t) => t.id === activeId)) {
         setActiveId(next[next.length - 1].id)
       }
       return next
     })
   }, [activeId])
+
+  // resetTerminals clears the tab list (used by "Reset view"). The next
+  // swipe-right / toggle then adds exactly one fresh terminal instead of
+  // reviving every old PTY.
+  const resetTerminals = useCallback(() => {
+    setTerminals([])
+    setActiveId(0)
+  }, [])
 
   // setLocked locks/unlocks the given terminal ids.
   const setLocked = useCallback((ids: number[], locked: boolean) => {
@@ -170,5 +171,18 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     setTerminals((prev) => prev.map((t) => (set.has(t.id) ? { ...t, locked } : t)))
   }, [])
 
-  return { terminals, activeId, setActiveId, addTerminal, closeTerminal, closeSelected, setLocked, clearInitial, renameTerminal, autoNameTerminal, termRefs }
+  // reorderTerminals moves terminal `fromId` to `toId`'s position (drag & drop).
+  const reorderTerminals = useCallback((fromId: number, toId: number) => {
+    setTerminals((prev) => {
+      const fromIdx = prev.findIndex((t) => t.id === fromId)
+      const toIdx = prev.findIndex((t) => t.id === toId)
+      if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return prev
+      const next = prev.slice()
+      const [moved] = next.splice(fromIdx, 1)
+      next.splice(toIdx, 0, moved)
+      return next
+    })
+  }, [])
+
+  return { terminals, activeId, setActiveId, addTerminal, closeTerminal, closeSelected, resetTerminals, setLocked, reorderTerminals, clearInitial, renameTerminal, autoNameTerminal, termRefs }
 }

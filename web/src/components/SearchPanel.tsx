@@ -5,7 +5,7 @@ import {
   FileSearch, SlidersHorizontal,
 } from 'lucide-react'
 import { workspaceUrl } from '../api'
-import Selectable, { type MenuEntry } from './Selectable'
+import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
 import type { AuthFetch, WorkspaceSummary, FileEntry } from '../types'
 
 // Context lines requested from the backend on each text search.
@@ -651,7 +651,7 @@ export default function SearchPanel({ authFetch, onOpenFile, readOnly = false, w
       </div>
 
       {/* ── Results area ── */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+      <SelectableGroup className="flex-1 overflow-y-auto overflow-x-hidden min-h-0" selectedCount={selected.size} showMenuSelectMode={false} onCancelSelection={unselectAll}>
         {/* Busy indicator */}
         {loading && (
           <div className="flex items-center justify-center py-8 gap-2 text-text-muted">
@@ -745,7 +745,7 @@ export default function SearchPanel({ authFetch, onOpenFile, readOnly = false, w
             )}
           </div>
         )}
-      </div>
+      </SelectableGroup>
     </div>
   )
 }

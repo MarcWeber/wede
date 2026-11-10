@@ -6,7 +6,8 @@
 //               consecutive lines, one bold digit per line: for 10 the "1" is
 //               on line 10 and the "0" on line 11, for 1470 the "1"/"4"/"7"/"0"
 //               run down lines 1470..1473. Every 5th line shows a dim "5",
-//               every other line a faint dot.
+//               every other line a faint dot. The first digit of each decade
+//               (10, 20, 30, …) gets a 1px gray rule above it as a landmark.
 //   'hidden' — no gutter.
 
 import { gutter, GutterMarker, EditorView, lineNumbers } from '@codemirror/view'
@@ -35,7 +36,10 @@ function smartMarker(ln: number): GutterMarker {
     const digits = String(base)
     const idx = ln - base
     if (idx < digits.length) {
-      return new CharMarker(digits[idx], 'cm-num cm-num-stackdigit')
+      return new CharMarker(
+        digits[idx],
+        `cm-num cm-num-stackdigit${idx === 0 ? ' cm-num-decade' : ''}`,
+      )
     }
   }
   if (ln % 5 === 0) return fiveMarker
@@ -55,6 +59,8 @@ const smartTheme = EditorView.theme({
   '.cm-num-dot': { opacity: '0.3' },
   '.cm-num-five': { opacity: '0.6' },
   '.cm-num-stackdigit': { fontWeight: '600', color: 'var(--c-text-primary)' },
+  // Landmark every ten lines: a 1px rule above the first digit of the decade.
+  '.cm-num-decade': { boxShadow: 'inset 0 1px 0 0 var(--c-text-muted)' },
 })
 
 export function numberingGutter(mode: NumberingMode): Extension[] {

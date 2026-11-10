@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -8,12 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"wede/backend/internal/auth"
 	"wede/backend/internal/config"
 	"wede/backend/internal/folder"
+	"wede/backend/internal/logbuf"
 	"wede/backend/internal/lsp"
 	"wede/backend/internal/tasks"
 	"wede/backend/internal/trust"
@@ -63,6 +66,11 @@ func main() {
 	}
 
 	cfg := config.Load()
+
+	// Keep the last 1000 log lines for the UI log_view tab (T8). This tees to
+	// stderr, so the normal container log is unchanged.
+	logBuffer := logbuf.New(os.Stderr, 1000)
+	log.SetOutput(logBuffer)
 
 	// Optional user-defined language servers (~/.wede/lsp.json) — add LSP support
 	// for any language without recompiling. Missing file is fine.
@@ -133,6 +141,18 @@ func main() {
 	protected.Handle("POST /api/tunnel/start", ro(http.HandlerFunc(tunnelMgr.HandleStart)))
 	protected.Handle("POST /api/tunnel/stop", ro(http.HandlerFunc(tunnelMgr.HandleStop)))
 
+	// Server log tail for the UI log_view tab (T8). Returns the last n lines.
+	protected.HandleFunc("GET /api/logs", func(w http.ResponseWriter, r *http.Request) {
+		n := 200
+		if v := r.URL.Query().Get("n"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 1000 {
+				n = parsed
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"lines": logBuffer.Snapshot(n)})
+	})
+
 	protected.HandleFunc("GET /api/folder", rootFolder.HandleGet)
 	// Opening a folder adopts a new workspace root and grants a shell/edit surface
 	// over it, so it is gated to editor+ (viewers are rejected) and the target path
@@ -159,6 +179,9 @@ func main() {
 	protected.HandleFunc("GET /api/workspaces/{id}/files", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().List }))
 	protected.HandleFunc("GET /api/workspaces/{id}/files/tree", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Tree }))
 	protected.HandleFunc("GET /api/workspaces/{id}/files/read", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Read }))
+	// Tail a log file (workspace-relative or absolute inside the workspace) for
+	// the UI log_view tab. Read-only, same path guards as files/read.
+	protected.HandleFunc("GET /api/workspaces/{id}/log", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Tail }))
 	protected.Handle("PUT /api/workspaces/{id}/files/write", re(rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Write })))
 	protected.Handle("POST /api/workspaces/{id}/files/create", re(rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Create })))
 	protected.Handle("DELETE /api/workspaces/{id}/files/delete", re(rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Delete })))

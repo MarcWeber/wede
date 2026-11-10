@@ -4,12 +4,14 @@ import type { useWorkspaces } from '../hooks/useWorkspaces'
 
 export interface WorkspaceSwitcherProps {
   workspacesApi: ReturnType<typeof useWorkspaces>
+  // Open the list upward (the switcher lives in the menu footer, above Logout).
+  menuUp?: boolean
 }
 
 // WorkspaceSwitcher shows the active workspace ("workspace") and lets you switch between
 // open workspaces or open a new one. Workspaces are the multi-workspace backbone: each is an
 // isolated workspace served by the same wede instance.
-export default function WorkspaceSwitcher({ workspacesApi }: WorkspaceSwitcherProps) {
+export default function WorkspaceSwitcher({ workspacesApi, menuUp = false }: WorkspaceSwitcherProps) {
   const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
@@ -56,7 +58,7 @@ export default function WorkspaceSwitcher({ workspacesApi }: WorkspaceSwitcherPr
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-1 w-64 bg-bg-elevated border border-border rounded-lg shadow-xl shadow-shadow z-50 p-1 animate-fade-in">
+        <div className={`absolute left-0 w-64 bg-bg-elevated border border-border rounded-lg shadow-xl shadow-shadow z-50 p-1 animate-fade-in ${menuUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-text-muted">Workspaces</div>
           <div className="max-h-56 overflow-auto">
             {workspaces.map((r) => (

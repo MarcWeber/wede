@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Moon, Sun, FolderOpen, Info, Minus, Plus, X, Check, User, ShieldCheck } from 'lucide-react'
-import { useTheme } from '../hooks/useTheme'
+import { FolderOpen, Info, Minus, Plus, X, Check, User, ShieldCheck, Monitor } from 'lucide-react'
 import Logo from './Logo'
 import TunnelSettings from './TunnelSettings'
 import WedeLocation from './WedeLocation'
@@ -25,10 +24,11 @@ interface SettingsProps {
   username: string
   onUsernameChange: (name: string) => void
   onTrustChange: () => void
+  desktopMode: boolean
+  onDesktopModeChange: (v: boolean) => void
 }
 
-export default function Settings({ visible, onClose, onOpenFolder, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange }: SettingsProps) {
-  const { setTheme, isDark } = useTheme()
+export default function Settings({ visible, onClose, onOpenFolder, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange }: SettingsProps) {
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
   const saveName = () => {
@@ -125,62 +125,19 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
           <p className="text-[11px] text-text-muted mt-1.5">Shown to collaborators in presence, chat, and live cursors.</p>
         </div>
 
-        {/* Theme */}
+        {/* Layout */}
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Appearance</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => setTheme('dark')}
-              className={`rounded-xl border-2 p-3 transition-all ${
-                isDark
-                  ? 'border-accent bg-accent/5'
-                  : 'border-border hover:border-border-active'
-              }`}
-            >
-              <div className="rounded-lg bg-[#111827] border border-[#1e293b] p-2.5 mb-2">
-                <div className="flex gap-1 mb-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#fb7185]" />
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#fbbf24]" />
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#34d399]" />
-                </div>
-                <div className="space-y-1">
-                  <div className="h-1 w-3/4 rounded bg-[#60a5fa]/30" />
-                  <div className="h-1 w-1/2 rounded bg-[#a78bfa]/30" />
-                  <div className="h-1 w-5/6 rounded bg-[#34d399]/20" />
-                </div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Layout</h3>
+          <label className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5 cursor-pointer group">
+            <div className="flex items-start gap-2">
+              <Monitor className="w-3.5 h-3.5 text-text-muted mt-0.5" />
+              <div>
+                <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">Desktop mode</span>
+                <span className="block text-[10px] text-text-muted">Menu stays open on the left. Off = hamburger drawer.</span>
               </div>
-              <div className="flex items-center justify-center gap-1.5 text-xs">
-                <Moon className="w-3.5 h-3.5" />
-                <span className="font-medium">Midnight</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => setTheme('light')}
-              className={`rounded-xl border-2 p-3 transition-all ${
-                !isDark
-                  ? 'border-accent bg-accent/5'
-                  : 'border-border hover:border-border-active'
-              }`}
-            >
-              <div className="rounded-lg bg-white border border-[#e2e8f0] p-2.5 mb-2">
-                <div className="flex gap-1 mb-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#dc2626]" />
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#d97706]" />
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#16a34a]" />
-                </div>
-                <div className="space-y-1">
-                  <div className="h-1 w-3/4 rounded bg-[#3b82f6]/30" />
-                  <div className="h-1 w-1/2 rounded bg-[#7c3aed]/30" />
-                  <div className="h-1 w-5/6 rounded bg-[#16a34a]/20" />
-                </div>
-              </div>
-              <div className="flex items-center justify-center gap-1.5 text-xs text-[#475569]">
-                <Sun className="w-3.5 h-3.5" />
-                <span className="font-medium">Daylight</span>
-              </div>
-            </button>
-          </div>
+            </div>
+            <Toggle checked={desktopMode} onChange={onDesktopModeChange} />
+          </label>
         </div>
 
         {/* Editor settings */}
