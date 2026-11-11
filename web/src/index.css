@@ -64,25 +64,25 @@
   --radius-xl: 14px;
 }
 
-/* ── Light theme ── */
+/* ── Light theme (level 2 default) ── */
 :root[data-theme="light"] {
-  --c-bg-base:      #f0f2f7;
-  --c-bg-primary:   #ffffff;
-  --c-bg-secondary: #f5f7fc;
-  --c-bg-tertiary:  #edf0f7;
-  --c-bg-hover:     #eaedf5;
-  --c-bg-active:    #dde1ef;
-  --c-bg-elevated:  #ffffff;
-  --c-bg-input:     #f5f7fc;
+  --c-bg-base:      #cfcfcf;
+  --c-bg-primary:   #dddddd;
+  --c-bg-secondary: #d5d5d5;
+  --c-bg-tertiary:  #cccccc;
+  --c-bg-hover:     #c6c6c6;
+  --c-bg-active:    #b8b8b8;
+  --c-bg-elevated:  #e2e2e2;
+  --c-bg-input:     #d5d5d5;
 
-  --c-border:        #dde1ef;
-  --c-border-subtle: #e8eaf2;
-  --c-border-active: #bdc4dc;
-  --c-border-strong: #a0aac4;
+  --c-border:        #bdbdbd;
+  --c-border-subtle: #c8c8c8;
+  --c-border-active: #9e9e9e;
+  --c-border-strong: #808080;
 
   --c-text-primary:   #111827;
-  --c-text-secondary: #4b5577;
-  --c-text-muted:     #8b91ab;
+  --c-text-secondary: #374151;
+  --c-text-muted:     #4b5563;
   --c-text-inverse:   #ffffff;
 
   --c-accent:       #4f5ff7;
@@ -90,50 +90,105 @@
   --c-accent-dim:   rgba(79, 95, 247, 0.08);
   --c-accent-glow:  rgba(79, 95, 247, 0.12);
 
-  --c-green:   #16a34a;
-  --c-red:     #dc2626;
-  --c-yellow:  #d97706;
-  --c-peach:   #ea580c;
-  --c-mauve:   #7c3aed;
-  --c-cyan:    #0891b2;
-  --c-pink:    #db2777;
+  --c-green:   #15803d;
+  --c-red:     #b91c1c;
+  --c-yellow:  #a16207;
+  --c-peach:   #c2410c;
+  --c-mauve:   #6d28d9;
+  --c-cyan:    #0e7490;
+  --c-pink:    #be185d;
 
-  --c-status-bar:  #eaedf5;
-  --c-status-text: #4b5577;
+  --c-status-bar:  #cccccc;
+  --c-status-text: #374151;
 
-  --c-scrollbar: #dde1ef;
-  --c-selection: rgba(79, 95, 247, 0.12);
+  --c-scrollbar: #bdbdbd;
+  --c-selection: rgba(79, 95, 247, 0.18);
   --c-shadow:    rgba(0, 0, 0, 0.08);
   --c-shadow-lg: rgba(0, 0, 0, 0.15);
 }
 
-/* ── Theme levels ──
-   1–3 light (strong → soft), 4–6 dark (soft → strong). Level 2 is the light
-   default and level 5 is the dark default; only the non-default levels need
-   overrides. */
+/* Light levels: 1 = white/soft, 2 = mid, 3 = #AAA/hard. */
 :root[data-theme="light"][data-level="1"] {
+  --c-bg-base:      #e9e9e9;
+  --c-bg-primary:   #ffffff;
+  --c-bg-secondary: #f7f7f7;
+  --c-bg-tertiary:  #efefef;
+  --c-bg-hover:     #ececec;
+  --c-bg-active:    #e0e0e0;
+  --c-bg-elevated:  #ffffff;
+  --c-bg-input:     #f7f7f7;
+  --c-border:        #dcdcdc;
+  --c-border-subtle: #e8e8e8;
+  --c-border-active: #bdbdbd;
+  --c-border-strong: #9e9e9e;
   --c-text-primary:   #0b1020;
   --c-text-secondary: #374151;
   --c-text-muted:     #5b6478;
+  --c-status-bar:     #efefef;
   --c-status-text:    #374151;
+  --c-scrollbar:      #dcdcdc;
 }
 :root[data-theme="light"][data-level="3"] {
-  --c-text-primary:   #1f2937;
-  --c-text-secondary: #6b7280;
-  --c-text-muted:     #9ca3af;
-  --c-status-text:    #6b7280;
+  --c-bg-base:      #8f8f8f;
+  --c-bg-primary:   #aaaaaa;
+  --c-bg-secondary: #a0a0a0;
+  --c-bg-tertiary:  #969696;
+  --c-bg-hover:     #8f8f8f;
+  --c-bg-active:    #828282;
+  --c-bg-elevated:  #b3b3b3;
+  --c-bg-input:     #a0a0a0;
+  --c-border:        #858585;
+  --c-border-subtle: #949494;
+  --c-border-active: #707070;
+  --c-border-strong: #5c5c5c;
+  --c-text-primary:   #111111;
+  --c-text-secondary: #2b2b2b;
+  --c-text-muted:     #3d3d3d;
+  --c-status-bar:     #969696;
+  --c-status-text:    #2b2b2b;
+  --c-scrollbar:      #858585;
 }
+
+/* Dark levels: 4 = soft, 5 = default, 6 = black/hard. */
 :root[data-theme="dark"][data-level="4"] {
+  --c-bg-base:      #191919;
+  --c-bg-primary:   #1e1e1e;
+  --c-bg-secondary: #232323;
+  --c-bg-tertiary:  #181818;
+  --c-bg-hover:     #2a2a2a;
+  --c-bg-active:    #333333;
+  --c-bg-elevated:  #262626;
+  --c-bg-input:     #232323;
+  --c-border:        #303030;
+  --c-border-subtle: #282828;
+  --c-border-active: #3f3f3f;
+  --c-border-strong: #505050;
   --c-text-primary:   #d8dbe8;
   --c-text-secondary: #8f95ad;
   --c-text-muted:     #626984;
+  --c-status-bar:     #232323;
   --c-status-text:    #8f95ad;
+  --c-scrollbar:      #303030;
 }
 :root[data-theme="dark"][data-level="6"] {
+  --c-bg-base:      #000000;
+  --c-bg-primary:   #000000;
+  --c-bg-secondary: #0a0a0a;
+  --c-bg-tertiary:  #000000;
+  --c-bg-hover:     #141414;
+  --c-bg-active:    #1e1e1e;
+  --c-bg-elevated:  #101010;
+  --c-bg-input:     #0a0a0a;
+  --c-border:        #1c1c1c;
+  --c-border-subtle: #121212;
+  --c-border-active: #2a2a2a;
+  --c-border-strong: #383838;
   --c-text-primary:   #f7f8fc;
   --c-text-secondary: #c2c7da;
   --c-text-muted:     #9ea5bd;
+  --c-status-bar:     #0a0a0a;
   --c-status-text:    #c2c7da;
+  --c-scrollbar:      #1c1c1c;
 }
 
 /* ── Tailwind @theme tokens ── */

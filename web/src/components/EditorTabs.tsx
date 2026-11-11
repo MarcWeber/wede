@@ -101,7 +101,7 @@ export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onClose
             }`}
           >
             {isActive && (
-              <span className="absolute top-0 left-0 right-0 h-[1.5px] rounded-b z-10" style={{ backgroundColor: `var(${TONE_VAR[tone]})` }} />
+              <span className="absolute top-0 left-0 right-0 h-[3px] rounded-b z-10" style={{ backgroundColor: `var(${TONE_VAR[tone]})` }} />
             )}
             {isBrowser && <Globe className="w-3 h-3 text-cyan shrink-0" />}
             {!isBrowser && tab.modified && (

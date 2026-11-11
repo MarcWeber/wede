@@ -3,7 +3,7 @@ import {
   Files, GitBranch, TerminalSquare, Save, FolderOpen,
   Globe, Settings as SettingsIcon, ChevronLeft, Search as SearchIcon,
   MessageSquare, Webhook, ScrollText, Boxes,
-  HelpCircle, Menu, Code2, Minimize2,
+  HelpCircle, Menu, Code2, Minimize2, GripVertical,
 } from 'lucide-react'
 import { useMobile } from '../hooks/useMobile'
 import { useDesktopMode } from '../hooks/useDesktopMode'
@@ -38,6 +38,7 @@ import GitGraphView from './GitGraphView'
 import FloatingTerminals from './FloatingTerminals'
 import RemoteCursors from './RemoteCursors'
 import ViewTabs, { type ViewTab } from './ViewTabs'
+import Tabbed from './Tabbed'
 import ViewMenu from './ViewMenu'
 import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
@@ -216,14 +217,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     { kind: 'files', label: 'Files', icon: Files },
     { kind: 'search', label: 'Search', icon: SearchIcon },
     { kind: 'code', label: 'Code', icon: Code2 },
+    { kind: 'terminals', label: 'Terminals', icon: TerminalSquare },
     { kind: 'web', label: 'Web', icon: Globe },
     { kind: 'git', label: 'Git', icon: GitBranch },
     { kind: 'api', label: 'API', icon: Webhook },
-    { kind: 'settings', label: 'Settings', icon: SettingsIcon },
     { kind: 'log', label: 'Log', icon: ScrollText },
     { kind: 'help', label: 'Help', icon: HelpCircle },
-    { kind: 'terminals', label: 'Terminals', icon: TerminalSquare },
     { kind: 'chat', label: 'Chat', icon: MessageSquare },
+    { kind: 'settings', label: 'Settings', icon: SettingsIcon },
   ]
   const [visible, setVisible] = useState<Record<ViewKind, boolean>>(() => {
     try {
@@ -252,6 +253,24 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     } catch { /* ignore */ }
     return [{ id: 1, visible: false }]
   })
+  // Which container (if any) owns each shell tab. Values are container ids
+  // such as `container:2`; missing/empty means the root container. Containers
+  // are tabs too, so this mapping supports nesting.
+  const [containerOf, setContainerOf] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('wede_container_of')
+      if (saved) return JSON.parse(saved) as Record<string, string>
+    } catch { /* ignore */ }
+    return {}
+  })
+  const [containerActive, setContainerActive] = useState<Record<number, string>>(() => {
+    try {
+      const saved = localStorage.getItem('wede_container_active')
+      if (saved) return JSON.parse(saved) as Record<number, string>
+    } catch { /* ignore */ }
+    return {}
+  })
+  const containerIdRef = useRef((containers[containers.length - 1]?.id || 0) + 1)
   const [lockedShells, setLockedShells] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('wede_locked_shells')
@@ -286,6 +305,15 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     return {}
   })
   const floatZ = useRef(30)
+  const [dockSizes, setDockSizes] = useState<{ left: number; right: number; bottom: number }>(() => {
+    try {
+      const saved = localStorage.getItem('wede_dock_sizes')
+      if (saved) return JSON.parse(saved) as { left: number; right: number; bottom: number }
+    } catch { /* ignore */ }
+    return { left: 32, right: 32, bottom: 30 }
+  })
+  const [modeDrag, setModeDrag] = useState<string | null>(null)
+  const [dockActive, setDockActive] = useState<{ left: string | null; right: string | null; bottom: string | null }>({ left: null, right: null, bottom: null })
   const [apiIds, setApiIds] = useState<number[]>([1])
   const [activeApiId, setActiveApiId] = useState(1)
   const nextApiId = useRef(2)
@@ -401,10 +429,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   }, [searchIds, activeSearchId, logIds, activeLogId, tabs, apiIds, activeApiId, terminalsApi, addSearch, addLog, addWeb, addApi, addTerminalTab])
 
   const addContainer = useCallback(() => {
-    const id = (containers[containers.length - 1]?.id || 0) + 1
+    const id = containerIdRef.current++
     setContainers((prev) => [...prev, { id, visible: true }])
     setActiveShell(`container:${id}`)
-  }, [containers])
+  }, [])
   const toggleContainer = useCallback((id: number) => {
     const target = containers.find((c) => c.id === id)
     const nextVisible = !target?.visible
@@ -436,6 +464,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       const fileTabs = tabs.filter((t) => !t.type || t.type === 'gitgraph')
       for (const t of fileTabs) list.push({ id: `file:${t.path}`, kind: 'code', title: t.name || 'Editor', icon: Code2, filePath: t.path })
     }
+    if (visible.terminals) {
+      for (const t of terminalsApi.terminals) list.push({ id: `term:${t.id}`, kind: 'terminals', title: t.name, icon: TerminalSquare, termId: t.id })
+    }
     if (visible.web) {
       for (const t of tabs.filter((t) => t.type === 'browser')) {
         list.push({ id: `web:${t.path}`, kind: 'web', title: t.name || 'Web', icon: Globe, webPath: t.path })
@@ -443,16 +474,13 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
     if (visible.git) pushView('git', 'Git', GitBranch)
     if (visible.api) for (const id of apiIds) list.push({ id: `api:${id}`, kind: 'api', title: `API ${id}`, icon: Webhook, apiId: id })
-    if (visible.settings) pushView('settings', 'Settings', SettingsIcon)
     if (visible.log) for (const id of logIds) list.push({ id: `log:${id}`, kind: 'log', title: `Log ${id}`, icon: ScrollText, logId: id })
     if (visible.help) pushView('help', 'Help', HelpCircle)
+    if (visible.chat) pushView('chat', 'Chat', MessageSquare)
     for (const c of containers.filter((x) => x.visible)) {
       list.push({ id: `container:${c.id}`, kind: 'container', title: `Container ${c.id}`, icon: Boxes, containerId: c.id })
     }
-    if (visible.terminals) {
-      for (const t of terminalsApi.terminals) list.push({ id: `term:${t.id}`, kind: 'terminals', title: t.name, icon: TerminalSquare, termId: t.id })
-    }
-    if (visible.chat) pushView('chat', 'Chat', MessageSquare)
+    if (visible.settings) pushView('settings', 'Settings', SettingsIcon)
     const order = (id: string) => {
       const i = tabOrder.indexOf(id)
       return i < 0 ? Number.MAX_SAFE_INTEGER : i
@@ -460,21 +488,43 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     return list.sort((a, b) => order(a.id) - order(b.id))
   }, [visible, tabs, apiIds, searchIds, logIds, containers, terminalsApi.terminals, tabOrder])
 
-  const activeEntry = entries.find((e) => e.id === activeShell) ?? entries[0] ?? null
-  const activeMode: ViewMode = activeEntry ? (viewModes[activeEntry.id] || 'center') : 'center'
-
-  const shellFrameClass = (mode: ViewMode): string => {
-    switch (mode) {
-      case 'max': return 'fixed inset-0 z-40 bg-bg-primary flex flex-col'
-      // docked-* are in-flow like CSS float: a bordered pane, not an overlay.
-      case 'docked-left': return 'absolute top-2 bottom-2 left-2 w-[46%] min-w-[280px] max-w-[720px] border border-border overflow-hidden bg-bg-primary flex flex-col'
-      case 'docked-right': return 'absolute top-2 bottom-2 right-2 w-[46%] min-w-[280px] max-w-[720px] border border-border overflow-hidden bg-bg-primary flex flex-col'
-      case 'docked-bottom': return 'absolute bottom-2 left-2 right-2 h-[46%] min-h-[180px] border border-border overflow-hidden bg-bg-primary flex flex-col'
-      // float is the always-on-top overlay.
-      case 'float': return 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[70%] h-[70%] min-w-[320px] min-h-[220px] rounded-lg border border-border shadow-2xl overflow-hidden bg-bg-primary z-20 flex flex-col'
-      default: return 'absolute inset-0 flex flex-col'
+  const shellMode = (id: string): ViewMode => viewModes[id] || 'center'
+  const rootAncestorId = (id: string): string => {
+    let cur = id
+    const seen = new Set<string>()
+    while (containerOf[cur] && !seen.has(cur)) {
+      seen.add(cur)
+      cur = containerOf[cur]
     }
+    return cur
   }
+  const directChildOnPath = (containerId: number, id: string): string | null => {
+    let cur = id
+    const seen = new Set<string>()
+    while (cur && !seen.has(cur)) {
+      seen.add(cur)
+      const parent = containerOf[cur]
+      if (!parent) return null
+      if (parent === `container:${containerId}`) return cur
+      cur = parent
+    }
+    return null
+  }
+  const childrenOfContainer = (containerId: number) => entries.filter((e) => containerOf[e.id] === `container:${containerId}`)
+  // Root-container entries only; nested tabs live in their container's strip.
+  const rootEntries = entries.filter((e) => !containerOf[e.id])
+  const activeRootId = activeShell ? rootAncestorId(activeShell) : null
+  const activeRootEntry = entries.find((e) => e.id === activeRootId) ?? null
+  const activeMode: ViewMode = activeRootEntry ? shellMode(activeRootEntry.id) : 'center'
+  const centerEntry = activeRootEntry && (activeMode === 'center' || activeMode === 'max')
+    ? activeRootEntry
+    : rootEntries.find((e) => shellMode(e.id) === 'center') ?? null
+  const dockedLeft = rootEntries.filter((e) => shellMode(e.id) === 'docked-left')
+  const dockedRight = rootEntries.filter((e) => shellMode(e.id) === 'docked-right')
+  const dockedBottom = rootEntries.filter((e) => shellMode(e.id) === 'docked-bottom')
+  const isDockedMode = (mode: ViewMode) => mode === 'docked-left' || mode === 'docked-right' || mode === 'docked-bottom'
+  const mainTabs = rootEntries.filter((e) => !isDockedMode(shellMode(e.id)))
+  const mainActive = activeRootEntry && mainTabs.some((e) => e.id === activeRootEntry.id) ? activeRootEntry.id : centerEntry?.id ?? ''
 
   useEffect(() => {
     if (!entries.length || entries.some((e) => e.id === activeShell)) return
@@ -491,9 +541,45 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   useEffect(() => { try { localStorage.setItem('wede_active_shell', activeShell) } catch { /* ignore */ } }, [activeShell])
   useEffect(() => { try { localStorage.setItem('wede_menu_placement', menuPlacement) } catch { /* ignore */ } }, [menuPlacement])
   useEffect(() => { try { localStorage.setItem('wede_containers', JSON.stringify(containers)) } catch { /* ignore */ } }, [containers])
+  useEffect(() => { try { localStorage.setItem('wede_container_of', JSON.stringify(containerOf)) } catch { /* ignore */ } }, [containerOf])
+  useEffect(() => { try { localStorage.setItem('wede_container_active', JSON.stringify(containerActive)) } catch { /* ignore */ } }, [containerActive])
   useEffect(() => { try { localStorage.setItem('wede_locked_shells', JSON.stringify(lockedShells)) } catch { /* ignore */ } }, [lockedShells])
   useEffect(() => { try { localStorage.setItem('wede_view_modes', JSON.stringify(viewModes)) } catch { /* ignore */ } }, [viewModes])
   useEffect(() => { try { localStorage.setItem('wede_float_geom', JSON.stringify(floatGeom)) } catch { /* ignore */ } }, [floatGeom])
+  useEffect(() => { try { localStorage.setItem('wede_dock_sizes', JSON.stringify(dockSizes)) } catch { /* ignore */ } }, [dockSizes])
+
+  // Floating containers are disposable: once their last tab leaves, remove
+  // the empty float container so no pointless windows remain.
+  useEffect(() => {
+    const empty = containers.filter((c) => {
+      const key = `container:${c.id}`
+      return c.visible
+        && !containerOf[key]
+        && (viewModes[key] || 'center') === 'float'
+        && !entries.some((e) => containerOf[e.id] === key)
+    })
+    if (empty.length === 0) return
+    const ids = new Set(empty.map((c) => c.id))
+    setContainers((prev) => prev.filter((c) => !ids.has(c.id)))
+    setViewModes((prev) => {
+      const next = { ...prev }
+      for (const id of ids) delete next[`container:${id}`]
+      return next
+    })
+    setContainerActive((prev) => {
+      const next = { ...prev }
+      for (const id of ids) delete next[id]
+      return next
+    })
+    setContainerOf((prev) => {
+      const next = { ...prev }
+      let changed = false
+      for (const id of ids) {
+        if (next[`container:${id}`]) { delete next[`container:${id}`]; changed = true }
+      }
+      return changed ? next : prev
+    })
+  }, [containers, containerOf, entries, viewModes])
 
   // Tasks (global + trusted project .wede/tasks.json) — run in a new terminal.
   const [tasks, setTasks] = useState<Task[]>([])
@@ -809,6 +895,16 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   // ── Flat shell tab handlers ──
   const selectShell = useCallback((id: string) => {
     setActiveShell(id)
+    // Remember the active tab at every container level on the path.
+    let cur = id
+    const seen = new Set<string>()
+    while (containerOf[cur] && !seen.has(cur)) {
+      seen.add(cur)
+      const parent = containerOf[cur]
+      const containerId = Number(parent.replace('container:', ''))
+      if (Number.isFinite(containerId)) setContainerActive((prev) => ({ ...prev, [containerId]: cur }))
+      cur = parent
+    }
     const e = entries.find((x) => x.id === id)
     if (!e) return
     if (e.filePath) setActiveTab(e.filePath)
@@ -819,7 +915,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     else if (e.termId != null) terminalsApi.setActiveId(e.termId)
     else setActiveTab(null)
     if (!desktopMode) setMenuOpen(false)
-  }, [entries, terminalsApi, desktopMode])
+  }, [entries, terminalsApi, desktopMode, containerOf])
 
   const setShellLock = useCallback((ids: string[], locked: boolean) => {
     setLockedShells((prev) => {
@@ -833,12 +929,132 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   }, [])
 
   const setShellViewMode = useCallback((ids: string[], mode: ViewMode) => {
-    setViewModes((prev) => {
+    // Floating a plain window wraps it in a new floating container. Drag & drop
+    // into an existing container uses dropIntoContainer instead.
+    const wrapped = mode === 'float'
+      ? ids.filter((id) => !id.startsWith('container:')).map((child) => ({ id: containerIdRef.current++, child }))
+      : []
+    if (wrapped.length) {
+      setContainers((prev) => [...prev, ...wrapped.map((c) => ({ id: c.id, visible: true }))])
+      setContainerOf((prev) => {
+        const next = { ...prev }
+        for (const c of wrapped) next[c.child] = `container:${c.id}`
+        return next
+      })
+      setContainerActive((prev) => {
+        const next = { ...prev }
+        for (const c of wrapped) next[c.id] = c.child
+        return next
+      })
+    }
+    const wrappedIds = new Set(wrapped.map((c) => c.child))
+    const directIds = ids.filter((id) => !wrappedIds.has(id))
+    // A tab assigned a root view mode leaves its container (containers keep
+    // their own children when the container itself is moved).
+    setContainerOf((prev) => {
+      if (!directIds.some((id) => prev[id])) return prev
       const next = { ...prev }
-      for (const id of ids) next[id] = mode
+      for (const id of directIds) delete next[id]
       return next
     })
-  }, [])
+    setViewModes((prev) => {
+      const next = { ...prev }
+      for (const id of directIds) next[id] = mode
+      for (const c of wrapped) {
+        delete next[c.child]
+        next[`container:${c.id}`] = 'float'
+      }
+      return next
+    })
+    const lastId = ids[ids.length - 1]
+    setDockActive((prev) => {
+      const next = { ...prev }
+      for (const side of ['left', 'right', 'bottom'] as const) {
+        if (next[side] && ids.includes(next[side])) next[side] = null
+      }
+      if (mode === 'docked-left') next.left = lastId
+      else if (mode === 'docked-right') next.right = lastId
+      else if (mode === 'docked-bottom') next.bottom = lastId
+      return next
+    })
+    if (mode === 'center' || mode === 'max') {
+      if (lastId) setActiveShell(lastId)
+    } else if (mode !== 'float' && ids.includes(activeShell)) {
+      const next = rootEntries.find((e) => !ids.includes(e.id) && (viewModes[e.id] || 'center') === 'center')
+      if (next) setActiveShell(next.id)
+    }
+  }, [activeShell, rootEntries, viewModes])
+
+  // Move a tab into a specific (possibly nested) container. Docking a tab
+  // drops its old container membership; moving a container keeps its children.
+  const dropIntoContainer = useCallback((id: string, containerId: number) => {
+    setModeDrag(null)
+    if (!Number.isFinite(containerId) || id === `container:${containerId}`) return
+    // Refuse to put a container inside itself or one of its descendants.
+    let cur: string | undefined = `container:${containerId}`
+    const seen = new Set<string>()
+    while (cur && !seen.has(cur)) {
+      seen.add(cur)
+      if (cur === id) return
+      cur = containerOf[cur]
+    }
+    setContainerOf((prev) => ({ ...prev, [id]: `container:${containerId}` }))
+    setContainerActive((prev) => ({ ...prev, [containerId]: id }))
+    setViewModes((prev) => {
+      if (!prev[id]) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    setContainers((prev) => prev.map((c) => (c.id === containerId ? { ...c, visible: true } : c)))
+    setActiveShell(id)
+  }, [containerOf])
+
+  const dropViewMode = useCallback((id: string, mode: string) => {
+    setModeDrag(null)
+    if (mode.startsWith('container:')) {
+      dropIntoContainer(id, Number(mode.slice('container:'.length)))
+      return
+    }
+    if (mode === 'center' || mode === 'docked-left' || mode === 'docked-right' || mode === 'docked-bottom' || mode === 'float' || mode === 'max') {
+      setShellViewMode([id], mode)
+    }
+  }, [setShellViewMode, dropIntoContainer])
+
+  // Drag a tab or a docked header onto one of the visible drop handles.
+  const beginModeDrag = useCallback((id: string, e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    if ((e.target as HTMLElement).closest('button')) return
+    const sx = e.clientX
+    const sy = e.clientY
+    let active = false
+    const cleanup = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', cancel)
+    }
+    const move = (ev: PointerEvent) => {
+      if (active) return
+      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 8) return
+      active = true
+      setModeDrag(id)
+    }
+    const up = (ev: PointerEvent) => {
+      cleanup()
+      if (!active) return
+      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
+      const mode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode') || null
+      if (mode) dropViewMode(id, mode)
+      else setModeDrag(null)
+    }
+    const cancel = () => {
+      cleanup()
+      setModeDrag(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
+  }, [dropViewMode])
 
   // Reset view restores the fresh-install layout: every open tab is closed,
   // optional views are hidden, and per-tab modes/locks/positions are cleared.
@@ -863,6 +1079,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     setActiveLogId(1)
     nextLogId.current = 2
     setContainers([{ id: 1, visible: false }])
+    setContainerOf({})
+    setContainerActive({})
+    setDockSizes({ left: 32, right: 32, bottom: 30 })
+    containerIdRef.current = 2
     setFloatingTerminals(false)
     setTermFullscreen(false)
     setMdPreviewPaths(new Set())
@@ -870,10 +1090,26 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     setMenuOpen(false)
   }, [terminalsApi])
 
+  const forgetShellMapping = useCallback((id: string) => {
+    setContainerOf((prev) => {
+      if (!prev[id]) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    setContainerActive((prev) => {
+      if (!Object.values(prev).includes(id)) return prev
+      const next = { ...prev }
+      for (const [cid, active] of Object.entries(next)) if (active === id) delete next[Number(cid)]
+      return next
+    })
+  }, [])
+
   const closeShell = useCallback((id: string) => {
     if (lockedShells.includes(id)) return
     const e = entries.find((x) => x.id === id)
     if (!e) return
+    if (e.kind !== 'container') forgetShellMapping(id)
     if (e.filePath) { closeTab(e.filePath); return }
     if (e.webPath) { closeTab(e.webPath); return }
     if (e.apiId != null) { setApiIds((prev) => prev.filter((x) => x !== e.apiId)); return }
@@ -885,13 +1121,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
     if (e.termId != null) { terminalsApi.closeTerminal(e.termId); return }
     setVisible((v) => ({ ...v, [e.kind]: false }))
-  }, [entries, closeTab, terminalsApi, lockedShells])
+  }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping])
 
-  const closeSelectedShells = useCallback((ids: string[]) => {
+  const closeSelectedShells = useCallback((ids: string[], includeLocked = false) => {
     for (const id of ids) {
-      if (lockedShells.includes(id)) continue
+      if (!includeLocked && lockedShells.includes(id)) continue
       const e = entries.find((x) => x.id === id)
       if (!e) continue
+      if (e.kind !== 'container') forgetShellMapping(id)
       if (e.filePath) closeTab(e.filePath)
       else if (e.webPath) closeTab(e.webPath)
       else if (e.apiId != null) setApiIds((prev) => prev.filter((x) => x !== e.apiId))
@@ -901,7 +1138,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       else if (e.termId != null) terminalsApi.closeTerminal(e.termId)
       else setVisible((v) => ({ ...v, [e.kind]: false }))
     }
-  }, [entries, closeTab, terminalsApi, lockedShells])
+  }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping])
 
   const reorderShell = useCallback((from: string, to: string) => {
     setTabOrder((prev) => {
@@ -1415,7 +1652,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
           <div className={termFullscreen ? 'fixed inset-0 z-50 bg-bg-primary' : 'h-full'}>
             <TerminalPanel key={`${terminalKey}-${e.termId}`} token={token} workspaceId={workspaceId} term={terminalsApi} visible onlyId={e.termId}
               isFullscreen={termFullscreen} onToggleFullscreen={() => setTermFullscreen(!termFullscreen)}
-              onPopOut={floatTerminal} isMobile={!desktopMode} />
+              onPopOut={floatTerminal} />
           </div>
         )
       case 'git':
@@ -1426,15 +1663,66 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
         return <ApiInstance key={e.apiId} workspaceId={workspaceId} authFetch={authFetch} readOnly={role === 'viewer'} />
       case 'log':
         return <LogView key={e.logId} authFetch={authFetch} workspaceId={workspaceId} />
-      case 'container':
+      case 'container': {
+        const cid = e.containerId as number
+        const kids = childrenOfContainer(cid)
+        const pathChild = activeShell ? directChildOnPath(cid, activeShell) : null
+        const activeKid = kids.find((k) => k.id === pathChild)
+          ?? kids.find((k) => k.id === containerActive[cid])
+          ?? kids[0]
+          ?? null
+        const floating = shellMode(e.id) === 'float'
+        // A floating container shows itself as the first tab so the whole
+        // container can be dragged (docked, centered, or nested) from inside.
+        const stripTabs = [
+          ...(floating ? [{ id: e.id, kind: 'container', label: e.title, icon: Boxes }] : []),
+          ...kids.map((k) => ({ id: k.id, kind: k.kind, label: k.title, icon: k.icon })),
+        ]
+        const stripActive = activeShell === e.id ? e.id : activeKid?.id ?? ''
         return (
-          <div className="h-full flex flex-col bg-bg-primary">
-            <div className="flex-1 flex flex-col items-center justify-center gap-2 text-text-muted">
-              <Boxes className="w-6 h-6" />
-              <span className="text-[12px]">Container {e.containerId}</span>
-            </div>
+          <div className="h-full flex flex-col bg-bg-primary relative">
+            {kids.length > 0 ? (
+              <>
+                <Tabbed
+                  tabs={stripTabs}
+                  active={stripActive}
+                  lockedIds={lockedShells}
+                  size="small"
+                  dropMode={`container:${cid}`}
+                  dropActive={!!modeDrag}
+                  className="shrink-0"
+                  onActivate={selectShell}
+                  onClose={closeShell}
+                  onCloseSelected={closeSelectedShells}
+                  onToggleLock={setShellLock}
+                  onSetViewMode={setShellViewMode}
+                  onReorder={(from, to) => {
+                    if (from === e.id || to === e.id) return
+                    reorderShell(from, to)
+                  }}
+                  onDragAway={(id) => { if (id !== e.id) closeShell(id) }}
+                  onDragDetach={(id) => setModeDrag(id)}
+                  onDropViewMode={dropViewMode}
+                  onDragCancelViewMode={() => setModeDrag(null)}
+                />
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  {activeKid ? renderEntry(activeKid) : null}
+                </div>
+              </>
+            ) : (
+              <div
+                data-drop-mode={`container:${cid}`}
+                className={`flex-1 flex flex-col items-center justify-center gap-2 text-text-muted ${
+                  modeDrag ? 'outline outline-2 outline-dashed outline-accent -outline-offset-2 bg-accent/5' : ''
+                }`}>
+                <Boxes className="w-6 h-6" />
+                <span className="text-[12px]">Container {cid}</span>
+                <span className="text-[10px]">drop tabs on this container's tabs</span>
+              </div>
+            )}
           </div>
         )
+      }
       case 'help':
         return <HelpView />
       case 'settings':
@@ -1458,6 +1746,41 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
           />
         )
     }
+  }
+
+  // Each dock area has its own compact tab strip. Only the selected docked
+  // window renders below it; other docked windows stay in the strip.
+  const dockArea = (side: 'left' | 'right' | 'bottom', list: ShellEntry[]) => {
+    const mode: ViewMode = `docked-${side}`
+    const active = list.find((e) => e.id === dockActive[side]) ?? list[0] ?? null
+    return (
+      <div data-view-mode={mode} className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-bg-primary">
+        <Tabbed
+          tabs={list.map((e) => ({ id: e.id, kind: e.kind, label: e.title, icon: e.icon }))}
+          active={active?.id ?? ''}
+          lockedIds={lockedShells}
+          size="small"
+          detachAbove
+          dragAnyDirection
+          dropMode={mode}
+          dropActive={!!modeDrag}
+          className="shrink-0"
+          onActivate={(id) => setDockActive((prev) => ({ ...prev, [side]: id }))}
+          onClose={closeShell}
+          onCloseSelected={closeSelectedShells}
+          onToggleLock={setShellLock}
+          onSetViewMode={setShellViewMode}
+          onReorder={reorderShell}
+          onDragAway={closeShell}
+          onDragDetach={(id) => setModeDrag(id)}
+          onDropViewMode={dropViewMode}
+          onDragCancelViewMode={() => setModeDrag(null)}
+        />
+        <div className="flex-1 min-h-0 overflow-hidden" data-shell={active?.id ?? undefined}>
+          {active ? renderEntry(active) : null}
+        </div>
+      </div>
+    )
   }
 
   const viewMenu = (desktop: boolean) => (
@@ -1496,7 +1819,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar: menu button (mobile) + view tabs + file actions */}
-        <div className="flex items-center h-10 bg-bg-tertiary border-b border-border shrink-0 select-none">
+        <div className="flex items-center min-h-10 bg-bg-tertiary border-b border-border shrink-0 select-none">
           {!desktopMode && (
             <button onClick={() => setMenuOpen(true)}
               className="flex items-center justify-center w-10 h-10 shrink-0 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
@@ -1506,15 +1829,19 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
           )}
           <div className="flex-1 min-w-0">
             <ViewTabs
-              tabs={entries.map((e) => ({ id: e.id, kind: e.kind, label: e.title, icon: e.icon }))}
-              active={activeShell}
+              tabs={mainTabs.map((e) => ({ id: e.id, kind: e.kind, label: e.title, icon: e.icon }))}
+              active={mainActive}
               lockedIds={lockedShells}
+              dropActive={!!modeDrag}
               onSelect={selectShell}
               onClose={closeShell}
               onCloseSelected={closeSelectedShells}
               onToggleLock={setShellLock}
               onSetViewMode={setShellViewMode}
               onReorder={reorderShell}
+              onDragDetach={(id) => setModeDrag(id)}
+              onDropViewMode={dropViewMode}
+              onDragCancelViewMode={() => setModeDrag(null)}
             />
           </div>
           {!isMobile && (
@@ -1536,33 +1863,72 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
           )}
         </div>
 
-        {/* Content area — one flat tab is active at a time */}
-        <div className="flex-1 min-h-0 relative bg-bg-primary">
+        {/* Content area: center tab + always-visible docked panes + floats. */}
+        <div className="flex-1 min-h-0 relative bg-bg-primary" data-dock-area>
           {entries.length === 0 && (
             <div className="h-full flex items-center justify-center px-6 text-center text-text-muted">
               <span className="text-[12px]">open the hamburger menu in the corner to open files</span>
             </div>
           )}
-          {activeEntry && activeMode !== 'float' && (
-            <div data-shell={activeEntry.id} data-view-mode={activeMode} className={shellFrameClass(activeMode)}>
-              {activeMode !== 'center' && (
-                <div className="flex items-center gap-2 h-8 px-2.5 border-b border-border bg-bg-secondary shrink-0">
-                  <activeEntry.icon className="w-3.5 h-3.5 text-text-muted shrink-0" />
-                  <span className="text-[12px] font-medium text-text-secondary truncate">{activeEntry.title}</span>
-                  <span className="text-[10px] text-text-muted uppercase tracking-wide">{activeMode.replace('docked-', '')}</span>
-                  <button onClick={() => setShellViewMode([activeEntry.id], 'center')}
-                    className="ml-auto p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover"
-                    title="Restore to center">
-                    <Minimize2 className="w-3.5 h-3.5" />
-                  </button>
+
+          {activeRootEntry && activeMode === 'max' && (
+            <div data-shell={activeRootEntry.id} data-view-mode="max" className="fixed inset-0 z-40 bg-bg-primary flex flex-col">
+              <div
+                onPointerDown={(ev) => beginModeDrag(activeRootEntry.id, ev)}
+                className="flex items-center gap-1.5 h-8 px-2 border-b border-border bg-bg-secondary shrink-0 cursor-grab active:cursor-grabbing touch-none select-none"
+                title="Drag to dock, center, or float">
+                <GripVertical className="w-3 h-3 shrink-0 text-text-muted" />
+                <activeRootEntry.icon className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                <span className="text-[12px] font-medium text-text-secondary truncate">{activeRootEntry.title}</span>
+                <span className="text-[9px] uppercase tracking-wide text-text-muted">max</span>
+                <button
+                  onPointerDown={(ev) => ev.stopPropagation()}
+                  onClick={() => setShellViewMode([activeRootEntry.id], 'center')}
+                  className="ml-auto p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover"
+                  title="Restore to center">
+                  <Minimize2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0">{renderEntry(activeRootEntry)}</div>
+            </div>
+          )}
+
+          {activeMode !== 'max' && (
+            <div className="absolute inset-0 flex flex-col min-h-0">
+              <div className="flex-1 min-h-0 flex">
+                {dockedLeft.length > 0 && (
+                  <div className="w-[32%] min-w-[200px] max-w-[560px] shrink-0 flex flex-col border-r border-border bg-bg-primary">
+                    {dockArea('left', dockedLeft)}
+                  </div>
+                )}
+
+                <div className="flex-1 min-w-0 min-h-0 relative bg-bg-primary">
+                  {centerEntry ? (
+                    <div className="absolute inset-0 flex flex-col">{renderEntry(centerEntry)}</div>
+                  ) : (
+                    <div className="h-full flex items-center justify-center px-6 text-center text-text-muted">
+                      <span className="text-[12px]">select a tab to show it in the center</span>
+                    </div>
+                  )}
+                </div>
+
+                {dockedRight.length > 0 && (
+                  <div className="w-[32%] min-w-[200px] max-w-[560px] shrink-0 flex flex-col border-l border-border bg-bg-primary">
+                    {dockArea('right', dockedRight)}
+                  </div>
+                )}
+              </div>
+
+              {dockedBottom.length > 0 && (
+                <div className="h-[30%] min-h-[140px] max-h-[480px] shrink-0 flex flex-col border-t border-border bg-bg-primary">
+                  {dockArea('bottom', dockedBottom)}
                 </div>
               )}
-              <div className="flex-1 min-h-0">{renderEntry(activeEntry)}</div>
             </div>
           )}
           {/* `float` tabs stay on the main container above the active tab and
               can be dragged by their title bar. */}
-          {entries.filter((e) => (viewModes[e.id] || 'center') === 'float').map((e, i) => {
+          {rootEntries.filter((e) => (viewModes[e.id] || 'center') === 'float').map((e, i) => {
             const g = floatGeom[e.id] ?? { x: 40 + (i % 6) * 28, y: 40 + (i % 6) * 28, w: 620, h: 420, z: 30 + i }
             return (
               <FloatWindow
@@ -1583,6 +1949,26 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
           {floatingTerminals && role !== 'viewer' && (
             <FloatingTerminals token={token} workspaceId={workspaceId} term={terminalsApi} onDock={dockTerminal}
               sendWindow={sendWindow} onWindow={onWindow} />
+          )}
+
+          {modeDrag && (
+            <div className="absolute inset-0 z-50 pointer-events-none select-none">
+              <div data-drop-mode="docked-left" className="pointer-events-auto absolute left-2 top-2 bottom-2 w-24 rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 flex items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors">
+                Left
+              </div>
+              <div data-drop-mode="docked-right" className="pointer-events-auto absolute right-2 top-2 bottom-2 w-24 rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 flex items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors">
+                Right
+              </div>
+              <div data-drop-mode="docked-bottom" className="pointer-events-auto absolute left-[7.5rem] right-[7.5rem] bottom-2 h-20 rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 flex items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors">
+                Bottom
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div data-drop-mode="float" className="pointer-events-auto w-32 h-20 rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 shadow-2xl shadow-shadow -translate-x-0.5 -translate-y-0.5 flex flex-col items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary hover:-translate-x-1 hover:-translate-y-1 hover:shadow-[0_20px_45px_rgba(0,0,0,0.7)] transition-all">
+                  Float
+                  <span className="text-[9px] font-normal text-text-muted">windowed</span>
+                </div>
+              </div>
+            </div>
           )}
         </div>
 

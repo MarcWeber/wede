@@ -2,7 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent, type ReactNode,
+  type PointerEvent as ReactPointerEvent, type ReactNode, type TouchEvent as ReactTouchEvent,
 } from 'react'
 import { Check } from 'lucide-react'
 import { TONE_RING, TONE_VAR, type Tone } from '../lib/viewTypes'
@@ -277,9 +277,15 @@ export interface SelectableGroupProps {
   selectedCount?: number
   showMenuSelectMode?: boolean
   onCancelSelection?: () => void
+  onTouchStart?: (e: ReactTouchEvent<HTMLDivElement>) => void
+  onTouchMove?: (e: ReactTouchEvent<HTMLDivElement>) => void
+  onTouchEnd?: (e: ReactTouchEvent<HTMLDivElement>) => void
+  onTouchCancel?: (e: ReactTouchEvent<HTMLDivElement>) => void
+  dropMode?: string
+  dropActive?: boolean
 }
 
-export function SelectableGroup({ children, className = '', style, selectedCount = 0, showMenuSelectMode = true, onCancelSelection }: SelectableGroupProps) {
+export function SelectableGroup({ children, className = '', style, selectedCount = 0, showMenuSelectMode = true, onCancelSelection, onTouchStart, onTouchMove, onTouchEnd, onTouchCancel, dropMode, dropActive = false }: SelectableGroupProps) {
   const [mode, setMode] = useState<SelectMode>('normal')
   const [cancelPos, setCancelPos] = useState<{ top: number; right: number } | null>(null)
   const groupRef = useRef<HTMLDivElement>(null)
@@ -326,21 +332,43 @@ export function SelectableGroup({ children, className = '', style, selectedCount
 
   useEffect(() => {
     if (mode !== 'selecting') return
-    const onDocClick = (e: MouseEvent) => {
-      const el = e.target instanceof Element ? e.target : null
-      if (!el) return
-      if (el.closest('[data-selection-cancel]')) return
+    const outside = (target: EventTarget | null) => {
+      const el = target instanceof Element ? target : null
+      if (!el) return false
+      if (el.closest('[data-selection-cancel]')) return false
       const item = el.closest('[data-selectable-item]')
-      if (item && groupRef.current?.contains(item)) return
+      return !(item && groupRef.current?.contains(item))
+    }
+    const onDocClick = (e: MouseEvent) => {
+      if (!outside(e.target)) return
+      cancelSelection()
+    }
+    // Touch browsers can suppress `click` on non-interactive outside areas, and
+    // some widgets stop the click while still emitting pointer events. Treat a
+    // short pointer press outside as a tap as well; ignore drags/scrolls.
+    let down: { x: number; y: number } | null = null
+    const onDocDown = (e: PointerEvent) => {
+      if (e.button !== 0) { down = null; return }
+      down = outside(e.target) ? { x: e.clientX, y: e.clientY } : null
+    }
+    const onDocUp = (e: PointerEvent) => {
+      const start = down
+      down = null
+      if (!start || !outside(e.target)) return
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) return
       cancelSelection()
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') cancelSelection()
     }
     document.addEventListener('click', onDocClick, true)
+    document.addEventListener('pointerdown', onDocDown, true)
+    document.addEventListener('pointerup', onDocUp, true)
     window.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('click', onDocClick, true)
+      document.removeEventListener('pointerdown', onDocDown, true)
+      document.removeEventListener('pointerup', onDocUp, true)
       window.removeEventListener('keydown', onKey)
     }
   }, [mode, cancelSelection])
@@ -362,9 +390,15 @@ export function SelectableGroup({ children, className = '', style, selectedCount
       <div
         ref={groupRef}
         data-reorder-group
+        data-drop-mode={dropMode}
+        data-drop-active={dropActive ? '1' : undefined}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchCancel}
         className={`no-callout relative select-none ${className} ${
           mode === 'selecting' ? 'outline outline-2 outline-dotted outline-yellow -outline-offset-2' : ''
-        }`}
+        } ${dropActive ? 'outline outline-2 outline-dashed outline-accent -outline-offset-2' : ''}`}
         style={style}
       >
         {children}
@@ -410,6 +444,13 @@ export interface SelectableProps {
   dragId?: string
   onReorder?: (from: string, to: string) => void
   onDragAway?: (id: string) => void
+  onDragDetach?: (id: string) => void
+  onDropViewMode?: (id: string, mode: string) => void
+  onDragCancelViewMode?: () => void
+  detachAbove?: boolean
+  dragAnyDirection?: boolean
+  verticalDownDrag?: boolean
+  onDragStateChange?: (id: string | null) => void
   // Native HTML5 drag-and-drop (kept for the legacy editor tab strip).
   draggable?: boolean
   onDragStart?: (e: ReactDragEvent<HTMLDivElement>) => void
@@ -427,7 +468,7 @@ export default function Selectable({
   checked, locked, onToggle, onActivate, onDoubleClick,
   menu = [], className = '', style, label,
   tabIndex, itemRef, onKeyDown, onMiddleClick, tone,
-  dragId, onReorder, onDragAway,
+  dragId, onReorder, onDragAway, onDragDetach, onDropViewMode, onDragCancelViewMode, detachAbove, dragAnyDirection, verticalDownDrag, onDragStateChange,
   draggable, onDragStart, onDragOver, onDrop, onDragEnd, children,
 }: SelectableProps) {
   const group = useContext(SelectModeContext)
@@ -463,28 +504,49 @@ export default function Selectable({
     bind.onPointerDown(e)
     if (!dragId || !onReorder) return
     if (group?.mode === 'menu') return
-    // Mouse drags work everywhere; touch drags are enabled once the group is
-    // in selecting mode (long-press first, then drag). In normal mode a touch
-    // drag must remain a scroll gesture.
-    if (e.pointerType !== 'mouse' && group?.mode !== 'selecting') return
+    // Mouse drags work everywhere. Touch drags reorder in normal mode too, but
+    // only after a clearly horizontal gesture so vertical swipes still scroll
+    // or toggle the tab strip's multiline mode.
     const root = e.currentTarget
     const groupEl = root.closest('[data-reorder-group]')
     const startX = e.clientX
     const startY = e.clientY
+    const groupRect = groupEl?.getBoundingClientRect()
     const dragThreshold = e.pointerType === 'touch' ? 20 : 12
     let active = false
+    let detached = false
     let overId: string | null = null
 
     const move = (ev: PointerEvent) => {
       if (!active) {
-        if (Math.abs(ev.clientX - startX) < dragThreshold && Math.abs(ev.clientY - startY) < dragThreshold) return
+        const dx = ev.clientX - startX
+        const dy = ev.clientY - startY
+        if (e.pointerType !== 'mouse' && group?.mode !== 'selecting' && !dragAnyDirection) {
+          const adx = Math.abs(dx), ady = Math.abs(dy)
+          if (verticalDownDrag) {
+            // Up is the multiline toggle, never a drag.
+            if (dy < 0 && ady >= dragThreshold) return
+            // A short down gesture is still the multiline swipe. A long down
+            // drag (>50px) starts moving/placing the tab.
+            if (dy > 0 && ady >= adx && ady <= 50) return
+            if (adx < dragThreshold && !(dy > 0 && ady > 50)) return
+          } else if (adx < dragThreshold || adx <= ady) {
+            return
+          }
+        } else if (Math.abs(dx) < dragThreshold && Math.abs(dy) < dragThreshold) return
         active = true
+        onDragStateChange?.(dragId)
         cancelLongPress()
         setDragging(true)
         suppressClick.current = true
         document.body.style.cursor = 'grabbing'
       }
       ev.preventDefault()
+      if (!detached && groupRect && (ev.clientY > groupRect.bottom + 12 || (detachAbove && ev.clientY < groupRect.top - 12))) {
+        detached = true
+        onDragDetach?.(dragId)
+      }
+      if (detached) return
       const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
       const row = el?.closest('[data-reorder-id]') as HTMLElement | null
       overId = row && groupEl?.contains(row) ? row.dataset.reorderId ?? null : null
@@ -497,10 +559,26 @@ export default function Selectable({
       document.body.style.cursor = ''
       setDragging(false)
       if (!active) return
-      if (overId && overId !== dragId) onReorder?.(dragId, overId)
-      else if (!overId) {
+      onDragStateChange?.(null)
+      if (detached) {
         const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
-        if (!groupEl || !el || !groupEl.contains(el)) onDragAway?.(dragId)
+        const mode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode')
+        if (mode) onDropViewMode?.(dragId, mode)
+        else onDragCancelViewMode?.()
+        return
+      }
+      if (overId && overId !== dragId) {
+        onReorder?.(dragId, overId)
+        return
+      }
+      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
+      const dropMode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode') || null
+      if (dropMode) {
+        onDropViewMode?.(dragId, dropMode)
+        return
+      }
+      if (!overId && (group?.mode === 'selecting' || e.pointerType === 'mouse') && (!groupEl || !el || !groupEl.contains(el))) {
+        onDragAway?.(dragId)
       }
     }
 
@@ -534,8 +612,9 @@ export default function Selectable({
       }${dragging ? ' opacity-50' : ''}`}
       style={{
         // In selecting mode the row is a drag handle (touch included), so stop
-        // the browser from turning the gesture into a scroll.
-        touchAction: group?.mode === 'selecting' ? 'none' : 'manipulation',
+        // the browser from turning the gesture into a scroll. Tab rows in normal
+        // mode keep vertical scrolling but claim horizontal drags for reorder.
+        touchAction: group?.mode === 'selecting' || dragId ? 'none' : 'manipulation',
         ...selectedStyle,
         ...style,
       }}

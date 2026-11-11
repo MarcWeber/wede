@@ -7,6 +7,7 @@ COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --no-audit --no-fund
 COPY web/ ./
+COPY help.txt ./src/helpContent.txt
 RUN npm run build
 
 # Stage 2: Go backend build

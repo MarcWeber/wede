@@ -15,7 +15,6 @@ interface TerminalPanelProps {
   isFullscreen?: boolean
   onToggleFullscreen?: () => void
   onPopOut?: () => void
-  isMobile?: boolean
   // When set, render only this terminal (it is a flat shell tab, so the tab
   // strip belongs to the container, not this panel).
   onlyId?: number
@@ -24,7 +23,7 @@ interface TerminalPanelProps {
 // TerminalPanel — the docked, tabbed terminal panel. Terminal state lives in the
 // shared useTerminals hook (passed in as `term`) so it stays in sync with the
 // floating window manager.
-export default function TerminalPanel({ token, workspaceId, term, visible, isFullscreen, onToggleFullscreen, onPopOut, isMobile, onlyId }: TerminalPanelProps) {
+export default function TerminalPanel({ token, workspaceId, term, visible, isFullscreen, onToggleFullscreen, onPopOut, onlyId }: TerminalPanelProps) {
   const { terminalTheme } = useTheme()
   const { terminals, activeId, setActiveId, addTerminal, closeTerminal, closeSelected, setLocked, reorderTerminals, clearInitial, renameTerminal, autoNameTerminal, termRefs } = term
   const shown = onlyId != null ? terminals.filter((t) => t.id === onlyId) : terminals
@@ -135,7 +134,7 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
                   isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
                 }`}
               >
-                {isActive && <span className="absolute top-0 left-0 right-0 h-[1.5px] z-10" style={{ backgroundColor: `var(${TONE_VAR.green})` }} />}
+                {isActive && <span className="absolute top-0 left-0 right-0 h-[3px] z-10" style={{ backgroundColor: `var(${TONE_VAR.green})` }} />}
                 {editingId === t.id ? (
                   <input
                     autoFocus
@@ -204,10 +203,10 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
             />
           ))}
         </div>
-        {isMobile && inputVisible && (
+        {inputVisible && (
           <TerminalToolbar onSend={handleToolbarSend} dock={inputDock} onDockChange={updateDock} docked={docked} />
         )}
-        {isMobile && !inputVisible && (
+        {!inputVisible && (
           <button
             onClick={() => updateDock({ ...inputDock, inputSend: true })}
             title="Show input"
