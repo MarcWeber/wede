@@ -1,0 +1,231 @@
+import { useRef, useState, type TouchEvent as ReactTouchEvent } from 'react'
+import type { LucideIcon } from 'lucide-react'
+import { Lock, Unlock } from 'lucide-react'
+import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
+import { TONE_WEAK, TONE_VAR, toneForView, VIEW_MODES, type ViewMode } from '../lib/viewTypes'
+
+export interface TabbedItem {
+  id: string
+  kind: string
+  label: string
+  icon: LucideIcon
+}
+
+export interface TabbedProps {
+  tabs: TabbedItem[]
+  active: string
+  lockedIds?: string[]
+  size?: 'normal' | 'small'
+  multilineSwipe?: boolean
+  detachAbove?: boolean
+  dragAnyDirection?: boolean
+  dropMode?: string
+  dropActive?: boolean
+  className?: string
+  onActivate: (id: string) => void
+  onClose: (id: string) => void
+  onCloseSelected?: (ids: string[], includeLocked?: boolean) => void
+  onToggleLock?: (ids: string[], locked: boolean) => void
+  onSetViewMode?: (ids: string[], mode: ViewMode) => void
+  onReorder?: (from: string, to: string) => void
+  onDragAway?: (id: string) => void
+  onDragDetach?: (id: string) => void
+  onDropViewMode?: (id: string, mode: string) => void
+  onDragCancelViewMode?: () => void
+}
+
+// Tabbed — one reusable tab strip for the main center container and for each
+// dock area. `small` keeps the same behavior but takes less room.
+export default function Tabbed({
+  tabs, active, lockedIds = [], size = 'normal', multilineSwipe = false, detachAbove = false, dragAnyDirection = false, dropMode, dropActive = false, className = '',
+  onActivate, onClose, onCloseSelected, onToggleLock, onSetViewMode,
+  onReorder, onDragAway, onDragDetach, onDropViewMode, onDragCancelViewMode,
+}: TabbedProps) {
+  const small = size === 'small'
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [multiline, setMultiline] = useState(false)
+  const [floatMenu, setFloatMenu] = useState<{ x: number; y: number; id: string; target: 'current' | 'selected' } | null>(null)
+  const tabRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const swipeStart = useRef<{ x: number; y: number } | null>(null)
+  const swipeLast = useRef<{ x: number; y: number } | null>(null)
+
+  if (tabs.length === 0) return null
+
+  const toggle = (id: string) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+
+  const openFloatMenu = (id: string, target: 'current' | 'selected') => {
+    const rect = tabRefs.current[id]?.getBoundingClientRect()
+    const x = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - 210)) : 40
+    const y = rect ? Math.min(rect.bottom + 4, window.innerHeight - 300) : 80
+    setFloatMenu({ x, y, id, target })
+  }
+
+  const onTouchStart = (e: ReactTouchEvent<HTMLDivElement>) => {
+    const t = e.touches[0]
+    if (!t) return
+    const pt = { x: t.clientX, y: t.clientY }
+    swipeStart.current = pt
+    swipeLast.current = pt
+  }
+  const onTouchMove = (e: ReactTouchEvent<HTMLDivElement>) => {
+    const t = e.touches[0]
+    if (t) swipeLast.current = { x: t.clientX, y: t.clientY }
+  }
+  const finishSwipe = (e: ReactTouchEvent<HTMLDivElement>) => {
+    const start = swipeStart.current
+    const t = e.changedTouches[0]
+    const end = t ? { x: t.clientX, y: t.clientY } : swipeLast.current
+    swipeStart.current = null
+    swipeLast.current = null
+    if (!multilineSwipe || !start || !end) return
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 32) return
+    if (Math.abs(dy) < 40) return
+    // Up toggles wrapped mode; a short down swipe expands it. A long down
+    // drag is handled by Selectable as the place-window gesture.
+    if (dy < 0) setMultiline((v) => !v)
+    else if (dy <= 50) setMultiline(true)
+  }
+
+  const rowHeight = small ? 'h-7' : 'h-10'
+  const rowPad = small ? 'px-2' : 'px-3'
+  const rowMin = small ? 'min-w-0' : 'min-w-[84px]'
+  const rowGap = small ? 'gap-1' : 'gap-1.5'
+  const iconSize = small ? 'w-3 h-3' : 'w-3.5 h-3.5'
+  const textSize = small ? 'text-[10px]' : 'text-[12px]'
+  const textMax = small ? 'max-w-24' : 'max-w-32'
+  const lineHeight = small ? 'h-[2px]' : 'h-[3px]'
+
+  return (
+    <SelectableGroup
+      className={`flex w-full min-w-0 bg-bg-secondary border-b border-border compact-touch [-webkit-touch-callout:none] ${
+        multilineSwipe && multiline ? 'flex-wrap' : 'overflow-x-auto touch-pan-x'
+      } ${className}`}
+      style={{ scrollbarWidth: 'none' }}
+      selectedCount={selected.size}
+      dropMode={dropMode}
+      dropActive={dropActive}
+      showMenuSelectMode
+      onCancelSelection={() => setSelected(new Set())}
+      onTouchStart={multilineSwipe ? onTouchStart : undefined}
+      onTouchMove={multilineSwipe ? onTouchMove : undefined}
+      onTouchEnd={multilineSwipe ? finishSwipe : undefined}
+      onTouchCancel={multilineSwipe ? finishSwipe : undefined}
+    >
+      {tabs.map((tab) => {
+        const isActive = active === tab.id
+        const isChecked = selected.has(tab.id)
+        const isLocked = lockedIds.includes(tab.id)
+        const tone = toneForView(tab.kind)
+        const targets = selected.size > 0 ? Array.from(selected) : [tab.id]
+        const allTargets = tabs.map((t) => t.id)
+        const menu: MenuEntry[] = [
+          {
+            key: 'closeSplit',
+            kind: 'split',
+            segments: [
+              { key: 'close', label: 'Close', onSelect: () => onClose(tab.id) },
+              { key: 'selected', label: 'Selected', tint: 'yellow', disabled: selected.size === 0, onSelect: () => onCloseSelected?.(targets) },
+              { key: 'all', label: 'All', onSelect: () => onCloseSelected?.(allTargets) },
+            ],
+          },
+          {
+            key: 'lockSplit',
+            kind: 'split',
+            segments: [
+              { key: 'lock', label: 'Lock', disabled: !onToggleLock || isLocked, onSelect: () => onToggleLock?.([tab.id], true) },
+              { key: 'lockSel', label: 'Selected', tint: 'yellow', disabled: !onToggleLock || selected.size === 0, onSelect: () => onToggleLock?.(targets, true) },
+            ],
+          },
+          {
+            key: 'unlockSplit',
+            kind: 'split',
+            segments: [
+              { key: 'unlock', label: 'Unlock', disabled: !onToggleLock || !isLocked, onSelect: () => onToggleLock?.([tab.id], false) },
+              { key: 'unlockSel', label: 'Selected', tint: 'yellow', disabled: !onToggleLock || selected.size === 0, onSelect: () => onToggleLock?.(targets, false) },
+            ],
+          },
+          ...(onSetViewMode ? [{
+            key: 'viewSplit',
+            kind: 'split' as const,
+            segments: [
+              { key: 'view', label: 'View', onSelect: () => openFloatMenu(tab.id, 'current') },
+              { key: 'viewSelected', label: 'Selected', tint: 'yellow' as const, disabled: selected.size === 0, onSelect: () => openFloatMenu(tab.id, 'selected') },
+            ],
+          }] : []),
+          { key: 'sep2', kind: 'separator' },
+          { key: 'selectAll', label: 'Select all', onSelect: () => setSelected(new Set(allTargets)) },
+          { key: 'closeAlsoLocked', label: 'Close also locked', onSelect: () => onCloseSelected?.(allTargets, true) },
+        ]
+        const Icon = tab.icon
+        return (
+          <Selectable
+            key={tab.id}
+            itemRef={(el) => { tabRefs.current[tab.id] = el }}
+            checked={isChecked}
+            locked={isLocked}
+            onToggle={() => toggle(tab.id)}
+            onActivate={() => onActivate(tab.id)}
+            onMiddleClick={() => onClose(tab.id)}
+            menu={menu}
+            label={`Select ${tab.label}`}
+            tone={tone}
+            dragId={tab.id}
+            onReorder={onReorder}
+            onDragAway={onDragAway}
+            onDragDetach={onDragDetach}
+            onDropViewMode={onDropViewMode}
+            onDragCancelViewMode={onDragCancelViewMode}
+            detachAbove={detachAbove}
+            dragAnyDirection={dragAnyDirection}
+            verticalDownDrag
+            onDragStateChange={(id) => { if (id) swipeStart.current = null }}
+            className={`flex items-center ${rowGap} ${rowPad} ${rowHeight} ${rowMin} border-r border-border shrink-0 select-none cursor-pointer transition-colors ${TONE_WEAK[tone]} ${
+              isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
+            }`}
+          >
+            {isActive && (
+              <span className={`absolute bottom-0 left-0 right-0 ${lineHeight} z-10`}
+                style={{ backgroundColor: `color-mix(in srgb, var(${TONE_VAR[tone]}) 50%, transparent)` }} />
+            )}
+            {tab.kind !== 'code' && <Icon className={`${iconSize} shrink-0`} />}
+            <span className={`${textSize} truncate ${textMax} font-medium leading-none`}>{tab.label}</span>
+            {isLocked && <Lock className={`${small ? 'w-2 h-2' : 'w-2.5 h-2.5'} shrink-0 text-red`} />}
+          </Selectable>
+        )
+      })}
+
+      {floatMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onPointerDown={(e) => { if (e.button === 0) setFloatMenu(null) }} />
+          <div className="fixed z-50 bg-bg-elevated border border-border rounded-lg shadow-xl py-1 min-w-[190px]"
+            style={{ left: floatMenu.x, top: floatMenu.y }}>
+            <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-text-muted flex items-center gap-1.5">
+              <Unlock className="w-3 h-3" />
+              View mode — {floatMenu.target === 'selected' ? 'all selected' : 'current'}
+            </div>
+            {VIEW_MODES.map((m) => (
+              <button key={m.key}
+                onClick={() => {
+                  const ids = floatMenu.target === 'selected'
+                    ? (selected.size > 0 ? Array.from(selected) : [floatMenu.id])
+                    : [floatMenu.id]
+                  onSetViewMode?.(ids, m.key)
+                  setFloatMenu(null)
+                }}
+                className="flex items-center gap-2 w-full min-h-[36px] px-3 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors">
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </SelectableGroup>
+  )
+}

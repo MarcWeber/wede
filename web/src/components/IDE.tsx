@@ -1021,6 +1021,34 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
   }, [setShellViewMode, dropIntoContainer])
 
+  // Resize a docked container by dragging the divider next to it.
+  const beginDockResize = useCallback((side: 'left' | 'right' | 'bottom', e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const sx = e.clientX
+    const sy = e.clientY
+    const start = dockSizes[side]
+    const horizontal = side !== 'bottom'
+    const move = (ev: PointerEvent) => {
+      const delta = horizontal ? ev.clientX - sx : ev.clientY - sy
+      const raw = side === 'right' || side === 'bottom' ? start - delta : start + delta
+      setDockSizes((prev) => ({ ...prev, [side]: Math.max(15, Math.min(65, raw)) }))
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = horizontal ? 'col-resize' : 'row-resize'
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }, [dockSizes])
+
   // Drag a tab or a docked header onto one of the visible drop handles.
   const beginModeDrag = useCallback((id: string, e: ReactPointerEvent) => {
     if (e.button !== 0) return
