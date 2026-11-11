@@ -41,14 +41,14 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
         if (parsed.position === 'top' || parsed.position === 'bottom') {
           return {
             position: parsed.position,
-            transparent: parsed.transparent ?? true,
-            inputSend: parsed.inputSend ?? !parsed.hidden,
+            transparent: parsed.transparent ?? false,
+            inputSend: parsed.inputSend ?? (parsed.hidden === undefined ? false : !parsed.hidden),
             more: parsed.more ?? false,
           }
         }
       }
     } catch { /* ignore */ }
-    return { position: 'bottom', transparent: true, inputSend: true, more: false }
+    return { position: 'top', transparent: false, inputSend: false, more: false }
   })
   const updateDock = (next: TerminalInputDock) => {
     setInputDock(next)

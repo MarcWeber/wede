@@ -24,7 +24,12 @@ function loadTerminals(): TerminalSession[] | null {
       const parsed = JSON.parse(saved) as unknown
       // An empty array is meaningful: "Reset view" persists zero terminals so a
       // later swipe-right adds exactly one instead of resurrecting old tabs.
-      if (Array.isArray(parsed)) return parsed as TerminalSession[]
+      if (Array.isArray(parsed)) {
+        return (parsed as TerminalSession[]).map((t) => ({
+          ...t,
+          name: t.manual ? t.name : (t.name || '').replace(/^Terminal (\d+)$/, 'Term $1'),
+        }))
+      }
     }
   } catch { /* ignore */ }
   return null
@@ -37,7 +42,7 @@ let nextId = (() => {
 
 export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceId: string | null | undefined, sync: UseTerminalsSync = {}) {
   const { sendTerminals, onTerminals } = sync
-  const [terminals, setTerminals] = useState<TerminalSession[]>(() => loadTerminals() || [{ id: nextId++, name: 'Terminal 1' }])
+  const [terminals, setTerminals] = useState<TerminalSession[]>(() => loadTerminals() || [{ id: nextId++, name: 'Term 1' }])
   const [activeId, setActiveId] = useState<number>(() => {
     const saved = localStorage.getItem('wede_terminal_active')
     return saved ? Number(saved) : (loadTerminals()?.[0]?.id || 1)
@@ -56,7 +61,7 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
         const ids = new Set(prev.map((t) => t.id))
         const additions = (list || [])
           .filter((t) => t && typeof t.id === 'number' && !ids.has(t.id))
-          .map((t) => ({ id: t.id, name: t.name || `Terminal ${t.id}` }))
+          .map((t) => ({ id: t.id, name: t.name || `Term ${t.id}` }))
         if (additions.length === 0) return prev
         for (const t of additions) if (t.id >= nextId) nextId = t.id + 1
         applyingRemoteRef.current = true
@@ -103,7 +108,7 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   // terminal's PTY connects (used by the task runner).
   const addTerminal = useCallback((name?: string, initial?: string) => {
     const id = nextId++
-    setTerminals((prev) => [...prev, { id, name: name || `Terminal ${id}`, initial: initial || undefined }])
+    setTerminals((prev) => [...prev, { id, name: name || `Term ${id}`, initial: initial || undefined }])
     setActiveId(id)
     return id
   }, [])

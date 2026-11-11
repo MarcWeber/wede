@@ -16,7 +16,6 @@ import TerminalPanel from './TerminalPanel'
 import GitPanels from './GitPanels'
 import FolderPicker from './FolderPicker'
 import WorkspaceSwitcher from './WorkspaceSwitcher'
-import PresenceRoster from './PresenceRoster'
 import Browser from './Browser'
 import Settings from './Settings'
 import HelpView from './HelpView'
@@ -81,6 +80,9 @@ export type MenuPlacement =
 export interface ContainerInfo {
   id: number
   visible: boolean
+  // Show the container's own `Cont N` tab in a dock strip so the whole
+  // container can be grabbed and moved.
+  ownTab?: boolean
 }
 
 type ViewKind = 'files' | 'search' | 'code' | 'web' | 'git' | 'api' | 'settings' | 'log' | 'help' | 'terminals' | 'chat'
@@ -103,71 +105,100 @@ interface FloatGeom {
 
 interface FloatWindowProps {
   geom: FloatGeom
-  title: string
-  icon: ViewTab['icon']
   onChange: (g: FloatGeom) => void
   onRaise: () => void
-  onRestore: () => void
   children: ReactNode
 }
 
-function FloatWindow({ geom, title, icon: Icon, onChange, onRaise, onRestore, children }: FloatWindowProps) {
+function FloatWindow({ geom, onChange, onRaise, children }: FloatWindowProps) {
   const ref = useRef<HTMLDivElement>(null)
   const drag = useRef<{ dx: number; dy: number; rect: DOMRect } | null>(null)
 
   const startDrag = (e: ReactPointerEvent) => {
     if (e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (target.closest('[data-reorder-id]') || !target.closest('[data-reorder-group]')) return
     const el = ref.current
     const parent = el?.parentElement
     if (!el || !parent) return
     e.preventDefault()
-    onRaise()
+    e.stopPropagation()
     const rect = parent.getBoundingClientRect()
-    drag.current = {
-      dx: e.clientX - rect.left - geom.x,
-      dy: e.clientY - rect.top - geom.y,
-      rect,
-    }
+    drag.current = { dx: e.clientX - rect.left - geom.x, dy: e.clientY - rect.top - geom.y, rect }
     const move = (ev: PointerEvent) => {
       const d = drag.current
       if (!d) return
-      const x = Math.max(0, Math.min(ev.clientX - d.rect.left - d.dx, d.rect.width - 80))
-      const y = Math.max(0, Math.min(ev.clientY - d.rect.top - d.dy, d.rect.height - 40))
-      onChange({ ...geom, x, y })
+      const maxX = Math.max(0, d.rect.width - Math.min(geom.w, d.rect.width))
+      const maxY = Math.max(0, d.rect.height - 40)
+      onChange({
+        ...geom,
+        x: Math.max(0, Math.min(ev.clientX - d.rect.left - d.dx, maxX)),
+        y: Math.max(0, Math.min(ev.clientY - d.rect.top - d.dy, maxY)),
+      })
     }
     const up = () => {
       drag.current = null
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+
+  const handlePointerDown = (e: ReactPointerEvent) => {
+    onRaise()
+    startDrag(e)
+  }
+
+  const startResize = (e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    const el = ref.current
+    const parent = el?.parentElement
+    if (!el || !parent) return
+    e.preventDefault()
+    e.stopPropagation()
+    onRaise()
+    const sx = e.clientX
+    const sy = e.clientY
+    const startW = geom.w
+    const startH = geom.h
+    const rect = parent.getBoundingClientRect()
+    const move = (ev: PointerEvent) => {
+      const w = Math.max(260, Math.min(startW + ev.clientX - sx, rect.width - geom.x))
+      const h = Math.max(160, Math.min(startH + ev.clientY - sy, rect.height - geom.y))
+      onChange({ ...geom, w, h })
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      document.body.style.userSelect = ''
+    }
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
 
   return (
     <div
       ref={ref}
       data-float
-      onPointerDown={onRaise}
+      onPointerDown={handlePointerDown}
       style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h, zIndex: geom.z, maxWidth: 'calc(100% - 16px)', maxHeight: 'calc(100% - 16px)' }}
       className="absolute flex flex-col rounded-lg border border-border shadow-2xl overflow-hidden bg-bg-primary"
     >
-      <div
-        onPointerDown={startDrag}
-        className="flex items-center gap-2 h-8 px-2.5 border-b border-border bg-bg-secondary shrink-0 cursor-move select-none touch-none"
-      >
-        <Icon className="w-3.5 h-3.5 text-text-muted shrink-0" />
-        <span className="text-[12px] font-medium text-text-secondary truncate">{title}</span>
-        <span className="text-[10px] text-text-muted uppercase tracking-wide">float</span>
-        <button
-          onClick={onRestore}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="ml-auto p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover"
-          title="Restore to center">
-          <Minimize2 className="w-3.5 h-3.5" />
-        </button>
-      </div>
       <div className="flex-1 min-h-0">{children}</div>
+      <div
+        onPointerDown={startResize}
+        className="absolute bottom-0 right-0 z-10 w-4 h-4 cursor-nwse-resize touch-none"
+        title="Resize">
+        <svg viewBox="0 0 16 16" className="w-4 h-4 text-text-muted/70" fill="none" stroke="currentColor" strokeWidth="1.2">
+          <path d="M6 14 L14 6 M10 14 L14 10" />
+        </svg>
+      </div>
     </div>
   )
 }
@@ -314,6 +345,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   })
   const [modeDrag, setModeDrag] = useState<string | null>(null)
   const [dockActive, setDockActive] = useState<{ left: string | null; right: string | null; bottom: string | null }>({ left: null, right: null, bottom: null })
+  const [nestedDockActive, setNestedDockActive] = useState<Record<string, string>>({})
   const [apiIds, setApiIds] = useState<number[]>([1])
   const [activeApiId, setActiveApiId] = useState(1)
   const nextApiId = useRef(2)
@@ -428,18 +460,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
   }, [searchIds, activeSearchId, logIds, activeLogId, tabs, apiIds, activeApiId, terminalsApi, addSearch, addLog, addWeb, addApi, addTerminalTab])
 
-  const addContainer = useCallback(() => {
-    const id = containerIdRef.current++
-    setContainers((prev) => [...prev, { id, visible: true }])
-    setActiveShell(`container:${id}`)
-  }, [])
-  const toggleContainer = useCallback((id: number) => {
-    const target = containers.find((c) => c.id === id)
-    const nextVisible = !target?.visible
-    setContainers((prev) => prev.map((c) => (c.id === id ? { ...c, visible: nextVisible } : c)))
-    if (nextVisible) setActiveShell(`container:${id}`)
-  }, [containers])
-
   interface ShellEntry {
     id: string
     kind: ViewKind | 'container'
@@ -478,7 +498,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     if (visible.help) pushView('help', 'Help', HelpCircle)
     if (visible.chat) pushView('chat', 'Chat', MessageSquare)
     for (const c of containers.filter((x) => x.visible)) {
-      list.push({ id: `container:${c.id}`, kind: 'container', title: `Container ${c.id}`, icon: Boxes, containerId: c.id })
+      list.push({ id: `container:${c.id}`, kind: 'container', title: `Cont ${c.id}`, icon: Boxes, containerId: c.id })
     }
     if (visible.settings) pushView('settings', 'Settings', SettingsIcon)
     const order = (id: string) => {
@@ -523,7 +543,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   const dockedRight = rootEntries.filter((e) => shellMode(e.id) === 'docked-right')
   const dockedBottom = rootEntries.filter((e) => shellMode(e.id) === 'docked-bottom')
   const isDockedMode = (mode: ViewMode) => mode === 'docked-left' || mode === 'docked-right' || mode === 'docked-bottom'
-  const mainTabs = rootEntries.filter((e) => !isDockedMode(shellMode(e.id)))
+  const mainTabs = rootEntries.filter((e) => !isDockedMode(shellMode(e.id)) && shellMode(e.id) !== 'float')
   const mainActive = activeRootEntry && mainTabs.some((e) => e.id === activeRootEntry.id) ? activeRootEntry.id : centerEntry?.id ?? ''
 
   useEffect(() => {
@@ -548,38 +568,80 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   useEffect(() => { try { localStorage.setItem('wede_float_geom', JSON.stringify(floatGeom)) } catch { /* ignore */ } }, [floatGeom])
   useEffect(() => { try { localStorage.setItem('wede_dock_sizes', JSON.stringify(dockSizes)) } catch { /* ignore */ } }, [dockSizes])
 
-  // Floating containers are disposable: once their last tab leaves, remove
-  // the empty float container so no pointless windows remain.
+  // Upgrade any legacy raw floating tab into a floating container so every
+  // float keeps a draggable container tab.
   useEffect(() => {
-    const empty = containers.filter((c) => {
-      const key = `container:${c.id}`
-      return c.visible
-        && !containerOf[key]
-        && (viewModes[key] || 'center') === 'float'
-        && !entries.some((e) => containerOf[e.id] === key)
+    const loose = rootEntries.filter((e) => !e.id.startsWith('container:') && (viewModes[e.id] || 'center') === 'float')
+    if (loose.length === 0) return
+    const wrapped = loose.map((e) => ({ id: containerIdRef.current++, child: e.id, mode: 'float' as ViewMode }))
+    setContainers((prev) => [...prev, ...wrapped.map((c) => ({ id: c.id, visible: true, ownTab: true }))])
+    setContainerOf((prev) => {
+      const next = { ...prev }
+      for (const c of wrapped) next[c.child] = `container:${c.id}`
+      return next
     })
+    setContainerActive((prev) => {
+      const next = { ...prev }
+      for (const c of wrapped) next[c.id] = c.child
+      return next
+    })
+    setViewModes((prev) => {
+      const next = { ...prev }
+      for (const c of wrapped) {
+        delete next[c.child]
+        next[`container:${c.id}`] = c.mode
+      }
+      return next
+    })
+  }, [rootEntries, viewModes])
+
+  // Every container is disposable when empty — root, nested, docked, floating,
+  // or centered. Remove it immediately so no ghost strip/window remains.
+  useEffect(() => {
+    const empty = containers.filter((c) => c.visible && !entries.some((e) => containerOf[e.id] === `container:${c.id}`))
     if (empty.length === 0) return
     const ids = new Set(empty.map((c) => c.id))
+    const keys = new Set(empty.map((c) => `container:${c.id}`))
     setContainers((prev) => prev.filter((c) => !ids.has(c.id)))
     setViewModes((prev) => {
       const next = { ...prev }
-      for (const id of ids) delete next[`container:${id}`]
+      for (const key of keys) delete next[key]
       return next
     })
     setContainerActive((prev) => {
       const next = { ...prev }
       for (const id of ids) delete next[id]
+      for (const [cid, child] of Object.entries(next)) if (keys.has(child)) delete next[Number(cid)]
       return next
     })
     setContainerOf((prev) => {
       const next = { ...prev }
       let changed = false
-      for (const id of ids) {
-        if (next[`container:${id}`]) { delete next[`container:${id}`]; changed = true }
+      for (const key of keys) {
+        if (next[key]) { delete next[key]; changed = true }
       }
       return changed ? next : prev
     })
-  }, [containers, containerOf, entries, viewModes])
+    setNestedDockActive((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const [scope, child] of Object.entries(next)) {
+        if (keys.has(child) || Array.from(keys).some((k) => scope.startsWith(`${k}:`))) {
+          delete next[scope]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+    setDockActive((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const side of ['left', 'right', 'bottom'] as const) {
+        if (next[side] && keys.has(next[side])) { next[side] = null; changed = true }
+      }
+      return changed ? next : prev
+    })
+  }, [containers, containerOf, entries])
 
   // Tasks (global + trusted project .wede/tasks.json) — run in a new terminal.
   const [tasks, setTasks] = useState<Task[]>([])
@@ -928,14 +990,30 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     })
   }, [])
 
-  const setShellViewMode = useCallback((ids: string[], mode: ViewMode) => {
-    // Floating a plain window wraps it in a new floating container. Drag & drop
-    // into an existing container uses dropIntoContainer instead.
-    const wrapped = mode === 'float'
-      ? ids.filter((id) => !id.startsWith('container:')).map((child) => ({ id: containerIdRef.current++, child }))
+  const placeFloatAt = useCallback((rootId: string, at: { x: number; y: number }) => {
+    const parent = document.querySelector('[data-dock-area]')
+    const rect = parent?.getBoundingClientRect()
+    if (!rect) return
+    setFloatGeom((prev) => {
+      const base = prev[rootId] ?? { x: 40, y: 40, w: 620, h: 420, z: 30 }
+      const w = Math.min(base.w, Math.max(260, rect.width))
+      const h = Math.min(base.h, Math.max(160, rect.height))
+      const x = Math.max(0, Math.min(at.x - rect.left - w / 2, Math.max(0, rect.width - w)))
+      const y = Math.max(0, Math.min(at.y - rect.top - 16, Math.max(0, rect.height - 40)))
+      return { ...prev, [rootId]: { ...base, w, h, x, y } }
+    })
+  }, [])
+
+  const setShellViewMode = useCallback((ids: string[], mode: ViewMode, at?: { x: number; y: number }) => {
+    // A float or a dock is a container: moving a plain tab there wraps it in a
+    // new container. Drag & drop into an existing container uses
+    // dropIntoContainer instead.
+    const dockTarget = mode === 'docked-left' || mode === 'docked-right' || mode === 'docked-bottom'
+    const wrapped = (mode === 'float' || dockTarget)
+      ? ids.filter((id) => !id.startsWith('container:')).map((child) => ({ id: containerIdRef.current++, child, mode }))
       : []
     if (wrapped.length) {
-      setContainers((prev) => [...prev, ...wrapped.map((c) => ({ id: c.id, visible: true }))])
+      setContainers((prev) => [...prev, ...wrapped.map((c) => ({ id: c.id, visible: true, ownTab: c.mode === 'float' }))])
       setContainerOf((prev) => {
         const next = { ...prev }
         for (const c of wrapped) next[c.child] = `container:${c.id}`
@@ -949,6 +1027,12 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
     const wrappedIds = new Set(wrapped.map((c) => c.child))
     const directIds = ids.filter((id) => !wrappedIds.has(id))
+    const directContainers = new Set(directIds.filter((id) => id.startsWith('container:')))
+    if (dockTarget && directContainers.size > 0) {
+      setContainers((prev) => prev.map((c) => (
+        directContainers.has(`container:${c.id}`) ? { ...c, ownTab: true } : c
+      )))
+    }
     // A tab assigned a root view mode leaves its container (containers keep
     // their own children when the container itself is moved).
     setContainerOf((prev) => {
@@ -962,10 +1046,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       for (const id of directIds) next[id] = mode
       for (const c of wrapped) {
         delete next[c.child]
-        next[`container:${c.id}`] = 'float'
+        next[`container:${c.id}`] = c.mode
       }
       return next
     })
+    if (mode === 'float' && at) {
+      for (const c of wrapped) placeFloatAt(`container:${c.id}`, at)
+      for (const id of directIds) if (id.startsWith('container:')) placeFloatAt(id, at)
+    }
     const lastId = ids[ids.length - 1]
     setDockActive((prev) => {
       const next = { ...prev }
@@ -979,15 +1067,46 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     })
     if (mode === 'center' || mode === 'max') {
       if (lastId) setActiveShell(lastId)
-    } else if (mode !== 'float' && ids.includes(activeShell)) {
+    } else if (ids.includes(activeShell)) {
       const next = rootEntries.find((e) => !ids.includes(e.id) && (viewModes[e.id] || 'center') === 'center')
       if (next) setActiveShell(next.id)
     }
-  }, [activeShell, rootEntries, viewModes])
+  }, [activeShell, rootEntries, viewModes, placeFloatAt])
+
+  const handleDragAway = useCallback((id: string, at: { x: number; y: number }) => {
+    setModeDrag(null)
+    // A container's own tab moves/detaches that container. Any child tab —
+    // including one in a floating container — becomes a new floating window.
+    if (id.startsWith('container:')) {
+      if ((viewModes[id] || 'center') === 'float') placeFloatAt(id, at)
+      else setShellViewMode([id], 'float', at)
+      return
+    }
+    setShellViewMode([id], 'float', at)
+  }, [viewModes, placeFloatAt, setShellViewMode])
+
+  // Place a shell next to another tab in the global order. Container and dock
+  // strips filter this order, so this controls front/back within a strip too.
+  const moveShellNear = useCallback((id: string, nearId?: string, after = false) => {
+    if (!nearId || nearId === id) return
+    setTabOrder((prev) => {
+      const ids = entries.map((e) => e.id)
+      const base = [...new Set([...prev.filter((x) => ids.includes(x)), ...ids])]
+      const a = base.indexOf(id)
+      if (a < 0 || !base.includes(nearId)) return prev
+      const next = base.slice()
+      next.splice(a, 1)
+      let target = next.indexOf(nearId)
+      if (target < 0) return prev
+      if (after) target += 1
+      next.splice(target, 0, id)
+      return next
+    })
+  }, [entries])
 
   // Move a tab into a specific (possibly nested) container. Docking a tab
   // drops its old container membership; moving a container keeps its children.
-  const dropIntoContainer = useCallback((id: string, containerId: number) => {
+  const dropIntoContainer = useCallback((id: string, containerId: number, nearId?: string, after = false) => {
     setModeDrag(null)
     if (!Number.isFinite(containerId) || id === `container:${containerId}`) return
     // Refuse to put a container inside itself or one of its descendants.
@@ -1007,19 +1126,79 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       return next
     })
     setContainers((prev) => prev.map((c) => (c.id === containerId ? { ...c, visible: true } : c)))
+    const targetKids = entries.filter((e) => e.id !== id && containerOf[e.id] === `container:${containerId}`)
+    const lastKid = targetKids[targetKids.length - 1]
+    moveShellNear(id, nearId ?? lastKid?.id, nearId ? after : true)
+    setActiveShell(id)
+  }, [containerOf, entries, moveShellNear])
+
+  // Place a tab (or a whole container) into a dock slot belonging to a
+  // specific container. Plain tabs are wrapped so every dock slot hosts a
+  // container; containers move with their children intact.
+  const placeIntoSlot = useCallback((id: string, parentKey: string | null, mode: ViewMode) => {
+    setModeDrag(null)
+    const isContainer = id.startsWith('container:')
+    if (isContainer) {
+      // Refuse to nest a container inside itself or one of its descendants.
+      let cur = parentKey
+      const seen = new Set<string>()
+      while (cur && !seen.has(cur)) {
+        seen.add(cur)
+        if (cur === id) return
+        cur = containerOf[cur]
+      }
+      const cid = Number(id.slice('container:'.length))
+      setContainerOf((prev) => {
+        const next = { ...prev }
+        if (parentKey) next[id] = parentKey
+        else delete next[id]
+        return next
+      })
+      setViewModes((prev) => ({ ...prev, [id]: mode }))
+      setContainers((prev) => prev.map((c) => (c.id === cid ? { ...c, visible: true, ownTab: true } : c)))
+      if (parentKey) setNestedDockActive((prev) => ({ ...prev, [`${parentKey}:${mode.replace('docked-', '')}`]: id }))
+      setActiveShell(id)
+      return
+    }
+    const cid = containerIdRef.current++
+    setContainers((prev) => [...prev, { id: cid, visible: true, ownTab: true }])
+    setContainerOf((prev) => {
+      const next = { ...prev, [id]: `container:${cid}` }
+      if (parentKey) next[`container:${cid}`] = parentKey
+      return next
+    })
+    setContainerActive((prev) => ({ ...prev, [cid]: id }))
+    setViewModes((prev) => ({ ...prev, [id]: 'center', [`container:${cid}`]: mode }))
+    if (parentKey) setNestedDockActive((prev) => ({ ...prev, [`${parentKey}:${mode.replace('docked-', '')}`]: `container:${cid}` }))
     setActiveShell(id)
   }, [containerOf])
 
-  const dropViewMode = useCallback((id: string, mode: string) => {
+  const dropViewMode = useCallback((id: string, mode: string, nearId?: string, after = false) => {
     setModeDrag(null)
+    if (mode.startsWith('slot:')) {
+      const rest = mode.slice('slot:'.length)
+      const cut = rest.lastIndexOf('#')
+      const parentKey = cut >= 0 ? rest.slice(0, cut) || null : null
+      const side = rest.slice(cut + 1)
+      if (side === 'docked-left' || side === 'docked-right' || side === 'docked-bottom') {
+        placeIntoSlot(id, parentKey, side)
+      }
+      return
+    }
     if (mode.startsWith('container:')) {
-      dropIntoContainer(id, Number(mode.slice('container:'.length)))
+      dropIntoContainer(id, Number(mode.slice('container:'.length)), nearId, after)
       return
     }
     if (mode === 'center' || mode === 'docked-left' || mode === 'docked-right' || mode === 'docked-bottom' || mode === 'float' || mode === 'max') {
       setShellViewMode([id], mode)
+      if (mode !== 'float') {
+        const last = !nearId
+          ? [...entries].reverse().find((e) => e.id !== id && e.id !== `container:${id}` && (viewModes[e.id] || 'center') === mode)
+          : undefined
+        moveShellNear(id, nearId ?? last?.id, nearId ? after : true)
+      }
     }
-  }, [setShellViewMode, dropIntoContainer])
+  }, [entries, moveShellNear, setShellViewMode, dropIntoContainer, placeIntoSlot, viewModes])
 
   // Resize a docked container by dragging the divider next to it.
   const beginDockResize = useCallback((side: 'left' | 'right' | 'bottom', e: ReactPointerEvent) => {
@@ -1030,8 +1209,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     const sy = e.clientY
     const start = dockSizes[side]
     const horizontal = side !== 'bottom'
+    const span = (e.currentTarget.parentElement?.getBoundingClientRect()[horizontal ? 'width' : 'height']) || 1
     const move = (ev: PointerEvent) => {
-      const delta = horizontal ? ev.clientX - sx : ev.clientY - sy
+      const delta = (horizontal ? ev.clientX - sx : ev.clientY - sy) / span * 100
       const raw = side === 'right' || side === 'bottom' ? start - delta : start + delta
       setDockSizes((prev) => ({ ...prev, [side]: Math.max(15, Math.min(65, raw)) }))
     }
@@ -1646,6 +1826,38 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     )
   }
 
+  // A dock slot is only offered while empty; when it already holds a
+  // container, that container's own tab strip is the drop target.
+  const dropSlot = (parentKey: string | null, side: ViewMode) => {
+    const bottom = side === 'docked-bottom'
+    const label = side === 'docked-left' ? 'Left' : side === 'docked-right' ? 'Right' : 'Bottom'
+    // Nested containers get small, unobtrusive corner handles. The root keeps
+    // the large edge strips because it is the primary dock target.
+    if (parentKey) {
+      const pos = side === 'docked-left'
+        ? 'left-2 top-1/2 -translate-y-1/2'
+        : side === 'docked-right'
+          ? 'right-2 top-1/2 -translate-y-1/2'
+          : 'bottom-2 left-1/2 -translate-x-1/2'
+      return (
+        <div
+          data-drop-mode={`slot:${parentKey}#${side}`}
+          className={`absolute z-20 w-16 h-16 rounded-lg border border-dashed border-border/70 bg-bg-elevated/80 flex items-center justify-center text-[9px] font-semibold text-text-muted/70 hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors ${pos}`}
+          title={`Dock ${label.toLowerCase()} in this container`}>
+          {label}
+        </div>
+      )
+    }
+    return (
+      <div
+        data-drop-mode={side}
+        className={`${bottom ? 'h-16 w-full shrink-0' : 'w-16 shrink-0 self-stretch'} rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 flex items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors`}
+        title={`Dock ${label.toLowerCase()} in this container`}>
+        {label}
+      </div>
+    )
+  }
+
   // One renderer per flat shell tab. Every tab fills the same content area;
   // there are no nested tab strips inside a view.
   const renderEntry = (e: ShellEntry): ReactNode => {
@@ -1693,61 +1905,92 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
         return <LogView key={e.logId} authFetch={authFetch} workspaceId={workspaceId} />
       case 'container': {
         const cid = e.containerId as number
+        const ckey = `container:${cid}`
         const kids = childrenOfContainer(cid)
+        const modeOf = (k: ShellEntry) => shellMode(k.id)
+        const centerKids = kids.filter((k) => modeOf(k) === 'center' || modeOf(k) === 'max')
+        const leftKids = kids.filter((k) => modeOf(k) === 'docked-left')
+        const rightKids = kids.filter((k) => modeOf(k) === 'docked-right')
+        const bottomKids = kids.filter((k) => modeOf(k) === 'docked-bottom')
         const pathChild = activeShell ? directChildOnPath(cid, activeShell) : null
-        const activeKid = kids.find((k) => k.id === pathChild)
-          ?? kids.find((k) => k.id === containerActive[cid])
-          ?? kids[0]
+        const activeKid = centerKids.find((k) => k.id === pathChild)
+          ?? centerKids.find((k) => k.id === containerActive[cid])
+          ?? centerKids[0]
           ?? null
         const floating = shellMode(e.id) === 'float'
-        // A floating container shows itself as the first tab so the whole
-        // container can be dragged (docked, centered, or nested) from inside.
+        const ownDocked = isDockedMode(shellMode(e.id))
+        // The container's own tab lives in its own strip so it can always be
+        // grabbed and moved (docked, floated, or nested). Docked containers
+        // keep only the icon to save space.
         const stripTabs = [
-          ...(floating ? [{ id: e.id, kind: 'container', label: e.title, icon: Boxes }] : []),
-          ...kids.map((k) => ({ id: k.id, kind: k.kind, label: k.title, icon: k.icon })),
+          { id: e.id, kind: 'container', label: ownDocked ? '' : e.title, ariaLabel: e.title, icon: Boxes },
+          ...centerKids.map((k) => ({ id: k.id, kind: k.kind, label: k.title, icon: k.icon })),
         ]
         const stripActive = activeShell === e.id ? e.id : activeKid?.id ?? ''
+        const dockChild = (side: 'left' | 'right' | 'bottom', list: ShellEntry[]) => {
+          if (!list.length) return null
+          if (list.length === 1 && list[0].kind === 'container') {
+            return <div className="h-full min-h-0 min-w-0 overflow-hidden">{renderEntry(list[0])}</div>
+          }
+          return dockArea(side, list, ckey)
+        }
+        const sideWidth = (side: 'left' | 'right') => ({ width: `${dockSizes[side]}%` })
         return (
           <div className="h-full flex flex-col bg-bg-primary relative">
-            {kids.length > 0 ? (
-              <>
-                <Tabbed
-                  tabs={stripTabs}
-                  active={stripActive}
-                  lockedIds={lockedShells}
-                  size="small"
-                  dropMode={`container:${cid}`}
-                  dropActive={!!modeDrag}
-                  className="shrink-0"
-                  onActivate={selectShell}
-                  onClose={closeShell}
-                  onCloseSelected={closeSelectedShells}
-                  onToggleLock={setShellLock}
-                  onSetViewMode={setShellViewMode}
-                  onReorder={(from, to) => {
-                    if (from === e.id || to === e.id) return
-                    reorderShell(from, to)
-                  }}
-                  onDragAway={(id) => { if (id !== e.id) closeShell(id) }}
-                  onDragDetach={(id) => setModeDrag(id)}
-                  onDropViewMode={dropViewMode}
-                  onDragCancelViewMode={() => setModeDrag(null)}
-                />
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  {activeKid ? renderEntry(activeKid) : null}
+            <Tabbed
+              tabs={stripTabs}
+              active={stripActive}
+              lockedIds={lockedShells}
+              size="small"
+              dropMode={`container:${cid}`}
+              dropActive={!!modeDrag}
+              className={`shrink-0 ${floating ? 'cursor-move' : ''}`}
+              onBackgroundPointerDown={floating ? undefined : (ev) => {
+                if (ev.target !== ev.currentTarget) return
+                beginModeDrag(e.id, ev)
+              }}
+              onActivate={selectShell}
+              onClose={closeShell}
+              onCloseSelected={closeSelectedShells}
+              onToggleLock={setShellLock}
+              onSetViewMode={setShellViewMode}
+              onReorder={(from, to) => {
+                if (from === e.id || to === e.id) return
+                reorderShell(from, to)
+              }}
+              onDragAway={handleDragAway}
+              onDragDetach={(id) => setModeDrag(id)}
+              onDropViewMode={dropViewMode}
+              onDragCancelViewMode={() => setModeDrag(null)}
+            />
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex-1 min-h-0 flex">
+                {leftKids.length > 0 ? (
+                  <div className="min-w-[120px] max-w-[65%] shrink-0 flex flex-col bg-bg-primary" style={sideWidth('left')}>
+                    {dockChild('left', leftKids)}
+                  </div>
+                ) : modeDrag ? dropSlot(ckey, 'docked-left') : null}
+                <div className="flex-1 min-w-0 min-h-0 relative bg-bg-primary">
+                  {activeKid ? renderEntry(activeKid) : (
+                    <div className="h-full flex flex-col items-center justify-center gap-2 text-text-muted px-4 text-center">
+                      <Boxes className="w-6 h-6" />
+                      <span className="text-[12px]">Cont {cid}</span>
+                      <span className="text-[10px]">drop tabs on this container's tabs</span>
+                    </div>
+                  )}
                 </div>
-              </>
-            ) : (
-              <div
-                data-drop-mode={`container:${cid}`}
-                className={`flex-1 flex flex-col items-center justify-center gap-2 text-text-muted ${
-                  modeDrag ? 'outline outline-2 outline-dashed outline-accent -outline-offset-2 bg-accent/5' : ''
-                }`}>
-                <Boxes className="w-6 h-6" />
-                <span className="text-[12px]">Container {cid}</span>
-                <span className="text-[10px]">drop tabs on this container's tabs</span>
+                {rightKids.length > 0 ? (
+                  <div className="min-w-[120px] max-w-[65%] shrink-0 flex flex-col bg-bg-primary" style={sideWidth('right')}>
+                    {dockChild('right', rightKids)}
+                  </div>
+                ) : modeDrag ? dropSlot(ckey, 'docked-right') : null}
               </div>
-            )}
+              {bottomKids.length > 0 ? (
+                <div className="min-h-[80px] max-h-[70%] shrink-0 flex flex-col bg-bg-primary" style={{ height: `${dockSizes.bottom}%` }}>
+                  {dockChild('bottom', bottomKids)}
+                </div>
+              ) : modeDrag ? dropSlot(ckey, 'docked-bottom') : null}
+            </div>
           </div>
         )
       }
@@ -1776,30 +2019,88 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
   }
 
+  // A dock area is itself a container. Containers docked into it are flattened
+  // into that container's strip instead of rendering a second tab line.
+  const flattenDockEntries = (list: ShellEntry[]): ShellEntry[] => {
+    const out: ShellEntry[] = []
+    const walk = (items: ShellEntry[], depth = 0) => {
+      for (const e of items) {
+        if (e.kind === 'container' && e.containerId != null && depth < 16) {
+          const kids = childrenOfContainer(e.containerId)
+          if (kids.length) {
+            if (containers.find((c) => c.id === e.containerId)?.ownTab) out.push(e)
+            walk(kids, depth + 1)
+            continue
+          }
+        }
+        out.push(e)
+      }
+    }
+    walk(list)
+    return out
+  }
+
+  // Clicking a docked container's own grab tab should show its active child,
+  // not render the container inside the dock (which would add a second strip).
+  const resolveDockActive = (list: ShellEntry[], activeId: string | null): ShellEntry | null => {
+    const flat = flattenDockEntries(list)
+    let active = flat.find((e) => e.id === activeId) ?? flat[0] ?? null
+    if (active?.kind === 'container' && active.containerId != null) {
+      const cid = active.containerId
+      const info = containers.find((c) => c.id === cid)
+      if (info?.ownTab) {
+        const kids = childrenOfContainer(cid)
+        active = kids.find((k) => k.id === containerActive[cid]) ?? kids[0] ?? null
+      }
+    }
+    return active
+  }
+
   // Each dock area has its own compact tab strip. Only the selected docked
   // window renders below it; other docked windows stay in the strip.
-  const dockArea = (side: 'left' | 'right' | 'bottom', list: ShellEntry[]) => {
+  function dockArea(side: 'left' | 'right' | 'bottom', list: ShellEntry[], parentKey: string | null = null) {
     const mode: ViewMode = `docked-${side}`
-    const active = list.find((e) => e.id === dockActive[side]) ?? list[0] ?? null
+    const scope = parentKey ? `${parentKey}:${side}` : null
+    const flat = flattenDockEntries(list)
+    const active = resolveDockActive(list, scope ? nestedDockActive[scope] ?? null : dockActive[side])
+    const dragRoot = active ? rootAncestorId(active.id) : list[0]?.id
+    const dragContainer = dragRoot?.startsWith('container:') ? dragRoot : null
+    const dropTarget = list.find((e) => e.kind === 'container')
+    const stripDropMode = parentKey && dropTarget?.containerId != null ? `container:${dropTarget.containerId}` : mode
     return (
       <div data-view-mode={mode} className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-bg-primary">
         <Tabbed
-          tabs={list.map((e) => ({ id: e.id, kind: e.kind, label: e.title, icon: e.icon }))}
+          tabs={flat.map((e) => ({ id: e.id, kind: e.kind, label: e.kind === 'container' ? '' : e.title, ariaLabel: e.title, icon: e.icon }))}
           active={active?.id ?? ''}
           lockedIds={lockedShells}
           size="small"
           detachAbove
           dragAnyDirection
-          dropMode={mode}
+          dropMode={stripDropMode}
           dropActive={!!modeDrag}
           className="shrink-0"
-          onActivate={(id) => setDockActive((prev) => ({ ...prev, [side]: id }))}
+          onBackgroundPointerDown={(ev) => {
+            if (ev.target !== ev.currentTarget || !dragContainer) return
+            beginModeDrag(dragContainer, ev)
+          }}
+          onActivate={(id) => {
+            const entry = flat.find((e) => e.id === id)
+            const cid = entry?.kind === 'container' ? entry.containerId : null
+            const target = cid != null && containers.find((c) => c.id === cid)?.ownTab
+              ? (childrenOfContainer(cid).find((k) => k.id === containerActive[cid])
+                ?? childrenOfContainer(cid)[0])
+              : entry
+            if (!target) return
+            if (scope) setNestedDockActive((prev) => ({ ...prev, [scope]: target.id }))
+            else setDockActive((prev) => ({ ...prev, [side]: target.id }))
+            selectShell(target.id)
+          }}
           onClose={closeShell}
           onCloseSelected={closeSelectedShells}
           onToggleLock={setShellLock}
           onSetViewMode={setShellViewMode}
           onReorder={reorderShell}
-          onDragAway={closeShell}
+          onDragAway={handleDragAway}
           onDragDetach={(id) => setModeDrag(id)}
           onDropViewMode={dropViewMode}
           onDragCancelViewMode={() => setModeDrag(null)}
@@ -1832,9 +2133,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       onToggleDesktop={() => setDesktopMode(!desktopMode)}
       placement={menuPlacement}
       onPlacement={setMenuPlacement}
-      containers={containers}
-      onToggleContainer={toggleContainer}
-      onAddContainer={addContainer}
       onResetView={resetView}
       username={username}
       users={collabRoster}
@@ -1856,25 +2154,37 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
             </button>
           )}
           <div className="flex-1 min-w-0">
-            <ViewTabs
-              tabs={mainTabs.map((e) => ({ id: e.id, kind: e.kind, label: e.title, icon: e.icon }))}
-              active={mainActive}
-              lockedIds={lockedShells}
-              dropActive={!!modeDrag}
-              onSelect={selectShell}
-              onClose={closeShell}
-              onCloseSelected={closeSelectedShells}
-              onToggleLock={setShellLock}
-              onSetViewMode={setShellViewMode}
-              onReorder={reorderShell}
-              onDragDetach={(id) => setModeDrag(id)}
-              onDropViewMode={dropViewMode}
-              onDragCancelViewMode={() => setModeDrag(null)}
-            />
+            {mainTabs.length > 0 ? (
+              <ViewTabs
+                tabs={mainTabs.map((e) => ({ id: e.id, kind: e.kind, label: e.title, icon: e.icon }))}
+                active={mainActive}
+                lockedIds={lockedShells}
+                dropActive={!!modeDrag}
+                onSelect={selectShell}
+                onClose={closeShell}
+                onCloseSelected={closeSelectedShells}
+                onToggleLock={setShellLock}
+                onSetViewMode={setShellViewMode}
+                onReorder={reorderShell}
+                onDragDetach={(id) => setModeDrag(id)}
+                onDropViewMode={dropViewMode}
+                onDragCancelViewMode={() => setModeDrag(null)}
+                onDragAway={handleDragAway}
+              />
+            ) : (
+              <div
+                data-drop-mode="center"
+                className={`flex items-center h-10 min-h-10 px-3 text-[12px] transition-colors ${
+                  modeDrag
+                    ? 'outline outline-2 outline-dashed outline-accent -outline-offset-2 bg-accent/5 text-text-secondary'
+                    : 'text-text-muted'
+                }`}>
+                {modeDrag ? 'Drop here to return a tab to the main container' : 'Drag a tab back here'}
+              </div>
+            )}
           </div>
           {!isMobile && (
             <div className="flex items-center gap-0.5 px-1.5 shrink-0">
-              {collabRoster.length > 0 && <PresenceRoster roster={collabRoster} />}
               {autoSaveStatus && (
                 <span className="text-[11px] text-text-muted px-1.5 animate-fade-in">
                   {autoSaveStatus === 'saving' ? 'saving…' : 'saved'}
@@ -1924,11 +2234,23 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
           {activeMode !== 'max' && (
             <div className="absolute inset-0 flex flex-col min-h-0">
               <div className="flex-1 min-h-0 flex">
-                {dockedLeft.length > 0 && (
-                  <div className="w-[32%] min-w-[200px] max-w-[560px] shrink-0 flex flex-col border-r border-border bg-bg-primary">
-                    {dockArea('left', dockedLeft)}
-                  </div>
-                )}
+                {dockedLeft.length > 0 ? (
+                  <>
+                    <div
+                      data-dock-side="left"
+                      className="min-w-[180px] max-w-[65%] shrink-0 flex flex-col bg-bg-primary"
+                      style={{ width: `${dockSizes.left}%` }}>
+                      {dockedLeft.length === 1 && dockedLeft[0].kind === 'container'
+                        ? renderEntry(dockedLeft[0])
+                        : dockArea('left', dockedLeft)}
+                    </div>
+                    <div
+                      data-dock-resize="left"
+                      onPointerDown={(e) => beginDockResize('left', e)}
+                      className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-accent transition-colors touch-none"
+                      title="Resize left container" />
+                  </>
+                ) : modeDrag ? dropSlot(null, 'docked-left') : null}
 
                 <div className="flex-1 min-w-0 min-h-0 relative bg-bg-primary">
                   {centerEntry ? (
@@ -1940,18 +2262,42 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
                   )}
                 </div>
 
-                {dockedRight.length > 0 && (
-                  <div className="w-[32%] min-w-[200px] max-w-[560px] shrink-0 flex flex-col border-l border-border bg-bg-primary">
-                    {dockArea('right', dockedRight)}
-                  </div>
-                )}
+                {dockedRight.length > 0 ? (
+                  <>
+                    <div
+                      data-dock-resize="right"
+                      onPointerDown={(e) => beginDockResize('right', e)}
+                      className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-accent transition-colors touch-none"
+                      title="Resize right container" />
+                    <div
+                      data-dock-side="right"
+                      className="min-w-[180px] max-w-[65%] shrink-0 flex flex-col bg-bg-primary"
+                      style={{ width: `${dockSizes.right}%` }}>
+                      {dockedRight.length === 1 && dockedRight[0].kind === 'container'
+                        ? renderEntry(dockedRight[0])
+                        : dockArea('right', dockedRight)}
+                    </div>
+                  </>
+                ) : modeDrag ? dropSlot(null, 'docked-right') : null}
               </div>
 
-              {dockedBottom.length > 0 && (
-                <div className="h-[30%] min-h-[140px] max-h-[480px] shrink-0 flex flex-col border-t border-border bg-bg-primary">
-                  {dockArea('bottom', dockedBottom)}
-                </div>
-              )}
+              {dockedBottom.length > 0 ? (
+                <>
+                  <div
+                    data-dock-resize="bottom"
+                    onPointerDown={(e) => beginDockResize('bottom', e)}
+                    className="h-1 shrink-0 cursor-row-resize bg-border hover:bg-accent transition-colors touch-none"
+                    title="Resize bottom container" />
+                  <div
+                    data-dock-side="bottom"
+                    className="min-h-[100px] max-h-[70%] shrink-0 flex flex-col bg-bg-primary"
+                    style={{ height: `${dockSizes.bottom}%` }}>
+                    {dockedBottom.length === 1 && dockedBottom[0].kind === 'container'
+                      ? renderEntry(dockedBottom[0])
+                      : dockArea('bottom', dockedBottom)}
+                  </div>
+                </>
+              ) : modeDrag ? dropSlot(null, 'docked-bottom') : null}
             </div>
           )}
           {/* `float` tabs stay on the main container above the active tab and
@@ -1962,14 +2308,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
               <FloatWindow
                 key={e.id}
                 geom={g}
-                title={e.title}
-                icon={e.icon}
                 onChange={(ng) => setFloatGeom((prev) => ({ ...prev, [e.id]: ng }))}
                 onRaise={() => {
                   const z = ++floatZ.current
                   setFloatGeom((prev) => ({ ...prev, [e.id]: { ...(prev[e.id] ?? g), z } }))
-                }}
-                onRestore={() => setShellViewMode([e.id], 'center')}>
+                }}>
                 {renderEntry(e)}
               </FloatWindow>
             )
@@ -1979,25 +2322,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
               sendWindow={sendWindow} onWindow={onWindow} />
           )}
 
-          {modeDrag && (
-            <div className="absolute inset-0 z-50 pointer-events-none select-none">
-              <div data-drop-mode="docked-left" className="pointer-events-auto absolute left-2 top-2 bottom-2 w-24 rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 flex items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors">
-                Left
-              </div>
-              <div data-drop-mode="docked-right" className="pointer-events-auto absolute right-2 top-2 bottom-2 w-24 rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 flex items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors">
-                Right
-              </div>
-              <div data-drop-mode="docked-bottom" className="pointer-events-auto absolute left-[7.5rem] right-[7.5rem] bottom-2 h-20 rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 flex items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors">
-                Bottom
-              </div>
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div data-drop-mode="float" className="pointer-events-auto w-32 h-20 rounded-lg border-2 border-dashed border-border bg-bg-elevated/90 shadow-2xl shadow-shadow -translate-x-0.5 -translate-y-0.5 flex flex-col items-center justify-center text-[11px] font-semibold text-text-secondary hover:border-accent hover:bg-accent/20 hover:text-text-primary hover:-translate-x-1 hover:-translate-y-1 hover:shadow-[0_20px_45px_rgba(0,0,0,0.7)] transition-all">
-                  Float
-                  <span className="text-[9px] font-normal text-text-muted">windowed</span>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Status bar (desktop only — mobile has no space to waste) */}

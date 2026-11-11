@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, Info, Minus, Plus, X, Check, User, ShieldCheck, Monitor } from 'lucide-react'
+import { FolderOpen, Info, Minus, Plus, Check, User, ShieldCheck, Monitor } from 'lucide-react'
 import Logo from './Logo'
 import TunnelSettings from './TunnelSettings'
 import WedeLocation from './WedeLocation'
@@ -86,16 +86,6 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
 
   return (
     <div className="h-full flex flex-col bg-bg-secondary overflow-y-auto">
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text-primary">Settings</h2>
-        <button
-          onClick={() => onClose?.()}
-          title="Close settings (Esc)"
-          className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors">
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
       <div className="p-4 space-y-6">
         {/* Profile */}
         <div>

@@ -1,4 +1,4 @@
-import { useRef, useState, type TouchEvent as ReactTouchEvent } from 'react'
+import { useRef, useState, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Lock, Unlock } from 'lucide-react'
 import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
@@ -8,6 +8,7 @@ export interface TabbedItem {
   id: string
   kind: string
   label: string
+  ariaLabel?: string
   icon: LucideIcon
 }
 
@@ -22,22 +23,23 @@ export interface TabbedProps {
   dropMode?: string
   dropActive?: boolean
   className?: string
+  onBackgroundPointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void
   onActivate: (id: string) => void
   onClose: (id: string) => void
   onCloseSelected?: (ids: string[], includeLocked?: boolean) => void
   onToggleLock?: (ids: string[], locked: boolean) => void
   onSetViewMode?: (ids: string[], mode: ViewMode) => void
   onReorder?: (from: string, to: string) => void
-  onDragAway?: (id: string) => void
+  onDragAway?: (id: string, at: { x: number; y: number }) => void
   onDragDetach?: (id: string) => void
-  onDropViewMode?: (id: string, mode: string) => void
+  onDropViewMode?: (id: string, mode: string, nearId?: string, after?: boolean) => void
   onDragCancelViewMode?: () => void
 }
 
 // Tabbed — one reusable tab strip for the main center container and for each
 // dock area. `small` keeps the same behavior but takes less room.
 export default function Tabbed({
-  tabs, active, lockedIds = [], size = 'normal', multilineSwipe = false, detachAbove = false, dragAnyDirection = false, dropMode, dropActive = false, className = '',
+  tabs, active, lockedIds = [], size = 'normal', multilineSwipe = false, detachAbove = false, dragAnyDirection = false, dropMode, dropActive = false, className = '', onBackgroundPointerDown,
   onActivate, onClose, onCloseSelected, onToggleLock, onSetViewMode,
   onReorder, onDragAway, onDragDetach, onDropViewMode, onDragCancelViewMode,
 }: TabbedProps) {
@@ -111,6 +113,7 @@ export default function Tabbed({
       selectedCount={selected.size}
       dropMode={dropMode}
       dropActive={dropActive}
+      onBackgroundPointerDown={onBackgroundPointerDown}
       showMenuSelectMode
       onCancelSelection={() => setSelected(new Set())}
       onTouchStart={multilineSwipe ? onTouchStart : undefined}
@@ -174,7 +177,7 @@ export default function Tabbed({
             onActivate={() => onActivate(tab.id)}
             onMiddleClick={() => onClose(tab.id)}
             menu={menu}
-            label={`Select ${tab.label}`}
+            label={`Select ${tab.ariaLabel ?? tab.label ?? tab.kind}`}
             tone={tone}
             dragId={tab.id}
             onReorder={onReorder}
@@ -195,7 +198,7 @@ export default function Tabbed({
                 style={{ backgroundColor: `color-mix(in srgb, var(${TONE_VAR[tone]}) 50%, transparent)` }} />
             )}
             {tab.kind !== 'code' && <Icon className={`${iconSize} shrink-0`} />}
-            <span className={`${textSize} truncate ${textMax} font-medium leading-none`}>{tab.label}</span>
+            {tab.label && <span className={`${textSize} truncate ${textMax} font-medium leading-none`}>{tab.label}</span>}
             {isLocked && <Lock className={`${small ? 'w-2 h-2' : 'w-2.5 h-2.5'} shrink-0 text-red`} />}
           </Selectable>
         )

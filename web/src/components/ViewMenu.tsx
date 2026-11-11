@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import {
   X, LogOut, FolderOpen, Moon, Sun, Monitor, Users,
-  LayoutPanelLeft, Boxes, Plus, ChevronDown, ChevronRight, RotateCcw,
+  LayoutPanelLeft, ChevronDown, ChevronRight, RotateCcw,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useRowMenu } from './Selectable'
@@ -15,11 +15,6 @@ export type MenuPlacement =
   | 'bottom-icons'
   | 'left-of-tabs'
   | 'right-of-tabs'
-
-export interface ContainerInfo {
-  id: number
-  visible: boolean
-}
 
 interface MenuRowProps {
   kind?: string
@@ -148,9 +143,6 @@ export interface ViewMenuProps {
   onToggleDesktop: () => void
   placement: MenuPlacement
   onPlacement: (p: MenuPlacement) => void
-  containers: ContainerInfo[]
-  onToggleContainer: (id: number) => void
-  onAddContainer: () => void
   onResetView: () => void
   username: string
   users: { id: string; username?: string }[]
@@ -163,10 +155,9 @@ export default function ViewMenu({
   views, visible, onToggle, onAdd, onOpenFolder,
   onLogout, onClose, desktop, folderName, workspaceSwitcher,
   onToggleDesktop, placement, onPlacement,
-  containers, onToggleContainer, onAddContainer, onResetView, username, users,
+  onResetView, username, users,
 }: ViewMenuProps) {
   const [showPlacement, setShowPlacement] = useState(false)
-  const [showContainers, setShowContainers] = useState(false)
   const slim = desktop && (placement === 'left-icons' || placement === 'bottom-icons')
 
   const body = (
@@ -256,33 +247,6 @@ export default function ViewMenu({
               </div>
             )}
           </>
-        )}
-
-        <SectionRow
-          icon={Boxes}
-          label="Containers"
-          expanded={showContainers}
-          onClick={() => setShowContainers((v) => !v)}
-          onSwipeRight={onAddContainer}
-          slim={slim}
-        />
-        {(showContainers || slim) && (
-          <div className={`flex flex-wrap gap-1 px-2 pb-1.5 ${slim ? 'justify-center' : ''}`}>
-            {containers.map((c) => (
-              <button key={c.id} onClick={() => onToggleContainer(c.id)}
-                className={`w-7 h-7 rounded text-[11px] font-medium transition-colors ${
-                  c.visible ? 'bg-accent/30 text-accent' : 'bg-bg-hover text-text-muted hover:text-text-primary'
-                }`}
-                title={`Container ${c.id}${c.visible ? ' (visible)' : ''}`}>
-                {c.id}
-              </button>
-            ))}
-            <button onClick={onAddContainer}
-              className="w-7 h-7 rounded bg-bg-hover text-text-muted hover:text-text-primary flex items-center justify-center"
-              title="New container (or swipe right on Containers)">
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
         )}
 
         <div className="my-1 border-t border-border" />

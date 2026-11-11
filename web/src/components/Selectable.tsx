@@ -281,11 +281,12 @@ export interface SelectableGroupProps {
   onTouchMove?: (e: ReactTouchEvent<HTMLDivElement>) => void
   onTouchEnd?: (e: ReactTouchEvent<HTMLDivElement>) => void
   onTouchCancel?: (e: ReactTouchEvent<HTMLDivElement>) => void
+  onBackgroundPointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void
   dropMode?: string
   dropActive?: boolean
 }
 
-export function SelectableGroup({ children, className = '', style, selectedCount = 0, showMenuSelectMode = true, onCancelSelection, onTouchStart, onTouchMove, onTouchEnd, onTouchCancel, dropMode, dropActive = false }: SelectableGroupProps) {
+export function SelectableGroup({ children, className = '', style, selectedCount = 0, showMenuSelectMode = true, onCancelSelection, onTouchStart, onTouchMove, onTouchEnd, onTouchCancel, onBackgroundPointerDown, dropMode, dropActive = false }: SelectableGroupProps) {
   const [mode, setMode] = useState<SelectMode>('normal')
   const [cancelPos, setCancelPos] = useState<{ top: number; right: number } | null>(null)
   const groupRef = useRef<HTMLDivElement>(null)
@@ -392,6 +393,7 @@ export function SelectableGroup({ children, className = '', style, selectedCount
         data-reorder-group
         data-drop-mode={dropMode}
         data-drop-active={dropActive ? '1' : undefined}
+        onPointerDown={onBackgroundPointerDown}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -440,12 +442,12 @@ export interface SelectableProps {
   onMiddleClick?: () => void
   tone?: Tone
   // Pointer-based reordering (desktop mouse). Drag a tab onto another tab to
-  // move it; drop it outside the group to fire onDragAway (close it).
+  // move it; drop it outside any target to fire onDragAway (float it).
   dragId?: string
   onReorder?: (from: string, to: string) => void
-  onDragAway?: (id: string) => void
+  onDragAway?: (id: string, at: { x: number; y: number }) => void
   onDragDetach?: (id: string) => void
-  onDropViewMode?: (id: string, mode: string) => void
+  onDropViewMode?: (id: string, mode: string, nearId?: string, after?: boolean) => void
   onDragCancelViewMode?: () => void
   detachAbove?: boolean
   dragAnyDirection?: boolean
@@ -516,6 +518,7 @@ export default function Selectable({
     let active = false
     let detached = false
     let overId: string | null = null
+    let dropNear: { id: string; after: boolean } | null = null
 
     const move = (ev: PointerEvent) => {
       if (!active) {
@@ -542,14 +545,25 @@ export default function Selectable({
         document.body.style.cursor = 'grabbing'
       }
       ev.preventDefault()
-      if (!detached && groupRect && (ev.clientY > groupRect.bottom + 12 || (detachAbove && ev.clientY < groupRect.top - 12))) {
-        detached = true
-        onDragDetach?.(dragId)
+      if (!detached && groupRect) {
+        const leftGroup = ev.clientX < groupRect.left - 12 || ev.clientX > groupRect.right + 12
+        if (leftGroup || ev.clientY > groupRect.bottom + 12 || (detachAbove && ev.clientY < groupRect.top - 12)) {
+          detached = true
+          onDragDetach?.(dragId)
+        }
       }
       if (detached) return
       const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
       const row = el?.closest('[data-reorder-id]') as HTMLElement | null
-      overId = row && groupEl?.contains(row) ? row.dataset.reorderId ?? null : null
+      const rowId = row?.dataset.reorderId ?? null
+      if (row && rowId && groupEl?.contains(row)) {
+        overId = rowId
+        dropNear = null
+      } else {
+        overId = null
+        const r = row?.getBoundingClientRect()
+        dropNear = rowId && r ? { id: rowId, after: ev.clientX > r.left + r.width / 2 } : null
+      }
     }
 
     const up = (ev: PointerEvent) => {
@@ -563,8 +577,11 @@ export default function Selectable({
       if (detached) {
         const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
         const mode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode')
-        if (mode) onDropViewMode?.(dragId, mode)
-        else onDragCancelViewMode?.()
+        const row = el?.closest('[data-reorder-id]') as HTMLElement | null
+        const rowId = row?.dataset.reorderId
+        const r = row?.getBoundingClientRect()
+        if (mode) onDropViewMode?.(dragId, mode, rowId, r ? ev.clientX > r.left + r.width / 2 : undefined)
+        else onDragAway?.(dragId, { x: ev.clientX, y: ev.clientY })
         return
       }
       if (overId && overId !== dragId) {
@@ -574,11 +591,11 @@ export default function Selectable({
       const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
       const dropMode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode') || null
       if (dropMode) {
-        onDropViewMode?.(dragId, dropMode)
+        onDropViewMode?.(dragId, dropMode, dropNear?.id, dropNear?.after)
         return
       }
       if (!overId && (group?.mode === 'selecting' || e.pointerType === 'mouse') && (!groupEl || !el || !groupEl.contains(el))) {
-        onDragAway?.(dragId)
+        onDragAway?.(dragId, { x: ev.clientX, y: ev.clientY })
       }
     }
 
