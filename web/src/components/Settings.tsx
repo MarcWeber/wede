@@ -376,17 +376,11 @@ interface ToggleProps {
 
 function Toggle({ checked, onChange }: ToggleProps) {
   return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative w-8 h-4.5 rounded-full transition-colors shrink-0 ${checked ? 'bg-accent' : 'bg-bg-active border border-border'}`}
-      style={{ height: '18px', width: '32px' }}
-    >
-      <span
-        className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-3.5' : 'translate-x-0.5'}`}
-        style={{ height: '14px', width: '14px' }}
-      />
-    </button>
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={(e) => onChange(e.target.checked)}
+      className="w-4 h-4 shrink-0 cursor-pointer"
+    />
   )
 }
