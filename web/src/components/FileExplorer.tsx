@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, type ComponentType, 
 import {
   ChevronRight, ChevronDown, File, Folder, FolderOpen,
   FilePlus, FolderPlus, RefreshCw, Copy, Clipboard, Pencil, FolderPlus as AddRoot, X as XIcon,
+  Maximize2, Minimize2,
 } from 'lucide-react'
 import { makeWsFetch } from '../lib/wsScope'
 import { fileKey } from '../lib/fileKey'
@@ -438,6 +439,8 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
       refresh: () => { void loadRoot(); void loadGitStatus() },
       newFile: () => { onFocus(); setShowNew('file') },
       newFolder: () => { onFocus(); setShowNew('folder') },
+      expandAll,
+      collapseAll,
     })
     return () => register(ws.id, null)
   }, [register, ws.id, loadRoot, loadGitStatus, onFocus])
@@ -448,6 +451,24 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
       if (next.has(path)) next.delete(path); else next.add(path)
       return next
     })
+  }
+
+  // Collect all directory paths from the tree recursively.
+  const collectDirs = (entries: TreeEntry[]): string[] => {
+    const dirs: string[] = []
+    const walk = (e: TreeEntry) => {
+      if (e.isDir) { dirs.push(e.path); entries.filter((c) => c.path.startsWith(e.path + '/')).forEach(walk) }
+    }
+    entries.filter((e) => !e.path.includes('/')).forEach(walk)
+    return dirs
+  }
+
+  const expandAll = () => {
+    setExpanded(new Set(collectDirs(files)))
+  }
+
+  const collapseAll = () => {
+    setExpanded(new Set())
   }
 
   // handleCreate/confirmAndDelete/submitRename previously had no try/catch,
@@ -713,6 +734,9 @@ export default function FileExplorer({ authFetch, workspaces = [], onFileSelect,
           {roots.length === 1 ? roots[0].name : 'Explorer'}
         </span>
         <div className="flex items-center gap-0.5">
+          {/* Expand/Collapse all directories */}
+          <IconBtn icon={Maximize2} title="Expand All" onClick={() => Object.values(sectionActions.current).forEach((a) => a?.expandAll?.())} />
+          <IconBtn icon={Minimize2} title="Collapse All" onClick={() => Object.values(sectionActions.current).forEach((a) => a?.collapseAll?.())} />
           {/* New file/folder route to the focused root (used when its own header is hidden). */}
           <IconBtn icon={FilePlus} title="New File" onClick={() => (activeRoot ? sectionActions.current[activeRoot] : undefined)?.newFile?.()} />
           <IconBtn icon={FolderPlus} title="New Folder" onClick={() => (activeRoot ? sectionActions.current[activeRoot] : undefined)?.newFolder?.()} />

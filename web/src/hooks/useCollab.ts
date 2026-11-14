@@ -14,7 +14,7 @@
 // never throwing into the IDE.
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { PresenceMember, MousePosition, TerminalSession } from '../types'
+import type { PresenceMember, MousePosition, TerminalSession, CollabPresenter } from '../types'
 
 function buildWsUrl(workspaceId: string, token: string, username: string | null | undefined): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -47,6 +47,7 @@ type TerminalsSub = (list: Pick<TerminalSession, 'id' | 'name'>[]) => void
 interface CollabMessage {
   type?: string
   members?: PresenceMember[]
+  presenter?: CollabPresenter | null
   id?: string
   x?: number
   y?: number
@@ -56,8 +57,13 @@ interface CollabMessage {
 }
 
 export interface UseCollabResult {
+  selfId: string | null
   roster: PresenceMember[]
-  setViewing: (file: string | null | undefined, line?: number) => void
+  presenter: CollabPresenter | null
+  startLead: () => void
+  stopLead: () => void
+  setViewing: (file: string | null | undefined, line?: number, anchorLine?: number, anchorCol?: number, headLine?: number, headCol?: number) => void
+  setTabs: (tabs: string[]) => void
   mice: Record<string, MousePosition>
   sendMouse: (fx: number, fy: number) => void
   sendWindow: (win: string, geo: WindowGeo) => void
@@ -72,10 +78,12 @@ export function useCollab(
   username: string | null | undefined,
 ): UseCollabResult {
   const [roster, setRoster] = useState<PresenceMember[]>([])
+  const [presenter, setPresenter] = useState<CollabPresenter | null>(null)
+  const [selfId, setSelfId] = useState<string | null>(null)
   const [mice, setMice] = useState<Record<string, MousePosition>>({})
   const wsRef = useRef<WebSocket | null>(null)
-  const lastSentRef = useRef<{ file: string | null; line: number }>({ file: null, line: -1 })
-  const pendingRef = useRef<{ file: string; line: number } | null>(null)
+  const lastSentRef = useRef<{ file: string | null; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number }>({ file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 })
+  const pendingRef = useRef<{ file: string; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mouseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingMouseRef = useRef<MousePosition | null>(null)
@@ -93,8 +101,11 @@ export function useCollab(
         try {
           const msg: CollabMessage = JSON.parse(ev.data)
           if (!msg) return
-          if (msg.type === 'presence' && Array.isArray(msg.members)) {
+          if (msg.type === 'self' && msg.id) {
+            setSelfId(msg.id)
+          } else if (msg.type === 'presence' && Array.isArray(msg.members)) {
             setRoster(msg.members)
+            setPresenter(msg.presenter ?? null)
             // Drop mouse cursors for members who have left.
             const ids = new Set(msg.members.map((m) => m.id))
             setMice((prev) => {
@@ -115,15 +126,15 @@ export function useCollab(
       }
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null
-        if (!disposed) { setRoster([]); setMice({}) }
+        if (!disposed) { setRoster([]); setPresenter(null); setMice({}) }
       }
       ws.onerror = () => { /* non-fatal; onclose handles cleanup */ }
     } catch { /* construction failed → collab inactive */ }
 
     return () => {
       disposed = true
-      setRoster([]); setMice({})
-      lastSentRef.current = { file: null, line: -1 }
+      setRoster([]); setPresenter(null); setMice({}); setSelfId(null)
+      lastSentRef.current = { file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 }
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
       if (mouseTimerRef.current) { clearTimeout(mouseTimerRef.current); mouseTimerRef.current = null }
       try { if (ws) ws.close() } catch { /* ignore */ }
@@ -138,23 +149,27 @@ export function useCollab(
     }
   }, [])
 
-  // setViewing publishes the local cursor, throttled (leading + trailing) so
+  // setViewing publishes the local cursor + selection range, throttled (leading + trailing) so
   // rapid tab/cursor changes don't flood the socket.
-  const setViewing = useCallback((file: string | null | undefined, line = 0) => {
-    pendingRef.current = { file: file || '', line: line || 0 }
+  const setViewing = useCallback((file: string | null | undefined, line = 0, anchorLine = 0, anchorCol = 0, headLine = 0, headCol = 0) => {
+    pendingRef.current = { file: file || '', line: line || 0, anchorLine: anchorLine || 0, anchorCol: anchorCol || 0, headLine: headLine || 0, headCol: headCol || 0 }
     const flush = () => {
       timerRef.current = null
       const p = pendingRef.current
       const ws = wsRef.current
       if (!p || !ws || ws.readyState !== WebSocket.OPEN) return
-      if (p.file === lastSentRef.current.file && p.line === lastSentRef.current.line) return
+      if (p.file === lastSentRef.current.file && p.line === lastSentRef.current.line &&
+          p.anchorLine === lastSentRef.current.anchorLine && p.anchorCol === lastSentRef.current.anchorCol &&
+          p.headLine === lastSentRef.current.headLine && p.headCol === lastSentRef.current.headCol) return
       lastSentRef.current = p
-      try { ws.send(JSON.stringify({ type: 'cursor', file: p.file, line: p.line })) } catch { /* ignore */ }
+      try { ws.send(JSON.stringify({ type: 'cursor', file: p.file, line: p.line, anchorLine: p.anchorLine, anchorCol: p.anchorCol, headLine: p.headLine, headCol: p.headCol })) } catch { /* ignore */ }
     }
     if (timerRef.current) return
     flush()
     timerRef.current = setTimeout(flush, THROTTLE_MS)
   }, [])
+
+  const setTabs = useCallback((list: string[]) => send({ type: 'tabs', list }), [send])
 
   // sendMouse publishes the local mouse position as viewport fractions, throttled.
   const sendMouse = useCallback((fx: number, fy: number) => {
@@ -171,6 +186,9 @@ export function useCollab(
 
   const sendWindow = useCallback((win: string, geo: WindowGeo) => send({ type: 'window', win, geo }), [send])
 
+  const startLead = useCallback(() => send({ type: 'lead', on: true }), [send])
+  const stopLead = useCallback(() => send({ type: 'lead', on: false }), [send])
+
   const onWindow = useCallback((cb: WindowSub) => {
     windowSubsRef.current.add(cb)
     return () => windowSubsRef.current.delete(cb)
@@ -182,5 +200,5 @@ export function useCollab(
     return () => terminalsSubsRef.current.delete(cb)
   }, [])
 
-  return { roster, setViewing, mice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals }
+  return { selfId, roster, presenter, startLead, stopLead, setViewing, setTabs, mice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals }
 }

@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -41,13 +42,24 @@ import (
 // The service handlers (files/git/search) are constructed lazily and bound to
 // this workspace's workspace, so each workspace operates on its own isolated root.
 type Workspace struct {
-	ID   string
-	Name string
+	ID        string
+	Name      string
+	Template  string
+	CreatedAt time.Time
 
 	ws *folder.Manager
 
+	// Session lifecycle: timeoutSecs is this session's idle timeout (0 = never).
+	// activityMu guards the occupancy tracker used by the idle janitor.
+	timeoutSecs int
+	activityMu  sync.Mutex
+	lastActive  time.Time
+	occupied    bool
+
 	// frameAncestors is threaded into the terminal/lsp WebSocket origin checks.
 	frameAncestors string
+	// canLead reports whether a username may start a forced-follow lead.
+	canLead func(username string) bool
 
 	mu          sync.Mutex
 	files       *files.Handler
@@ -73,6 +85,40 @@ func (r *Workspace) Folder() *folder.Manager { return r.ws }
 
 // Root is the absolute project path this workspace is pinned to.
 func (r *Workspace) Root() string { return r.ws.Current() }
+
+// Users returns the number of live presence members. A session with any user
+// connected is never expired by the idle janitor.
+func (r *Workspace) Users() int {
+	r.mu.Lock()
+	p := r.presence
+	r.mu.Unlock()
+	if p == nil {
+		return 0
+	}
+	return len(p.Roster())
+}
+
+// shouldExpire advances the occupancy tracker and reports whether this session
+// has been empty for longer than its timeout.
+func (r *Workspace) shouldExpire(now time.Time) bool {
+	r.activityMu.Lock()
+	defer r.activityMu.Unlock()
+	if users := r.Users(); users > 0 {
+		r.lastActive = now
+		r.occupied = true
+		return false
+	}
+	if r.occupied {
+		// The moment the last user left: start the idle clock now.
+		r.lastActive = now
+		r.occupied = false
+		return false
+	}
+	if r.timeoutSecs <= 0 {
+		return false
+	}
+	return now.Sub(r.lastActive) >= time.Duration(r.timeoutSecs)*time.Second
+}
 
 // Files returns this workspace's files handler, bound to the workspace's workspace.
 func (r *Workspace) Files() *files.Handler {
@@ -165,7 +211,7 @@ func (r *Workspace) Collab() *collab.Handler {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.collab == nil {
-		r.collab = collab.New(r.frameAncestors, hub)
+		r.collab = collab.New(r.frameAncestors, hub, r.canLead)
 	}
 	return r.collab
 }
@@ -287,8 +333,31 @@ type Manager struct {
 	mu             sync.RWMutex
 	workspaces     map[string]*Workspace
 	order          []string // preserves creation order for stable listing
-	frameAncestors string   // threaded into per-workspace terminal/lsp origin checks
-	allowedRoot    string   // base dir under which new workspaces may be created ("" = no restriction)
+	templates      map[string]Template
+	defaultTimeout int
+	frameAncestors string // threaded into per-workspace terminal/lsp origin checks
+	allowedRoot    string // base dir under which new workspaces may be created ("" = no restriction)
+	canLead        func(username string) bool
+}
+
+// Template is a configured workspace blueprint. Sessions are created from it.
+type Template struct {
+	Name        string   `json:"name"`
+	Path        string   `json:"path"`
+	TimeoutSecs int      `json:"timeout_secs"`
+	LSP         []string `json:"lsp,omitempty"`
+}
+
+// SessionInfo is a snapshot of a running session for the picker/API.
+type SessionInfo struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Template    string    `json:"template"`
+	Root        string    `json:"root"`
+	Users       int       `json:"users"`
+	AgeSecs     int64     `json:"age_secs"`
+	TimeoutSecs int       `json:"timeout_secs"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // NewManager returns an empty Manager. frameAncestors mirrors the frame_ancestors
@@ -296,7 +365,72 @@ type Manager struct {
 // origin checking. allowedRoot is the base directory under which new workspaces
 // may be created (see folder.ValidateRoot); an empty value disables that check.
 func NewManager(frameAncestors, allowedRoot string) *Manager {
-	return &Manager{workspaces: make(map[string]*Workspace), frameAncestors: frameAncestors, allowedRoot: allowedRoot}
+	return &Manager{
+		workspaces:     make(map[string]*Workspace),
+		templates:      make(map[string]Template),
+		defaultTimeout: 600,
+		frameAncestors: frameAncestors,
+		allowedRoot:    allowedRoot,
+	}
+}
+
+// SetDefaultTimeout sets the fallback idle timeout for new sessions.
+func (m *Manager) SetDefaultTimeout(secs int) {
+	if secs < 0 {
+		return
+	}
+	m.mu.Lock()
+	m.defaultTimeout = secs
+	m.mu.Unlock()
+}
+
+// SetTemplates replaces the configured workspace templates. Running sessions
+// are unaffected.
+func (m *Manager) SetTemplates(templates map[string]Template) {
+	next := make(map[string]Template, len(templates))
+	for name, t := range templates {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		t.Name = name
+		if strings.TrimSpace(t.Path) == "" {
+			t.Path = "."
+		}
+		if t.TimeoutSecs < 0 {
+			t.TimeoutSecs = 0
+		}
+		next[name] = t
+	}
+	m.mu.Lock()
+	m.templates = next
+	m.mu.Unlock()
+}
+
+// Templates returns configured templates sorted by name.
+func (m *Manager) Templates() []Template {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Template, 0, len(m.templates))
+	for _, t := range m.templates {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// SetTeacherChecker installs the teacher-permission predicate used by each
+// workspace's collab handler. Call during startup (before/after Register is
+// both safe); existing workspaces are updated too.
+func (m *Manager) SetTeacherChecker(fn func(username string) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.canLead = fn
+	for _, r := range m.workspaces {
+		r.mu.Lock()
+		r.canLead = fn
+		r.mu.Unlock()
+	}
 }
 
 func newID() string {
@@ -323,7 +457,15 @@ func (m *Manager) Register(name string, ws *folder.Manager) *Workspace {
 	if name == "" {
 		name = filepath.Base(ws.Current())
 	}
-	r := &Workspace{ID: newID(), Name: name, ws: ws, frameAncestors: m.frameAncestors}
+	m.mu.RLock()
+	timeout := m.defaultTimeout
+	m.mu.RUnlock()
+	now := time.Now()
+	r := &Workspace{
+		ID: newID(), Name: name, Template: name, CreatedAt: now,
+		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
+		timeoutSecs: timeout, lastActive: now,
+	}
 	m.register(r)
 	return r
 }
@@ -343,9 +485,81 @@ func (m *Manager) Create(name, root string) (*Workspace, error) {
 	if name == "" {
 		name = filepath.Base(abs)
 	}
-	r := &Workspace{ID: newID(), Name: name, ws: ws, frameAncestors: m.frameAncestors}
+	m.mu.RLock()
+	timeout := m.defaultTimeout
+	m.mu.RUnlock()
+	now := time.Now()
+	r := &Workspace{
+		ID: newID(), Name: name, Template: "custom", CreatedAt: now,
+		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
+		timeoutSecs: timeout, lastActive: now,
+	}
 	m.register(r)
 	return r, nil
+}
+
+// CreateFromTemplate instantiates a configured template as a new active
+// session. An empty session name defaults to the template name, with a numeric
+// suffix if that name is already in use.
+func (m *Manager) CreateFromTemplate(templateName, sessionName string) (*Workspace, error) {
+	m.mu.RLock()
+	tpl, ok := m.templates[templateName]
+	timeout := m.defaultTimeout
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("unknown workspace template %q", templateName)
+	}
+	if tpl.TimeoutSecs >= 0 {
+		timeout = tpl.TimeoutSecs
+	}
+	abs, err := filepath.Abs(tpl.Path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve template path: %w", err)
+	}
+	ws := folder.New(abs)
+	if !ws.HasWorkspace() {
+		return nil, fmt.Errorf("invalid workspace path: %s", abs)
+	}
+	name := sanitizeSessionName(sessionName)
+	if name == "" {
+		name = templateName
+	}
+	name = m.uniqueSessionName(name)
+	now := time.Now()
+	r := &Workspace{
+		ID: newID(), Name: name, Template: templateName, CreatedAt: now,
+		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
+		timeoutSecs: timeout, lastActive: now,
+	}
+	m.register(r)
+	return r, nil
+}
+
+func sanitizeSessionName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.Join(strings.Fields(name), " ")
+	if len(name) > 48 {
+		name = name[:48]
+	}
+	return name
+}
+
+func (m *Manager) uniqueSessionName(base string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	used := make(map[string]bool, len(m.workspaces))
+	for _, r := range m.workspaces {
+		used[r.Name] = true
+	}
+	if !used[base] {
+		return base
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if !used[candidate] {
+			return candidate
+		}
+	}
 }
 
 // Get returns the workspace with the given id.
@@ -367,6 +581,76 @@ func (m *Manager) List() []*Workspace {
 		}
 	}
 	return out
+}
+
+// Sessions returns a snapshot of active sessions in creation order.
+func (m *Manager) Sessions() []SessionInfo {
+	m.mu.RLock()
+	list := make([]*Workspace, 0, len(m.order))
+	for _, id := range m.order {
+		if r, ok := m.workspaces[id]; ok {
+			list = append(list, r)
+		}
+	}
+	m.mu.RUnlock()
+	now := time.Now()
+	out := make([]SessionInfo, 0, len(list))
+	for _, r := range list {
+		out = append(out, SessionInfo{
+			ID: r.ID, Name: r.Name, Template: r.Template, Root: r.Root(),
+			Users: r.Users(), AgeSecs: int64(now.Sub(r.CreatedAt).Seconds()),
+			TimeoutSecs: r.timeoutSecs, CreatedAt: r.CreatedAt,
+		})
+	}
+	return out
+}
+
+// StartJanitor periodically closes idle sessions. A session with connected
+// users never expires; after the last user leaves, its timeout clock starts.
+func (m *Manager) StartJanitor(interval time.Duration) {
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for now := range t.C {
+			m.CloseIdle(now)
+		}
+	}()
+}
+
+// CloseIdle closes every session that has been empty longer than its timeout.
+// It is exported for deterministic tests.
+func (m *Manager) CloseIdle(now time.Time) []string {
+	m.mu.Lock()
+	var closed []string
+	var workspaces []*Workspace
+	for id, r := range m.workspaces {
+		if r.shouldExpire(now) {
+			workspaces = append(workspaces, r)
+			closed = append(closed, id)
+			delete(m.workspaces, id)
+		}
+	}
+	if len(closed) > 0 {
+		closedSet := make(map[string]bool, len(closed))
+		for _, id := range closed {
+			closedSet[id] = true
+		}
+		next := m.order[:0]
+		for _, id := range m.order {
+			if !closedSet[id] {
+				next = append(next, id)
+			}
+		}
+		m.order = next
+	}
+	m.mu.Unlock()
+	for _, r := range workspaces {
+		r.shutdown()
+	}
+	return closed
 }
 
 // Close removes a workspace from the manager and tears down its long-lived

@@ -1,8 +1,13 @@
 # wede Configuration
 
-wede is configured via a single JSON file: `wede.config.json`. This document
-covers all six config keys, how the file is found and parsed, CLI flags, and
+wede is configured by a JSON file (`wede.config.json`) or by layered JSON/YAML
+files passed with `--configs`. This document covers the config keys, users,
+workspace templates and session timeouts, layered/hot loading, CLI flags, and
 override precedence.
+
+The legacy single-file form remains supported and is still what the Docker
+compose setup mounts. Layered files let an operator split secrets, users, and
+templates, and hot-reload only the non-secret parts.
 
 ---
 
@@ -26,28 +31,169 @@ and run `wede` from any subdirectory of it, and it will still be found.
 
 | Key | Type | Default | Env override | Description |
 |-----|------|---------|---------------|-------------|
-| `password` | `string` | *(none — required)* | — | Login password. Startup fails if missing or empty. |
+| `password` | `string` | *(none)* | — | Legacy shared login password. Required only when `users` is empty. |
+| `users` | `map[string]string` | `{}` | — | Per-user passwords. When non-empty, each user signs in with their own entry; the legacy `password` is ignored. |
+| `min_password_chars` | `int` | `12` | — | Minimum length for plaintext `password`/`users` values. `0` disables the check. `sha256:` entries are skipped. |
+| `teachers` | `string[]` | `[]` | — | Usernames allowed to start a forced-follow “Lead the rest” session. |
+| `workspaces` | `map[string]template` | `{}` | — | Named workspace templates offered in the login workspace picker. |
+| `defaults.workspace_timeout_secs` | `int` | `600` | — | Idle timeout after the last user leaves a session. `0` never expires. |
 | `port` | `string` | `"9090"` | — | TCP port to listen on. Overridable at the CLI with `--port`/`-p`. |
 | `host` | `string` | `"127.0.0.1"` | — | Interface to bind to. |
 | `frame_ancestors` | `string` | `""` | — | Space-separated origins allowed to embed wede in an `<iframe>`. |
 | `workspace_root` | `string` | `$HOME` | `WEDE_WORKSPACE_ROOT` | Base directory that confines which paths can be opened as a workspace. |
 | `serve_landing` | `bool` | `false` | — | Whether the marketing landing page and `/site/*` docs viewer are mounted at all. |
 
-Only `port` (CLI flag) and `workspace_root` (environment variable) have an
-override mechanism beyond the config file itself; the other four keys are
-config-file-only.
+`port` has a CLI override and `workspace_root` has an environment override.
+Layered `--configs` files can additionally override users, teachers, templates,
+and defaults. New sessions inherit their template's timeout; a session with any
+connected user never expires.
 
 ---
 
 ## `password`
 
-Required. There is no default — `wede.config.json` without a `password` key
-(or with `"password": ""`) fails to start with `password is required in
-wede.config.json`. Used for the single owner login; 3 failed attempts trigger
-a lockout that persists across restarts (see [ARCHITECTURE.md](ARCHITECTURE.md)
+Required when `users` is empty. There is no default — a config with neither
+`password` nor `users` fails to start with `password or users required in
+config`. Used for the legacy single owner login; 3 failed attempts trigger a
+lockout that persists across restarts (see [ARCHITECTURE.md](ARCHITECTURE.md)
 for the auth model). Choose a strong, unique value — see
 [Security: change the default password](#security-change-the-default-password)
 below.
+
+## `users`
+
+Optional map of `username -> password`. When non-empty, the shared `password` is
+ignored: every login must name a configured user and supply that user's
+password. Sessions belonging to a user removed by a config reload are revoked.
+When `users` is configured, clients cannot rename themselves, so a student
+cannot claim a teacher's username. Values are plain text or
+`sha256:<hex>` (hex SHA-256 of the password).
+
+```json
+{
+  "users": {
+    "alice": "alice-plain-password",
+    "bob": "sha256:2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b"
+  },
+  "teachers": ["alice"]
+}
+```
+
+The password is compared after the username is resolved from config; unknown
+users and wrong passwords get the same error. This is authentication, not full
+OS-level multi-user isolation: editors and terminals still run as the same
+container user and can read server-side config.
+
+## `min_password_chars`
+
+Default `12`. Minimum length enforced for plaintext password values in both
+the legacy `password` field and per-user `users` entries. When a password is
+shorter than this threshold, wede refuses to start (or rejects the hot-reload)
+with a clear error naming the offending key.
+
+Set to `0` to disable the length check entirely (not recommended for
+production). Passwords stored as `sha256:<hex>` are skipped — the server
+cannot inspect their length, so the check applies only to plaintext values.
+
+On login, passwords are also checked against a common-password blacklist
+(≥12-character well-known passwords) and a Bloom filter that rejects passwords
+starting or ending with common 6-character chunks (e.g. `qwerty`, `123456`).
+A rejected login returns `"Password might be correct, still rejecting because
+it is too simple."` — this prevents operators from accidentally choosing
+weak passwords even when they satisfy the minimum length.
+
+```json
+{
+  "password": "my-strong-password-here",
+  "min_password_chars": 12
+}
+```
+
+## `workspaces`
+
+Named templates shown in the login workspace picker after authentication.
+A template is not a running session; selecting it asks the user for a session
+name and creates an isolated active session rooted at the template path.
+
+```json
+{
+  "defaults": { "workspace_timeout_secs": 600 },
+  "workspaces": {
+    "cs101": { "path": "/srv/classes/cs101", "timeout_secs": 1800, "lsp": ["go", "python"] },
+    "scratch": { "path": "/srv/scratch", "timeout_secs": 0 }
+  }
+}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `path` | `string` | Directory opened for the session. Defaults to `.`. |
+| `timeout_secs` | `int` | Idle timeout after the last user leaves. `0` never expires. Falls back to `defaults.workspace_timeout_secs`. `timeout` is accepted as an alias. |
+| `lsp` | `string[]` | Optional language-server names reserved for per-session LSP wiring. |
+
+If `workspaces` is empty, wede exposes a single `default` template pointing at
+the boot path (the positional CLI argument / container work dir), so solo use
+still starts with one click. Switching between active sessions from the
+workspace switcher does not ask for the password again: the client is already
+authenticated, it just picks another session or template. An active session
+closes after its idle timeout (default 600 seconds) once it has no connected
+users. Sessions with users never
+expire, and sessions are currently in-memory (restarting wede drops them).
+
+## `defaults`
+
+```json
+{ "defaults": { "workspace_timeout_secs": 600 } }
+```
+
+`workspace_timeout_secs` is the fallback idle timeout for templates that omit
+their own. `0` disables automatic expiry. The historical misspelling
+`workspcae_timeout_secs` is also accepted.
+
+## Layered config (`--configs`)
+
+Pass one or more layers as `keys:mode:source`:
+
+```
+wede --configs all:cached:/etc/wede/base.yaml \
+     --configs users:hot:/etc/wede/users.yaml \
+     --configs workspaces,defaults:hot:/etc/wede/workspaces.yaml
+```
+
+- `keys` is a comma/space list of `all`, `users`, `teachers`, `workspaces`,
+  `defaults`.
+- `mode` is `cached` (read once) or `hot` (polled every second).
+- `source` is a JSON/YAML path; `-` reads stdin. Only the first two colons are
+  separators, so colons in a path are fine. A path containing spaces works when
+  it is the entire `--configs` value.
+- Later layers win. Maps (`users`, `workspaces`) deep-merge; `teachers`
+  replaces the previous list; JSON/YAML `null` deletes a map entry.
+- `hot` layers are re-read atomically. A malformed reload is rejected and the
+  last good config stays active; auth/templates/timeouts are re-applied, while
+  listen address, port, frame-ancestors, and workspace root require a restart.
+- Config is admin/root-equivalent. Keep secrets readable only by the wede
+  process.
+
+## `teachers`
+
+Default `[]` (nobody can lead). A JSON array of usernames that may start a
+forced-follow lead from the hamburger menu (“Lead the rest”). While a teacher
+is leading, every other connected client follows that teacher live; clients
+cannot opt out until the lead ends. This list only grants permission — being
+listed does not automatically lead a session.
+
+```json
+{
+  "password": "your-password",
+  "teachers": ["alice", "bob"]
+}
+```
+
+The username is the display name chosen at login. It is not an account
+boundary: the current auth model still uses a single owner password, so this
+is a classroom/coordination control, not a security boundary between users.
+Use a real reverse-proxy auth layer or separate deployments if students must
+not be able to choose a teacher's name.
 
 ## `port`
 
@@ -248,6 +394,7 @@ wede [flags] [path]
 |------|-------------|
 | `--port <port>` | Override the port from config |
 | `-p <port>` | Shorthand for `--port` |
+| `--configs <keys:mode:source>` | Add a config layer. Repeatable; comma/space-separated layers in one value are also accepted. |
 | `--version` | Print version and exit |
 | `path` | Directory to open as the initial workspace on startup (optional; exempt from the `workspace_root` restriction — see [`workspace_root`](#workspace_root)) |
 
@@ -263,19 +410,22 @@ wede --port 8080 /home/user/myproject
 
 From highest to lowest priority:
 
-1. **CLI flags** — `--port`/`-p` overrides `port` from the config file, applied
-   right after the config is loaded. The positional `path` argument sets the
-   initial workspace directly and isn't a config value at all.
+1. **CLI flags** — `--port`/`-p` overrides `port`; `--configs` adds layers. The
+   positional `path` argument sets the boot/default workspace directly and
+   isn't a config value at all.
 2. **Environment variable** — `WEDE_WORKSPACE_ROOT` overrides `workspace_root`
    from the config file.
-3. **Config file** (`wede.config.json`) — the values you set explicitly.
-4. **Built-in defaults** — `port: "9090"`, `host: "127.0.0.1"`,
-   `frame_ancestors: ""`, `workspace_root: $HOME`, `serve_landing: false`;
-   `password` has no default and is required.
+3. **Layered config** — layers in `--configs` order, later winning; see above.
+4. **Legacy config file** (`wede.config.json`) — searched as described above
+   and used as the base when no layers are given.
+5. **Built-in defaults** — `port: "9090"`, `host: "127.0.0.1"`,
+   `frame_ancestors: ""`, `workspace_root: $HOME`, `serve_landing: false`,
+   workspace timeout `600`; `password` has no default and is required only
+   when `users` is empty.
 
 Only `port` and `workspace_root` have an override layer above the config
-file — `password`, `host`, `frame_ancestors`, and `serve_landing` can only be
-set in `wede.config.json`.
+files. Cached layers/`wede.config.json` require a restart; hot layers reload
+users, teachers, templates, and defaults at runtime.
 
 ---
 
@@ -313,6 +463,21 @@ Uses every default: port `9090`, loopback-only `host`, no iframe embedding,
   "password": "my-secret-password",
   "port": "9090",
   "frame_ancestors": "https://vulos.org"
+}
+```
+
+### Users with per-user passwords
+
+```json
+{
+  "users": {
+    "alice": "alice-password",
+    "bob": "sha256:<hex-sha256-of-password>"
+  },
+  "teachers": ["alice"],
+  "workspaces": {
+    "class": { "path": "/srv/class", "timeout_secs": 1800 }
+  }
 }
 ```
 

@@ -11,6 +11,19 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Password security hardening** — `min_password_chars` config option (default
+  `12`) enforces minimum password length at startup and on hot-reload. Passwords
+  are also checked against a common-password blacklist (≥12-character well-known
+  passwords) and a Bloom filter that rejehttp://10.50.50.10:9090/cts passwords starting or ending with
+  common 6-character chunks (e.g. `qwerty`, `123456`). A rejected login returns
+  `"Password might be correct, still rejecting because it is too simple."` —
+  this prevents operators from accidentally choosing weak passwords even when
+  they satisfy the minimum length. The Bloom filter is built from 145k common
+  6-byte chunks and embedded as a static binary (`backend/internal/weakpass6/`).
+  A generator tool (`cmd/genweakpass6/`) can rebuild the filter from a chunk
+  list.
+
 ---
 
 ## [0.1.3] - 2026-08-07

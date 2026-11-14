@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -79,6 +80,8 @@ type lockoutState struct {
 
 type Handler struct {
 	password    string
+	users       map[string]string // username -> password (plain or "sha256:hex")
+	teachers    map[string]bool   // set of teacher usernames
 	mu          sync.Mutex
 	attempts    int
 	locked      bool
@@ -226,6 +229,41 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// When per-user passwords are configured, authenticate against the users map.
+	username := sanitizeUsername(body.Username)
+	if h.users != nil && len(h.users) > 0 {
+		storedPass, ok := h.users[username]
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "unknown user"})
+			return
+		}
+		if !checkPassword(storedPass, body.Password) {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "wrong password"})
+			return
+		}
+		// Per-user login → editor role, with teacher flag if applicable.
+		sessionToken := h.newSession(username, RoleEditor)
+		isTeacher := h.teachers != nil && h.teachers[username]
+		http.SetCookie(w, &http.Cookie{
+			Name:     "wede_session",
+			Value:    sessionToken,
+			Path:     "/",
+			MaxAge:   int(SessionTTL / time.Second),
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		json.NewEncoder(w).Encode(map[string]any{
+			"token":    sessionToken,
+			"username": username,
+			"role":     string(RoleEditor),
+			"teacher":  isTeacher,
+		})
+		return
+	}
+
+	// Fallback: owner-password login.
 	if subtle.ConstantTimeCompare([]byte(body.Password), []byte(h.password)) != 1 {
 		h.attempts++
 		remaining := h.maxAttempts - h.attempts
@@ -252,7 +290,6 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	h.saveLockout()
 
 	// Owner-password login → owner role.
-	username := sanitizeUsername(body.Username)
 	sessionToken := h.newSession(username, RoleOwner)
 
 	http.SetCookie(w, &http.Cookie{
@@ -264,11 +301,28 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]any{
 		"token":    sessionToken,
 		"username": username,
 		"role":     string(RoleOwner),
+		"teacher":  true,
 	})
+}
+
+// checkPassword compares a password against a stored value that may be plain
+// text or "sha256:hex" prefixed.
+func checkPassword(stored, plain string) bool {
+	if strings.HasPrefix(stored, "sha256:") {
+		hashed := "sha256:" + sha256Hex(plain)
+		return subtle.ConstantTimeCompare([]byte(hashed), []byte(stored)) == 1
+	}
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(plain)) == 1
+}
+
+// sha256Hex returns the hex-encoded SHA-256 of the input string.
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
 // newSession creates, stores, and persists a session, returning its token. The
@@ -299,7 +353,8 @@ func (h *Handler) Role(token string) Role {
 }
 
 // SetUsername updates the display username on the caller's session. Mounted
-// behind the auth middleware (POST /api/auth/username).
+// behind the auth middleware (POST /api/auth/username). When per-user passwords
+// are configured (h.users), the username is fixed and cannot be changed.
 func (h *Handler) SetUsername(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	token := r.Header.Get("Authorization")
@@ -315,19 +370,26 @@ func (h *Handler) SetUsername(w http.ResponseWriter, r *http.Request) {
 
 	key := hashToken(token)
 	h.mu.Lock()
-	e, ok := h.sessions[key]
-	if ok {
-		e.Username = name
-		h.sessions[key] = e
-		h.saveSessions()
-	}
-	h.mu.Unlock()
+	defer h.mu.Unlock()
 
+	e, ok := h.sessions[key]
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 		return
 	}
+
+	// When per-user passwords are configured, usernames are fixed.
+	if h.users != nil && len(h.users) > 0 {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: username is fixed"})
+		return
+	}
+
+	e.Username = name
+	h.sessions[key] = e
+	h.saveSessions()
+
 	json.NewEncoder(w).Encode(map[string]string{"username": name})
 }
 
@@ -402,6 +464,8 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 		username = h.sessions[key].Username
 		role = normalizeRole(h.sessions[key].Role)
 	}
+	// Owner is always a teacher; otherwise check the teachers list.
+	isTeacher := valid && (role == RoleOwner || h.teachers[username])
 	h.mu.Unlock()
 
 	json.NewEncoder(w).Encode(map[string]any{
@@ -409,6 +473,7 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 		"locked":        locked,
 		"username":      username,
 		"role":          string(role),
+		"teacher":       isTeacher,
 	})
 }
 
@@ -483,4 +548,48 @@ func (h *Handler) RequireOwner(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// SetCredentials updates the owner password and per-user password map.
+// Per-user passwords may be plain text or "sha256:hex" prefixed.
+func (h *Handler) SetCredentials(password string, users map[string]string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.password = password
+	h.users = users
+}
+
+// SetTeachers updates the set of teacher usernames.
+func (h *Handler) SetTeachers(teachers []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.teachers = make(map[string]bool, len(teachers))
+	for _, t := range teachers {
+		h.teachers[t] = true
+	}
+}
+
+// IsTeacher reports whether the given username is in the teachers list.
+func (h *Handler) IsTeacher(username string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.teachers != nil && h.teachers[username]
+}
+
+// SetUsers updates the per-user password map and revokes sessions for users
+// that are no longer in the map. When users is nil, the restriction is lifted
+// and all sessions are valid again.
+func (h *Handler) SetUsers(users map[string]string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.users = users
+	// Revoke sessions for removed users.
+	if users != nil {
+		for key, e := range h.sessions {
+			if e.Username != "" && users[e.Username] == "" {
+				delete(h.sessions, key)
+			}
+		}
+		h.saveSessions()
+	}
 }

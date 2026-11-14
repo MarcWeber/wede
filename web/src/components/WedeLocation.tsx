@@ -1,3 +1,4 @@
+import { useBranding } from '../hooks/useBranding'
 import { useState, useEffect, useCallback } from 'react'
 import { FolderCog, Check, Loader2 } from 'lucide-react'
 import type { AuthFetch } from '../types'
@@ -16,6 +17,7 @@ interface LocationState {
 // WedeLocation — owner-only control to choose which workspace folder hosts the
 // .wede directory (chat history, saved API requests). Changing it moves .wede.
 export default function WedeLocation({ workspaceId, authFetch }: WedeLocationProps) {
+  const branding = useBranding()
   const [state, setState] = useState<LocationState | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -55,7 +57,7 @@ export default function WedeLocation({ workspaceId, authFetch }: WedeLocationPro
       </h3>
       <p className="text-[11px] text-text-muted leading-relaxed mb-2">
         Chat history and saved API requests live in <code className="text-text-secondary">.wede/</code>.
-        Pick which project folder hosts it so it commits with that repo — wede moves the contents when you change this.
+        Pick which project folder hosts it so it commits with that repo — {branding} moves the contents when you change this.
       </p>
       <div className="flex items-center gap-2">
         <select

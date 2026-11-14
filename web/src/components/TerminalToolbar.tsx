@@ -153,11 +153,19 @@ export default function TerminalToolbar({ onSend, dock, onDockChange, docked }: 
       )}
       <button
         type="button"
+        onClick={() => onSend('\x03')}
+        title="Send Ctrl+C (interrupt)"
+        className="ml-1 flex items-center justify-center w-8 h-8 rounded-md border border-border bg-red-900/30 text-red-400 text-[11px] font-bold shrink-0 active:bg-red-900/50 transition-colors"
+      >
+        C
+      </button>
+      <button
+        type="button"
         onClick={() => setMenuOpen((v) => !v)}
         aria-expanded={menuOpen}
         aria-label="Input position"
         title="Input position"
-        className={`ml-auto flex items-center justify-center w-8 h-8 rounded-md border text-[13px] font-bold shrink-0 transition-colors ${
+        className={`flex items-center justify-center w-8 h-8 rounded-md border text-[13px] font-bold shrink-0 transition-colors ml-0.5 ${
           menuOpen
             ? 'bg-accent text-bg-primary border-accent'
             : 'bg-bg-secondary/80 border-border text-text-secondary active:bg-bg-active'

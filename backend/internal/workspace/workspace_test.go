@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"wede/backend/internal/folder"
 )
@@ -223,5 +224,87 @@ func TestRegisterAdoptsWorkspace(t *testing.T) {
 	}
 	if r.Folder() != ws {
 		t.Error("Register should adopt the exact workspace instance")
+	}
+}
+
+func TestCreateFromTemplateAndSessionList(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager("", "")
+	m.SetTemplates(map[string]Template{
+		"lab": {Name: "lab", Path: dir, TimeoutSecs: 600},
+	})
+	r, err := m.CreateFromTemplate("lab", "")
+	if err != nil {
+		t.Fatalf("CreateFromTemplate: %v", err)
+	}
+	if r.Name != "lab" || r.Template != "lab" || r.Root() != dir {
+		t.Fatalf("session = %+v root=%s", r, r.Root())
+	}
+	r2, err := m.CreateFromTemplate("lab", "lab")
+	if err != nil {
+		t.Fatalf("CreateFromTemplate duplicate: %v", err)
+	}
+	if r2.Name == "lab" {
+		t.Errorf("duplicate session name was not made unique: %q", r2.Name)
+	}
+	sessions := m.Sessions()
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2", len(sessions))
+	}
+	if sessions[0].Template != "lab" || sessions[0].TimeoutSecs != 600 {
+		t.Errorf("session info = %+v", sessions[0])
+	}
+	if _, err := m.CreateFromTemplate("missing", ""); err == nil {
+		t.Fatal("expected unknown template error")
+	}
+}
+
+func TestIdleSessionExpiresOnlyAfterLastUserLeaves(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager("", "")
+	m.SetTemplates(map[string]Template{
+		"lab": {Name: "lab", Path: dir, TimeoutSecs: 1},
+	})
+	r, err := m.CreateFromTemplate("lab", "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A connected user keeps it alive regardless of age.
+	id, ch := r.Presence().Join("alice")
+	defer r.Presence().Leave(id)
+	_ = ch
+	if got := m.CloseIdle(time.Now().Add(2 * time.Hour)); len(got) != 0 {
+		t.Fatalf("occupied session expired: %v", got)
+	}
+
+	r.Presence().Leave(id)
+	// First empty tick starts the idle clock.
+	if got := m.CloseIdle(time.Now()); len(got) != 0 {
+		t.Fatalf("expired immediately after leave: %v", got)
+	}
+	if got := m.CloseIdle(time.Now().Add(2 * time.Second)); len(got) != 1 {
+		t.Fatalf("idle session did not expire: %v", got)
+	}
+	if _, ok := m.Get(r.ID); ok {
+		t.Fatal("expired session still registered")
+	}
+}
+
+func TestZeroTimeoutNeverExpires(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager("", "")
+	m.SetTemplates(map[string]Template{
+		"lab": {Name: "lab", Path: dir, TimeoutSecs: 0},
+	})
+	r, err := m.CreateFromTemplate("lab", "forever")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.CloseIdle(time.Now().Add(1000 * time.Hour)); len(got) != 0 {
+		t.Fatalf("zero-timeout session expired: %v", got)
+	}
+	if _, ok := m.Get(r.ID); !ok {
+		t.Fatal("zero-timeout session disappeared")
 	}
 }

@@ -15,7 +15,7 @@ export interface QuickOpenProps {
   authFetch: AuthFetch
   workspaces?: WorkspaceSummary[]
   workspaceId: string | null
-  onOpenFile: (entry: FileEntry) => void | Promise<void>
+  onOpenFile: (entry: FileEntry) => void | Promise<unknown>
 }
 
 // Fuzzy score: substring match ranks highest, then subsequence; 0 = no match.

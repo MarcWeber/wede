@@ -14,21 +14,51 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 )
+
+// Debug callback for verbose logging — set from collab package.
+var debugFn func(format string, args ...any)
+
+// SetDebugFn installs a debug logging callback (e.g. log.Printf).
+func SetDebugFn(fn func(format string, args ...any)) {
+	debugFn = fn
+}
+
+func debug(format string, args ...any) {
+	if debugFn != nil {
+		debugFn(format, args...)
+	}
+}
 
 // Member is one connected participant in a room.
 type Member struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Color    string `json:"color"`
-	File     string `json:"file,omitempty"` // path currently viewed (relative to room root)
-	Line     int    `json:"line,omitempty"` // cursor line in that file
+	ID         string   `json:"id"`
+	Username   string   `json:"username"`
+	Color      string   `json:"color"`
+	File       string   `json:"file,omitempty"` // path currently viewed (relative to room root)
+	Line       int      `json:"line,omitempty"` // cursor line in that file
+	AnchorLine int      `json:"anchorLine,omitempty"` // selection start line (0 = no selection)
+	AnchorCol  int      `json:"anchorCol,omitempty"`  // selection start column (1-based, 0 = no selection)
+	HeadLine   int      `json:"headLine,omitempty"`   // selection end line (0 = no selection)
+	HeadCol    int      `json:"headCol,omitempty"`    // selection end column (1-based, 0 = no selection)
+	Tabs       []string `json:"tabs,omitempty"` // open file tabs (relative paths)
+}
+
+// Presenter is the single participant currently leading the room. While set,
+// every other client follows this member live. The state is server-authoritative
+// and intentionally has no mode field: leading always means force follow-live.
+type Presenter struct {
+	ID       string    `json:"id"`
+	Username string    `json:"username"`
+	Since    time.Time `json:"since"`
 }
 
 // rosterEvent is the message broadcast to every member's outbound channel.
 type rosterEvent struct {
-	Type    string   `json:"type"` // always "presence"
-	Members []Member `json:"members"`
+	Type      string     `json:"type"` // always "presence"
+	Members   []Member   `json:"members"`
+	Presenter *Presenter `json:"presenter,omitempty"`
 }
 
 // palette gives each member a stable, distinct color by join order.
@@ -44,10 +74,11 @@ type client struct {
 
 // Hub is a room's presence registry. Safe for concurrent use.
 type Hub struct {
-	mu      sync.RWMutex
-	clients map[string]*client
-	counter uint64
-	closed  bool
+	mu        sync.RWMutex
+	clients   map[string]*client
+	counter   uint64
+	presenter *Presenter
+	closed    bool
 }
 
 // NewHub returns an empty presence hub.
@@ -91,9 +122,100 @@ func (h *Hub) Join(username string) (string, <-chan []byte) {
 func (h *Hub) Leave(id string) {
 	h.mu.Lock()
 	c, ok := h.clients[id]
+	cleared := false
 	if ok {
 		delete(h.clients, id)
 		close(c.out)
+		if h.presenter != nil && h.presenter.ID == id {
+			h.presenter = nil
+			cleared = true
+		}
+	}
+	h.mu.Unlock()
+	if ok || cleared {
+		h.broadcast()
+	}
+}
+
+// SetPresenter makes id the room's single presenter. It returns false when
+// another member is already presenting (at most one presenter per room). The
+// caller is responsible for checking teacher permission.
+func (h *Hub) SetPresenter(id string) bool {
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return false
+	}
+	c, ok := h.clients[id]
+	if !ok {
+		h.mu.Unlock()
+		return false
+	}
+	if h.presenter != nil && h.presenter.ID != id {
+		h.mu.Unlock()
+		return false
+	}
+	h.presenter = &Presenter{ID: id, Username: c.member.Username, Since: time.Now().UTC()}
+	h.mu.Unlock()
+	h.broadcast()
+	return true
+}
+
+// ClearPresenter stops id from presenting. It is a no-op if id is not the
+// current presenter, so a client cannot stop somebody else's lead.
+func (h *Hub) ClearPresenter(id string) bool {
+	h.mu.Lock()
+	if h.presenter == nil || h.presenter.ID != id {
+		h.mu.Unlock()
+		return false
+	}
+	h.presenter = nil
+	h.mu.Unlock()
+	h.broadcast()
+	return true
+}
+
+// Presenter returns a copy of the current presenter, or nil.
+func (h *Hub) Presenter() *Presenter {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.presenter == nil {
+		return nil
+	}
+	p := *h.presenter
+	return &p
+}
+
+// Update sets the file + cursor line a member is viewing and rebroadcasts.
+// anchorLine/anchorCol and headLine/headCol describe the selection range
+// (1-based lines and columns); pass 0 for all four when there is no selection
+// (cursor only).
+func (h *Hub) Update(id, file string, line, anchorLine, anchorCol, headLine, headCol int) {
+	h.mu.Lock()
+	c, ok := h.clients[id]
+	if ok {
+		c.member.File = file
+		c.member.Line = line
+		c.member.AnchorLine = anchorLine
+		c.member.AnchorCol = anchorCol
+		c.member.HeadLine = headLine
+		c.member.HeadCol = headCol
+	}
+	h.mu.Unlock()
+	if ok {
+		debug("[presence-debug] Update id=%s file=%q line=%d sel=[%d:%d–%d:%d]", id, file, line, anchorLine, anchorCol, headLine, headCol)
+		h.broadcast()
+	}
+}
+
+// UpdateTabs sets the list of file tabs a member has open and rebroadcasts.
+// The list is capped so a hostile client cannot grow every roster broadcast
+// without bound.
+func (h *Hub) UpdateTabs(id string, tabs []string) {
+	h.mu.Lock()
+	c, ok := h.clients[id]
+	if ok {
+		c.member.Tabs = sanitizeTabs(tabs)
 	}
 	h.mu.Unlock()
 	if ok {
@@ -101,18 +223,23 @@ func (h *Hub) Leave(id string) {
 	}
 }
 
-// Update sets the file + cursor line a member is viewing and rebroadcasts.
-func (h *Hub) Update(id, file string, line int) {
-	h.mu.Lock()
-	c, ok := h.clients[id]
-	if ok {
-		c.member.File = file
-		c.member.Line = line
+func sanitizeTabs(tabs []string) []string {
+	if len(tabs) == 0 {
+		return nil
 	}
-	h.mu.Unlock()
-	if ok {
-		h.broadcast()
+	out := make([]string, 0, len(tabs))
+	seen := make(map[string]bool, len(tabs))
+	for _, t := range tabs {
+		if t == "" || len(t) > 1024 || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+		if len(out) >= 200 {
+			break
+		}
 	}
+	return out
 }
 
 // RelayExcept forwards a pre-built message to every member except the sender.
@@ -152,9 +279,19 @@ func (h *Hub) snapshot() []Member {
 func (h *Hub) broadcast() {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	data, err := json.Marshal(rosterEvent{Type: "presence", Members: h.snapshot()})
+	data, err := json.Marshal(rosterEvent{Type: "presence", Members: h.snapshot(), Presenter: h.presenter})
 	if err != nil {
 		return
+	}
+	// Debug: log each member's selection data in the broadcast.
+	if debugFn != nil {
+		var ev rosterEvent
+		if json.Unmarshal(data, &ev) == nil {
+			for _, m := range ev.Members {
+				debug("[presence-debug] broadcast member %s (%s): file=%q line=%d sel=[%d:%d–%d:%d]",
+					m.ID, m.Username, m.File, m.Line, m.AnchorLine, m.AnchorCol, m.HeadLine, m.HeadCol)
+			}
+		}
 	}
 	for _, c := range h.clients {
 		select {
@@ -172,6 +309,7 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
+	h.presenter = nil
 	for id, c := range h.clients {
 		close(c.out)
 		delete(h.clients, id)

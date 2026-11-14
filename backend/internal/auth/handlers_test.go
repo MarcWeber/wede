@@ -11,7 +11,7 @@ import (
 // ownerToken logs in as the owner and returns the session token.
 func ownerToken(t *testing.T, h *Handler) string {
 	t.Helper()
-	out := login(t, h, "secret", "owner")
+	out := login(t, h, "wede-test-passphrase", "owner")
 	tok, _ := out["token"].(string)
 	if tok == "" {
 		t.Fatal("ownerToken: no token returned from login")
@@ -273,7 +273,7 @@ func TestHandleRedeemEmptyToken(t *testing.T) {
 
 func TestCheckIncludesOwnerRole(t *testing.T) {
 	h := newTestHandler(t)
-	out := login(t, h, "secret", "owner")
+	out := login(t, h, "wede-test-passphrase", "owner")
 	tok := out["token"].(string)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/check", nil)
@@ -349,7 +349,7 @@ func TestRequireEditorPassesEditor(t *testing.T) {
 
 func TestRequireEditorPassesOwner(t *testing.T) {
 	h := newTestHandler(t)
-	out := login(t, h, "secret", "owner")
+	out := login(t, h, "wede-test-passphrase", "owner")
 	tok := out["token"].(string)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -411,7 +411,7 @@ func TestRequireOwnerBlocksViewer(t *testing.T) {
 
 func TestRequireOwnerPassesOwner(t *testing.T) {
 	h := newTestHandler(t)
-	out := login(t, h, "secret", "owner")
+	out := login(t, h, "wede-test-passphrase", "owner")
 	tok := out["token"].(string)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -433,7 +433,7 @@ func TestRequireOwnerPassesOwner(t *testing.T) {
 
 func TestGetRoleFromContext(t *testing.T) {
 	h := newTestHandler(t)
-	out := login(t, h, "secret", "owner")
+	out := login(t, h, "wede-test-passphrase", "owner")
 	tok := out["token"].(string)
 
 	var gotRole Role

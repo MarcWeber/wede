@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -19,6 +20,25 @@ import (
 	"wede/backend/internal/auth"
 	"wede/backend/internal/presence"
 )
+
+// Debug logging toggle — set from main.go based on config.Debug.
+var (
+	debugEnabled bool
+	debugMu      sync.RWMutex
+)
+
+// SetDebug enables or disables verbose debug logging for collab events.
+func SetDebug(on bool) {
+	debugMu.Lock()
+	debugEnabled = on
+	debugMu.Unlock()
+}
+
+func isDebug() bool {
+	debugMu.RLock()
+	defer debugMu.RUnlock()
+	return debugEnabled
+}
 
 const (
 	pingInterval = 30 * time.Second
@@ -28,15 +48,18 @@ const (
 // Handler upgrades collaboration WebSockets for a single room's presence hub.
 type Handler struct {
 	hub      *presence.Hub
+	canLead  func(username string) bool
 	upgrader websocket.Upgrader
 }
 
 // New builds a collab handler bound to a room's presence hub. frameAncestors
 // mirrors the terminal/lsp origin-check behaviour (space-separated origins).
-func New(frameAncestors string, hub *presence.Hub) *Handler {
+// canLead validates the teacher permission for starting a forced-follow lead.
+func New(frameAncestors string, hub *presence.Hub, canLead func(username string) bool) *Handler {
 	allowed := parseOrigins(frameAncestors)
 	return &Handler{
-		hub: hub,
+		hub:     hub,
+		canLead: canLead,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return checkOrigin(r, allowed) },
 		},
@@ -74,18 +97,42 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tell this client which roster id belongs to it. Roster broadcasts are
+	// shared, so identity cannot be inferred reliably from the member list.
+	if self, err := json.Marshal(map[string]any{"type": "self", "id": id}); err == nil {
+		_ = conn.WriteMessage(websocket.TextMessage, self)
+	}
+
 	stop := make(chan struct{})
 	go writePump(conn, out, stop)
 
-	// Read loop: parse cursor updates until the socket closes.
+	// Read loop: parse cursor/lead updates until the socket closes.
 	conn.SetReadLimit(readLimit)
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			break
 		}
-		if file, line, ok := parseCursor(msg); ok {
-			h.hub.Update(id, file, line)
+ 	if file, line, anchorLine, anchorCol, headLine, headCol, ok := parseCursor(msg); ok {
+			h.hub.Update(id, file, line, anchorLine, anchorCol, headLine, headCol)
+			if isDebug() {
+				log.Printf("[collab-debug] cursor from %s (%s): file=%q line=%d anchorLine=%d anchorCol=%d headLine=%d headCol=%d",
+					username, id, file, line, anchorLine, anchorCol, headLine, headCol)
+			}
+			continue
+		}
+		if on, ok := parseLead(msg); ok {
+			if on {
+				if h.canLead != nil && h.canLead(username) {
+					h.hub.SetPresenter(id)
+				}
+			} else {
+				h.hub.ClearPresenter(id)
+			}
+			continue
+		}
+		if tabs, ok := parseTabs(msg); ok {
+			h.hub.UpdateTabs(id, tabs)
 			continue
 		}
 		// Ephemeral peer signals (mouse / window) are relayed to everyone else,
@@ -125,22 +172,54 @@ func writePump(conn *websocket.Conn, out <-chan []byte, stop <-chan struct{}) {
 
 // inbound is the client→server message shape on the collab socket.
 type inbound struct {
-	Type string `json:"type"`
-	File string `json:"file"`
-	Line int    `json:"line"`
+	Type       string   `json:"type"`
+	File       string   `json:"file"`
+	Line       int      `json:"line"`
+	AnchorLine int      `json:"anchorLine"`
+	AnchorCol  int      `json:"anchorCol"`
+	HeadLine   int      `json:"headLine"`
+	HeadCol    int      `json:"headCol"`
+	On         bool     `json:"on"`
+	List       []string `json:"list"`
 }
 
 // parseCursor extracts a cursor update from a raw message. Returns ok=false for
 // malformed JSON or any non-cursor message type.
-func parseCursor(msg []byte) (file string, line int, ok bool) {
+func parseCursor(msg []byte) (file string, line, anchorLine, anchorCol, headLine, headCol int, ok bool) {
 	var in inbound
 	if err := json.Unmarshal(msg, &in); err != nil {
-		return "", 0, false
+		return "", 0, 0, 0, 0, 0, false
 	}
 	if in.Type != "cursor" {
-		return "", 0, false
+		return "", 0, 0, 0, 0, 0, false
 	}
-	return in.File, in.Line, true
+	return in.File, in.Line, in.AnchorLine, in.AnchorCol, in.HeadLine, in.HeadCol, true
+}
+
+// parseLead extracts a lead start/stop request. Returns ok=false for any other
+// message type.
+func parseLead(msg []byte) (on bool, ok bool) {
+	var in inbound
+	if err := json.Unmarshal(msg, &in); err != nil {
+		return false, false
+	}
+	if in.Type != "lead" {
+		return false, false
+	}
+	return in.On, true
+}
+
+// parseTabs extracts a member's open-tab list. Returns ok=false for any other
+// message type.
+func parseTabs(msg []byte) ([]string, bool) {
+	var in inbound
+	if err := json.Unmarshal(msg, &in); err != nil {
+		return nil, false
+	}
+	if in.Type != "tabs" {
+		return nil, false
+	}
+	return in.List, true
 }
 
 // tagRelay re-tags an ephemeral message (mouse/window) with the sender id so it

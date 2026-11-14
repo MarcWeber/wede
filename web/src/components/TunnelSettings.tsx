@@ -1,3 +1,4 @@
+import { useBranding } from '../hooks/useBranding'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Globe, Copy, Check, Play, Square, ExternalLink } from 'lucide-react'
 import type { AuthFetch } from '../types'
@@ -32,6 +33,7 @@ interface TunnelSettingsProps {
 // token, and the public name; wede runs the embedded relay agent and shows the
 // live public URL. No third-party frp binary.
 export default function TunnelSettings({ authFetch }: TunnelSettingsProps) {
+  const branding = useBranding()
   const [state, setState] = useState<TunnelState | null>(null)
   const [form, setForm] = useState<TunnelForm>({ serverUrl: '', token: '', name: '' })
   const [busy, setBusy] = useState(false)
@@ -137,7 +139,7 @@ export default function TunnelSettings({ authFetch }: TunnelSettingsProps) {
           onChange={(e) => setForm({ ...form, name: e.target.value })} />
 
         <p className="text-[10px] text-text-muted leading-relaxed px-0.5">
-          Points wede at an Ephor server you run — no third-party frp binary. wede dials the relay
+          Points {branding} at an Ephor server you run — no third-party frp binary. {branding} dials the relay
           over a single outbound connection and only proxies its own loopback port.
         </p>
 

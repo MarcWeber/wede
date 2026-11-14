@@ -7,6 +7,7 @@ const API = '/api'
 interface AuthCheckResponse {
   authenticated?: boolean
   role?: string
+  teacher?: boolean
 }
 
 interface LoginResponse {
@@ -20,12 +21,14 @@ interface LoginResponse {
   token?: string
   username?: string
   role?: string
+  teacher?: boolean
 }
 
 interface RedeemResponse {
   token?: string
   username?: string
   role?: string
+  teacher?: boolean
 }
 
 // SECURITY NOTE — session token storage.
@@ -47,6 +50,7 @@ export function useAuth() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('wede_token'))
   const [username, setUsername] = useState<string>(() => localStorage.getItem('wede_username') || '')
   const [role, setRole] = useState<string>(() => localStorage.getItem('wede_role') || '')
+  const [teacher, setTeacher] = useState<boolean>(() => localStorage.getItem('wede_teacher') === '1')
   const [error, setError] = useState<string | null>(null)
   const [locked, setLocked] = useState(false)
   const [remaining, setRemaining] = useState(3)
@@ -63,14 +67,18 @@ export function useAuth() {
         if (data.authenticated && data.role) {
           setRole(data.role)
           localStorage.setItem('wede_role', data.role)
+          setTeacher(!!data.teacher)
+          localStorage.setItem('wede_teacher', data.teacher ? '1' : '0')
         } else if (!data.authenticated) {
           // Session expired server-side; clear stored credentials.
           localStorage.removeItem('wede_token')
           localStorage.removeItem('wede_username')
           localStorage.removeItem('wede_role')
+          localStorage.removeItem('wede_teacher')
           setToken(null)
           setUsername('')
           setRole('')
+          setTeacher(false)
         }
       })
       .catch(() => {})
@@ -98,6 +106,7 @@ export function useAuth() {
       }
       if (data.token) {
         localStorage.setItem('wede_token', data.token)
+        localStorage.removeItem('wede_session_id')
         setToken(data.token)
         const resolved = data.username || name || ''
         localStorage.setItem('wede_username', resolved)
@@ -105,6 +114,9 @@ export function useAuth() {
         const resolvedRole = data.role || 'owner'
         localStorage.setItem('wede_role', resolvedRole)
         setRole(resolvedRole)
+        const resolvedTeacher = !!data.teacher
+        localStorage.setItem('wede_teacher', resolvedTeacher ? '1' : '0')
+        setTeacher(resolvedTeacher)
         return true
       }
       setError('Unknown error')
@@ -128,6 +140,7 @@ export function useAuth() {
       const data: RedeemResponse = await res.json()
       if (data.token) {
         localStorage.setItem('wede_token', data.token)
+        localStorage.removeItem('wede_session_id')
         setToken(data.token)
         const resolved = data.username || ''
         localStorage.setItem('wede_username', resolved)
@@ -135,6 +148,9 @@ export function useAuth() {
         const resolvedRole = data.role || 'viewer'
         localStorage.setItem('wede_role', resolvedRole)
         setRole(resolvedRole)
+        const resolvedTeacher = !!data.teacher
+        localStorage.setItem('wede_teacher', resolvedTeacher ? '1' : '0')
+        setTeacher(resolvedTeacher)
         return true
       }
       return false
@@ -148,8 +164,11 @@ export function useAuth() {
     localStorage.removeItem('wede_token')
     localStorage.removeItem('wede_username')
     localStorage.removeItem('wede_role')
+    localStorage.removeItem('wede_teacher')
+    localStorage.removeItem('wede_session_id')
     setToken(null)
     setRole('')
+    setTeacher(false)
     if (t) {
       // Revoke the token server-side (fire-and-forget; ignore network errors)
       fetch(`${API}/auth/logout`, {
@@ -180,5 +199,5 @@ export function useAuth() {
     } catch { /* ignore */ }
   }, [])
 
-  return { token, username, role, login, logout, redeem, error, locked, remaining, authFetch, updateUsername }
+  return { token, username, role, teacher, login, logout, redeem, error, locked, remaining, authFetch, updateUsername }
 }

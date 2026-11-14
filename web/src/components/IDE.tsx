@@ -3,7 +3,7 @@ import {
   Files, GitBranch, TerminalSquare, Save, FolderOpen,
   Globe, Settings as SettingsIcon, ChevronLeft, Search as SearchIcon,
   MessageSquare, Webhook, ScrollText, Boxes,
-  HelpCircle, Menu, Code2, Minimize2, GripVertical,
+  HelpCircle, Menu, Code2, Minimize2, GripVertical, Radio,
 } from 'lucide-react'
 import { useMobile } from '../hooks/useMobile'
 import { useDesktopMode } from '../hooks/useDesktopMode'
@@ -11,7 +11,7 @@ import { useTheme } from '../hooks/useTheme'
 import type { ViewMode } from '../lib/viewTypes'
 import Logo from './Logo'
 import FileExplorer from './FileExplorer'
-import Editor from './Editor'
+import Editor, { type CursorPos } from './Editor'
 import TerminalPanel from './TerminalPanel'
 import GitPanels from './GitPanels'
 import FolderPicker from './FolderPicker'
@@ -27,6 +27,7 @@ import MarkdownPreview from './MarkdownPreview'
 import { ImagePreview, BinaryNotice } from './ImagePreview'
 import { useLSP } from '../hooks/useLSP'
 import { useCollab } from '../hooks/useCollab'
+import { useBranding } from '../hooks/useBranding'
 import { useYDoc } from '../hooks/useYDoc'
 import Chat from './Chat'
 import ApiClient from './ApiClient'
@@ -68,6 +69,7 @@ export interface IDEProps {
   username: string
   onUsernameChange: (name: string) => void
   role: string
+  teacher?: boolean
 }
 
 export type MenuPlacement =
@@ -210,7 +212,7 @@ interface FileReadResponse {
   size?: number
 }
 
-export default function IDE({ token, authFetch, onLogout, workspace, recents, onWorkspaceChange, workspacesApi, workspaceId, username, onUsernameChange, role }: IDEProps) {
+export default function IDE({ token, authFetch, onLogout, workspace, recents, onWorkspaceChange, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
   const { isDark, toggle: toggleTheme } = useTheme()
@@ -230,7 +232,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   })
 
   // Collaboration presence: who else is in this workspace and what they're viewing.
-  const { roster: collabRoster, setViewing: setCollabViewing, mice: collabMice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username)
+  const { selfId, roster: collabRoster, presenter, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, mice: collabMice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username)
 
   // Built-in API client — shared between the sidebar collections and the editor tab.
   const apiClient = useApiClient(workspaceId, authFetch)
@@ -714,7 +716,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     if (first) setActiveShell(`term:${first.id}`)
   }, [terminalsApi.terminals])
   const floatTerminal = useCallback(() => { setFloatingTerminals(true) }, [])
-  useEffect(() => { setCollabViewing(parseFileKey(activeTab || '').rel, 0) }, [activeTab, setCollabViewing])
 
   const [termFullscreen, setTermFullscreen] = useState(false)
 
@@ -778,9 +779,49 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   // Status bar info
   const [gitBranch, setGitBranch] = useState('')
   const [gitChanges, setGitChanges] = useState(0)
-  const [cursor, setCursor] = useState({ line: 1, col: 1 })
+  const [cursor, setCursor] = useState<CursorPos>({ line: 1, col: 1 })
 
-  const folderName = workspace?.split('/').pop() || 'wede'
+  // Publish the local file + cursor line + selection range so peers (and a teacher
+  // leading the session) can follow. The collab hook throttles these updates.
+  useEffect(() => {
+    const rel = parseFileKey(activeTab || '').rel
+    const hasSel = cursor.anchorLine && cursor.headLine && cursor.anchorLine !== cursor.headLine
+      || cursor.anchorLine && cursor.headLine && cursor.anchorLine === cursor.headLine && cursor.anchorCol && cursor.headCol && cursor.anchorCol !== cursor.headCol
+    const anchorLine = hasSel ? (cursor.anchorLine || 0) : 0
+    const anchorCol = hasSel ? (cursor.anchorCol || 0) : 0
+    const headLine = hasSel ? (cursor.headLine || 0) : 0
+    const headCol = hasSel ? (cursor.headCol || 0) : 0
+    setCollabViewing(rel, rel ? cursor.line : 0, anchorLine, anchorCol, headLine, headCol)
+  }, [activeTab, cursor.line, cursor.anchorLine, cursor.anchorCol, cursor.headLine, cursor.headCol, setCollabViewing, selfId])
+
+  // Publish the open file tabs for this workspace so peers can follow-open.
+  const lastSentTabsRef = useRef('')
+  useEffect(() => {
+    const list = tabs
+      .filter((t) => t.workspaceId === workspaceId && t.rel && !t.type)
+      .map((t) => t.rel as string)
+    // Include selfId so the inventory is re-sent after a reconnect, while
+    // ordinary keystrokes (which replace the tabs array) stay quiet.
+    const key = `${selfId}:${JSON.stringify(list)}`
+    if (lastSentTabsRef.current === key) return
+    lastSentTabsRef.current = key
+    setCollabTabs(list)
+  }, [tabs, workspaceId, setCollabTabs, selfId])
+
+  // Personal follow is client-local; a teacher's lead overrides it with a
+  // forced live follow. Keeping the personal target lets us return to it when
+  // the lead ends.
+  const [followTargetId, setFollowTargetId] = useState<string | null>(null)
+  const [followMode, setFollowMode] = useState<'open' | 'live' | null>(null)
+  const presenterIsMe = !!presenter && presenter.id === selfId
+  const forcedPresenter = presenter && !presenterIsMe ? presenter : null
+  // A leading teacher is the source of the follow stream; pause their own
+  // personal follow until the lead ends.
+  const effectiveFollowId = forcedPresenter ? forcedPresenter.id : presenterIsMe ? null : followTargetId
+  const effectiveFollowMode = forcedPresenter ? 'live' : presenterIsMe ? null : followMode
+
+  const branding = useBranding()
+  const folderName = workspace?.split('/').pop() || branding
 
   // Persist open tabs to localStorage (rel + workspaceId let multi-root tabs be
   // restored against their own workspace, not just the active one).
@@ -1503,13 +1544,13 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
   }, [openBrowser])
 
-  const handleWorkspaceOpen = (path: string) => {
+  const handleWorkspaceOpen = useCallback((path: string) => {
     setTabs([])
     setActiveTab(null)
     setTerminalKey((k) => k + 1)
     setShowFolderPicker(false)
     onWorkspaceChange(path)
-  }
+  }, [onWorkspaceChange])
 
   // Multi-root: add another folder as an additional workspace root without
   // disturbing the currently open tabs, then focus it.
@@ -1541,8 +1582,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
 
   // openFile opens (or focuses) a real tab. Single clicks accumulate tabs; the
   // preview model is gone so browsing a folder does not replace the previous file.
-  const openFile = useCallback(async (entry: FileEntry, { preview = false }: { preview?: boolean } = {}) => {
-    if (entry.isDir) return
+  const openFile = useCallback(async (entry: FileEntry, { preview = false, activate = true, targetLine, targetSelection }: { preview?: boolean; activate?: boolean; targetLine?: number; targetSelection?: Tab['targetSelection'] } = {}) => {
+    if (entry.isDir) return false
     // Entries from the file tree carry {workspaceId, rel}; entries from search /
     // quick-open (which target the active workspace) carry only {path} — default
     // those to the active workspace.
@@ -1550,15 +1591,32 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     const rel = entry.rel ?? entry.path
     const name = entry.name || rel.split('/').pop()
     const key = fileKey(wsId, rel)
+    const shouldActivate = activate
     const existing = tabs.find((t) => t.path === key)
     if (existing) {
-      if (!preview && existing.preview) {
-        setTabs((prev) => prev.map((t) => (t.path === key ? { ...t, preview: false } : t)))
+      const selChanged = targetSelection != null && (
+        !existing.targetSelection ||
+        existing.targetSelection.anchorLine !== targetSelection.anchorLine ||
+        existing.targetSelection.anchorCol !== targetSelection.anchorCol ||
+        existing.targetSelection.headLine !== targetSelection.headLine ||
+        existing.targetSelection.headCol !== targetSelection.headCol
+      )
+      if ((!preview && existing.preview) || (targetLine != null && targetLine !== existing.targetLine) || selChanged) {
+        setTabs((prev) => prev.map((t) => {
+          if (t.path !== key) return t
+          const next = { ...t }
+          if (!preview) next.preview = false
+          if (targetLine != null) next.targetLine = targetLine
+          if (targetSelection != null) next.targetSelection = targetSelection
+          return next
+        }))
       }
       setVisible((v) => ({ ...v, code: true }))
-      setActiveTab(key)
-      setActiveShell(`file:${key}`)
-      return
+      if (shouldActivate) {
+        setActiveTab(key)
+        setActiveShell(`file:${key}`)
+      }
+      return false
     }
     try {
       const res = await authFetch(workspaceUrl(wsId as string, `/files/read?path=${encodeURIComponent(rel)}`))
@@ -1567,6 +1625,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
         path: key, rel, workspaceId: wsId, name, preview,
         content: data.content || '', originalContent: data.content || '', modified: false,
       }
+      if (targetLine != null) tab.targetLine = targetLine
+      if (targetSelection != null) tab.targetSelection = targetSelection
       if (data.fileType === 'image') {
         tab.fileType = 'image'
         tab.dataUrl = data.dataUrl
@@ -1576,10 +1636,80 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       }
       setTabs((prev) => [...prev, tab])
       setVisible((v) => ({ ...v, code: true }))
-      setActiveTab(key)
-      setActiveShell(`file:${key}`)
+      if (shouldActivate) {
+        setActiveTab(key)
+        setActiveShell(`file:${key}`)
+      }
+      return true
     } catch { /* ignore */ }
+    return false
   }, [tabs, authFetch, workspaceId])
+
+  const lastFollowKeyRef = useRef('')
+  const followOpenedRef = useRef<Map<string, Set<string>>>(new Map())
+  useEffect(() => {
+    if (!effectiveFollowId || !effectiveFollowMode) {
+      lastFollowKeyRef.current = ''
+      return
+    }
+    const target = collabRoster.find((m) => m.id === effectiveFollowId)
+    if (!target) return
+    const mode = effectiveFollowMode
+    if (mode === 'open') {
+      const list = target.tabs?.length ? target.tabs : target.file ? [target.file] : []
+      const key = `${effectiveFollowId}:open:${JSON.stringify(list)}`
+      if (lastFollowKeyRef.current === key) return
+      lastFollowKeyRef.current = key
+      const wanted = new Set(list)
+      let tracked = followOpenedRef.current.get(effectiveFollowId)
+      if (!tracked) {
+        tracked = new Set()
+        followOpenedRef.current.set(effectiveFollowId, tracked)
+      }
+      // Mirror the target's closes for tabs this follow opened. Never close a
+      // tab the user modified or locked.
+      for (const path of Array.from(tracked)) {
+        const rel = parseFileKey(path).rel
+        if (rel && wanted.has(rel)) continue
+        tracked.delete(path)
+        const local = tabs.find((t) => t.path === path)
+        if (local && !local.modified && !local.locked) closeTab(path)
+      }
+      for (const rel of list) {
+        const path = fileKey(workspaceId, rel)
+        if (tabs.some((t) => t.path === path)) continue
+        const fid = effectiveFollowId
+        void openFile({ path: rel, rel, workspaceId }, { activate: false }).then((created) => {
+          if (created) followOpenedRef.current.get(fid)?.add(path)
+        })
+      }
+      return
+    }
+    if (!target.file) return
+    const line = target.line || 1
+    const al = target.anchorLine ?? 0
+    const ac = target.anchorCol ?? 0
+    const hl = target.headLine ?? 0
+    const hc = target.headCol ?? 0
+    const hasSel = al > 0 && hl > 0 && (al !== hl || ac !== hc)
+    const sel = hasSel ? { anchorLine: al, anchorCol: ac || 1, headLine: hl, headCol: hc || 1 } : undefined
+    const selKey = sel ? `${sel.anchorLine}:${sel.anchorCol}:${sel.headLine}:${sel.headCol}` : ''
+    const key = `${effectiveFollowId}:live:${target.file}:${line}:${selKey}`
+    if (lastFollowKeyRef.current === key) return
+    lastFollowKeyRef.current = key
+    void openFile(
+      { path: target.file, rel: target.file, workspaceId },
+      { activate: true, targetLine: line, targetSelection: sel },
+    )
+  }, [effectiveFollowId, effectiveFollowMode, collabRoster, openFile, workspaceId, tabs, closeTab])
+
+  useEffect(() => {
+    if (!followTargetId) return
+    if (collabRoster.some((m) => m.id === followTargetId)) return
+    setFollowTargetId(null)
+    setFollowMode(null)
+    lastFollowKeyRef.current = ''
+  }, [collabRoster, followTargetId])
 
   const updateContent = useCallback((key: string, newContent: string) => {
     setTabs((prev) => prev.map((t) => {
@@ -1702,6 +1832,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     authFetch,
     lspEnabled: editorSettings.lsp ?? true,
     workspaceId,
+    workspaceRoot: wsRoot || undefined,
   })
 
   // Collaborative editing for the active text file (CRDT via the doc WS).
@@ -2136,6 +2267,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       onResetView={resetView}
       username={username}
       users={collabRoster}
+      selfId={selfId}
+      teacher={teacher}
+      presenter={presenter}
+      followTargetId={followTargetId}
+      followMode={followMode}
+      onFollow={(id, mode) => { setFollowTargetId(id); setFollowMode(mode) }}
+      onUnfollow={() => { setFollowTargetId(null); setFollowMode(null) }}
+      onLeadChange={(on) => { if (on) startLead(); else stopLead() }}
     />
   )
 
@@ -2200,6 +2339,19 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
             </div>
           )}
         </div>
+
+        {forcedPresenter && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-accent/10 border-b border-accent/30 text-[11px] text-text-primary shrink-0">
+            <Radio className="w-3.5 h-3.5 text-accent animate-pulse" />
+            <span><b>{forcedPresenter.username}</b> is leading — following live</span>
+          </div>
+        )}
+        {presenterIsMe && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-accent/10 border-b border-accent/30 text-[11px] text-text-primary shrink-0">
+            <Radio className="w-3.5 h-3.5 text-accent" />
+            <span>You are leading — everyone else follows you live</span>
+          </div>
+        )}
 
         {/* Content area: center tab + always-visible docked panes + floats. */}
         <div className="flex-1 min-h-0 relative bg-bg-primary" data-dock-area>

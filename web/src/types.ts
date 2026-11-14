@@ -25,6 +25,8 @@ export interface Tab {
   dataUrl?: string
   size?: number
   targetLine?: number
+  // Selection to apply when following a peer (1-based; anchor/head in any order).
+  targetSelection?: { anchorLine: number; anchorCol: number; headLine: number; headCol: number }
   [key: string]: unknown
 }
 
@@ -42,9 +44,20 @@ export interface FileEntry {
 export interface WorkspaceSummary {
   id: string
   name: string
+  template?: string
   path?: string
   root?: string
+  users?: number
+  age_secs?: number
+  timeout_secs?: number
   [key: string]: unknown
+}
+
+export interface WorkspaceTemplate {
+  name: string
+  path: string
+  timeout_secs: number
+  lsp?: string[]
 }
 
 // authFetch shape returned by useAuth — a fetch-alike that injects the auth
@@ -65,6 +78,15 @@ export interface TerminalHandle {
   send: (data: string) => void
 }
 
+// Terminal display settings — persisted in localStorage, shared across all
+// terminal instances for a user.
+export interface TerminalSettings {
+  fontSize: number       // font size in px (default 13)
+  minCols: number        // minimum columns (0 = auto-fit, default 0)
+  minRows: number        // minimum rows / scrollback buffer height (0 = auto, default 0)
+  scrollback: number     // scrollback lines (default 5000)
+}
+
 // A member of a workspace's live collaboration roster, as broadcast by the
 // backend's /collab websocket ({type:'presence', members:[...]}).
 export interface PresenceMember {
@@ -72,7 +94,19 @@ export interface PresenceMember {
   username?: string
   color?: string
   file?: string
+  line?: number
+  anchorLine?: number // selection start line (1-based, 0 = no selection)
+  anchorCol?: number  // selection start column (1-based, 0 = no selection)
+  headLine?: number   // selection end line (1-based, 0 = no selection)
+  headCol?: number    // selection end column (1-based, 0 = no selection)
+  tabs?: string[]
   [key: string]: unknown
+}
+
+export interface CollabPresenter {
+  id: string
+  username: string
+  since: string
 }
 
 export interface MousePosition {
@@ -125,6 +159,8 @@ export interface ExplorerActions {
   refresh: () => void
   newFile: () => void
   newFolder: () => void
+  expandAll?: () => void
+  collapseAll?: () => void
 }
 
 // Actions a mounted <Editor> registers with the parent IDE (currently just

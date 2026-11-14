@@ -51,7 +51,7 @@ tokens the owner has minted. There are no user accounts.
   `{"password":"...", "username":"..."}` (username optional, cosmetic). On
   success (`200`): sets an `HttpOnly` cookie `wede_session` (`SameSite=Lax`,
   24 h `Max-Age`) **and** returns `{"token":"...", "username":"...",
-  "role":"owner"}` in the body — a browser client typically relies on the
+  "role":"owner", "teacher":false}` in the body — a browser client typically relies on the
   cookie; a CLI/API client uses the returned token directly. Wrong password:
   `401 {"error":"wrong_password","remaining":N}`. After 3 wrong attempts:
   `403 {"error":"locked","message":"..."}`, persisted to
@@ -65,7 +65,9 @@ tokens the owner has minted. There are no user accounts.
   (`429 {"error":"too many attempts; try again later"}`).
 - **Checking session state** — `GET /api/auth/check` (public — it's how the
   frontend decides whether to show the login screen) returns
-  `{"authenticated":bool, "locked":bool, "username":"...", "role":"..."}`.
+  `{"authenticated":bool, "locked":bool, "username":"...", "role":"...",
+  "teacher":bool}`. `teacher` is true when the session username is in the
+  config `teachers` list (permission to start a forced-follow lead).
 
 ### Presenting a session on subsequent requests
 
@@ -147,8 +149,11 @@ runtime, each isolated behind its own `{id}`.
 
 | Method & path | Role | Description |
 |---|---|---|
-| `GET /api/workspaces` | any | List open workspaces: `{"workspaces":[{id,name,root}, ...]}`. |
-| `POST /api/workspaces` | editor+ | Open a new workspace. Body `{"name":"...","path":"..."}`; `path` is validated against `workspace_root` (see CONFIGURATION.md). `201` with `{id,name,root}`, or `400` on an invalid/disallowed path. |
+| `GET /api/sessions` | any | List active sessions + configured templates: `{"sessions":[{id,name,template,root,users,age_secs,timeout_secs}], "templates":[{name,path,timeout_secs,lsp}]}`. |
+| `POST /api/sessions` | editor+ | Create a session from a template. Body `{"template":"default","name":"optional"}`. `201` with the session DTO; names are sanitized and made unique. |
+| `DELETE /api/sessions/{id}` | editor+ | Close an active session. `{"status":"closed"}` or `404`. Idle sessions also close automatically after `timeout_secs` with no connected users (`0` = never). |
+| `GET /api/workspaces` | any | List open workspaces (legacy alias of sessions): `{"workspaces":[{id,name,template,root,users,age_secs,timeout_secs}, ...]}`. |
+| `POST /api/workspaces` | editor+ | Open a new ad-hoc workspace. Body `{"name":"...","path":"..."}`; `path` is validated against `workspace_root` (see CONFIGURATION.md). `201` with the workspace DTO, or `400` on an invalid/disallowed path. |
 | `GET /api/workspaces/{id}` | any | Get one workspace's `{id,name,root}`, or `404`. |
 | `DELETE /api/workspaces/{id}` | editor+ | Close a workspace (tears down its terminal/LSP/watcher/chat/doc subsystems). `{"status":"closed"}` or `404`. |
 | `GET /api/workspaces/{id}/wede-location` | owner | Which workspace-relative folder currently hosts `.wede/`: `{host, dir, folders}`. |
@@ -389,11 +394,22 @@ value, or the upgrade is rejected. Each endpoint's own message framing:
 
 ### Collab / presence — `GET /api/workspaces/{id}/collab`
 
-- **Server → client**: `{"type":"presence","members":[{id,username,color,
-  file,line}, ...]}` — the full roster, re-sent on every join, leave, or
-  cursor update.
+- **Server → client**: `{"type":"self","id":"mN"}` once after connecting
+  (your roster ID), then `{"type":"presence","members":[{id,username,color,
+  file,line,tabs}, ...], "presenter":{id,username,since}|null}` — the full
+  roster, re-sent on every join, leave, cursor/tab update, or lead change.
+  `tabs` is a capped, deduplicated list of open file paths relative to the
+  workspace. When `presenter` is set, every other client force-follows that
+  member live.
 - **Client → server cursor update**: `{"type":"cursor","file":"...",
   "line":N}`.
+- **Client → server tab inventory**: `{"type":"tabs","list":["a.go",
+  "b.go"]}`. Used for follow-open; capped at 200 paths.
+- **Lead control**: `{"type":"lead","on":true}` requests a forced-follow lead.
+  The server accepts it only if the session username is in the config
+  `teachers` list and no other member is already presenting.
+  `{"type":"lead","on":false}` stops it, but only if the sender is the current
+  presenter. A presenter leaving disconnects also clears the lead.
 - **Ephemeral relay**: a client may send `{"type":"mouse"|"window"|
   "terminals", ...}`; the server tags it with the sender's roster ID and
   relays it verbatim to every *other* connected member (not the sender,

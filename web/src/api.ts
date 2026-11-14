@@ -16,3 +16,6 @@ export function workspaceUrl(workspaceId: string, suffix = ''): string {
 
 // workspacesUrl is the workspace collection endpoint.
 export const workspacesUrl = `${API}/workspaces`
+
+// sessionsUrl lists active sessions + configured templates.
+export const sessionsUrl = `${API}/sessions`

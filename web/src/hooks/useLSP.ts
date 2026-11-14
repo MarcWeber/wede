@@ -60,11 +60,12 @@ export interface UseLSPParams {
   authFetch: AuthFetch | null | undefined
   lspEnabled: boolean
   workspaceId: string | null | undefined
+  workspaceRoot: string | null | undefined
 }
 
 type LspExtension = (Extension | StateField<string>)[]
 
-export function useLSP({ file, token, authFetch, lspEnabled, workspaceId }: UseLSPParams) {
+export function useLSP({ file, token, authFetch, lspEnabled, workspaceId, workspaceRoot }: UseLSPParams) {
   const [available, setAvailable] = useState<Record<string, boolean> | null>(null) // null = not yet fetched
   // Effective extension→language map: built-ins plus any servers added via
   // ~/.wede/lsp.json (reported by the backend), so config languages just work.
@@ -95,21 +96,25 @@ export function useLSP({ file, token, authFetch, lspEnabled, workspaceId }: UseL
     if (!lang || !available[lang]) return null
 
     const wsUrl = buildWsUrl(lang, token, workspaceId)
-    const documentUri = `file://${filePath}`
+    // Use absolute path for documentUri so the backend can resolve the file.
+    const absPath = workspaceRoot && filePath ? `${workspaceRoot}/${filePath}` : filePath
+    const documentUri = `file://${absPath}`
+    // rootUri must be the workspace root so gopls can find go.mod, etc.
+    const rootUri = workspaceRoot ? `file://${workspaceRoot}` : null
 
     try {
       return languageServer({
         serverUri: wsUrl as `ws://${string}` | `wss://${string}`,
-        rootUri: null,
+        rootUri,
         documentUri,
         languageId: lang,
-        workspaceFolders: null,
+        workspaceFolders: rootUri ? [{ uri: rootUri, name: workspaceRoot?.split('/').pop() || 'workspace' }] : null,
       })
     } catch (err) {
       console.warn('[lsp] failed to create extension:', err)
       return null
     }
-  }, [filePath, lspEnabled, available, extMap, token, workspaceId])
+  }, [filePath, lspEnabled, available, extMap, token, workspaceId, workspaceRoot])
 
   return { extension, available }
 }

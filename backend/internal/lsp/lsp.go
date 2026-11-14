@@ -1,7 +1,8 @@
 // Package lsp provides a WebSocket-to-stdio proxy for Language Server Protocol
-// servers. It spawns one language server process per (workspace, language) pair
-// and bridges JSON-RPC messages between the browser WebSocket client and the
-// child process's stdin/stdout.
+// servers. It spawns one language server process per WebSocket connection (LSP
+// allows a single initialize per process, so processes must not be shared
+// between clients) and bridges JSON-RPC messages between the browser WebSocket
+// client and the child process's stdin/stdout.
 //
 // Security model:
 //   - All WebSocket upgrades are protected by the auth middleware in main.go before
@@ -118,12 +119,6 @@ func LanguageExtensions() map[string]string {
 	return out
 }
 
-// serverKey identifies a unique language server instance.
-type serverKey struct {
-	workspace string
-	lang      string
-}
-
 // serverProc is a running language server process with its I/O pipes.
 type serverProc struct {
 	cmd    *exec.Cmd
@@ -133,18 +128,28 @@ type serverProc struct {
 	done   chan struct{}
 }
 
-// kill tears down the process and signals the done channel.
+// kill tears down the process.
 func (p *serverProc) kill() {
 	if p.cmd.Process != nil {
 		p.cmd.Process.Kill() //nolint:errcheck
 	}
 }
 
+// stop closes stdin, kills the process, and waits for it to exit. It is safe to
+// call more than once.
+func (p *serverProc) stop() {
+	p.mu.Lock()
+	p.stdin.Close() //nolint:errcheck
+	p.mu.Unlock()
+	p.kill()
+	<-p.done
+}
+
 // Handler manages LSP server processes and WebSocket proxy connections.
 type Handler struct {
 	ws       WorkspaceProvider
 	mu       sync.Mutex
-	servers  map[serverKey]*serverProc
+	procs    map[*serverProc]struct{}
 	upgrader websocket.Upgrader
 }
 
@@ -153,8 +158,8 @@ type Handler struct {
 func New(ws WorkspaceProvider, allowedOrigins string) *Handler {
 	allowed := parseOrigins(allowedOrigins)
 	h := &Handler{
-		ws:      ws,
-		servers: make(map[serverKey]*serverProc),
+		ws:    ws,
+		procs: make(map[*serverProc]struct{}),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return checkOrigin(r, allowed)
@@ -164,14 +169,23 @@ func New(ws WorkspaceProvider, allowedOrigins string) *Handler {
 	// When the workspace changes, kill all language server processes; the new
 	// workspace needs fresh servers initialised with the correct root URI.
 	ws.OnChange(func(string) {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		for k, p := range h.servers {
-			p.kill()
-			delete(h.servers, k)
-		}
+		h.killAll()
 	})
 	return h
+}
+
+// killAll stops every live language server process owned by this handler.
+func (h *Handler) killAll() {
+	h.mu.Lock()
+	procs := make([]*serverProc, 0, len(h.procs))
+	for p := range h.procs {
+		procs = append(procs, p)
+	}
+	h.procs = make(map[*serverProc]struct{})
+	h.mu.Unlock()
+	for _, p := range procs {
+		p.stop()
+	}
 }
 
 // AvailableServers returns a map of language → binary path for every known
@@ -189,12 +203,7 @@ func AvailableServers() map[string]string {
 // Close kills every language server process owned by this handler. Called when
 // the owning room is closed.
 func (h *Handler) Close() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for k, p := range h.servers {
-		p.kill()
-		delete(h.servers, k)
-	}
+	h.killAll()
 }
 
 // HandleAvailable returns a JSON object listing installed language servers.
@@ -265,9 +274,10 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceDir := h.ws.Current()
-	key := serverKey{workspace: workspaceDir, lang: lang}
 
-	proc, err := h.getOrStartServer(key, binPath, ls.args, workspaceDir)
+	// One language server per WebSocket: LSP permits a single initialize per
+	// process, so a shared process would reject every client after the first.
+	proc, err := h.startServer(binPath, ls.args, workspaceDir)
 	if err != nil {
 		log.Printf("[lsp] failed to start %s: %v", ls.bin, err)
 		sendNotification(conn, "window/showMessage", map[string]any{
@@ -276,6 +286,7 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	defer proc.stop()
 
 	log.Printf("[lsp] ws connected: lang=%s workspace=%s", lang, workspaceDir)
 
@@ -290,30 +301,21 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 	// Forward WebSocket messages → server stdin (this goroutine).
 	proxyWSToServer(conn, proc, connClosed)
+	// Socket closed: tear the server down so the stdout reader unblocks and no
+	// stale reader can race a later connection.
+	proc.stop()
+	<-connClosed
 	log.Printf("[lsp] ws disconnected: lang=%s", lang)
 }
 
-// getOrStartServer returns an existing running server or starts a new one.
-func (h *Handler) getOrStartServer(key serverKey, binPath string, args []string, workspaceDir string) (*serverProc, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if p, ok := h.servers[key]; ok {
-		// Verify the process is still alive by checking if done is closed.
-		select {
-		case <-p.done:
-			// Process exited; fall through to restart.
-			delete(h.servers, key)
-		default:
-			return p, nil
-		}
-	}
-
+// startServer starts a fresh language server process for one connection.
+func (h *Handler) startServer(binPath string, args []string, workspaceDir string) (*serverProc, error) {
 	cmdArgs := append([]string{}, args...)
 	cmd := exec.Command(binPath, cmdArgs...)
 	if workspaceDir != "" {
 		cmd.Dir = workspaceDir
 	}
+	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -334,18 +336,19 @@ func (h *Handler) getOrStartServer(key serverKey, binPath string, args []string,
 		stdout: bufio.NewReader(stdoutPipe),
 		done:   make(chan struct{}),
 	}
-	h.servers[key] = p
+
+	h.mu.Lock()
+	h.procs[p] = struct{}{}
+	h.mu.Unlock()
 
 	// Reap the process when it exits.
 	go func() {
 		cmd.Wait() //nolint:errcheck
 		close(p.done)
 		h.mu.Lock()
-		if h.servers[key] == p {
-			delete(h.servers, key)
-		}
+		delete(h.procs, p)
 		h.mu.Unlock()
-		log.Printf("[lsp] server exited: lang=%s", key.lang)
+		log.Printf("[lsp] server exited: lang=%s", binPath)
 	}()
 
 	log.Printf("[lsp] started: %s %v (workspace=%s)", binPath, args, workspaceDir)

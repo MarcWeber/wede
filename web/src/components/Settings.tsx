@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FolderOpen, Info, Minus, Plus, Check, User, ShieldCheck, Monitor } from 'lucide-react'
 import Logo from './Logo'
+import { useBranding } from '../hooks/useBranding'
 import TunnelSettings from './TunnelSettings'
 import WedeLocation from './WedeLocation'
 import type { AuthFetch, EditorSettings } from '../types'
@@ -29,6 +30,7 @@ interface SettingsProps {
 }
 
 export default function Settings({ visible, onClose, onOpenFolder, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange }: SettingsProps) {
+  const branding = useBranding()
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
   const saveName = () => {
@@ -322,7 +324,7 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
                 <Logo size={24} />
               </div>
               <div>
-                <div className="text-sm font-semibold text-text-primary">wede</div>
+                <div className="text-sm font-semibold text-text-primary">{branding}</div>
                 <div className="text-[11px] text-text-muted">Web Development Environment</div>
               </div>
             </div>

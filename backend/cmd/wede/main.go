@@ -12,12 +12,15 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"wede/backend/internal/auth"
+	"wede/backend/internal/collab"
 	"wede/backend/internal/config"
 	"wede/backend/internal/folder"
 	"wede/backend/internal/logbuf"
 	"wede/backend/internal/lsp"
+	"wede/backend/internal/presence"
 	"wede/backend/internal/tasks"
 	"wede/backend/internal/trust"
 	"wede/backend/internal/tunnel"
@@ -54,10 +57,20 @@ func securityHeaders(cfg *config.Config, next http.Handler) http.Handler {
 	})
 }
 
+type configFlags []string
+
+func (c *configFlags) String() string { return strings.Join(*c, " ") }
+func (c *configFlags) Set(v string) error {
+	*c = append(*c, v)
+	return nil
+}
+
 func main() {
 	portFlag := flag.String("port", "", "Override port (default: from config or 9090)")
 	pFlag := flag.String("p", "", "Override port (shorthand)")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
+	var configs configFlags
+	flag.Var(&configs, "configs", "Layered config: keys:cached|hot:source (repeatable)")
 	flag.Parse()
 
 	if *versionFlag {
@@ -65,7 +78,18 @@ func main() {
 		os.Exit(0)
 	}
 
-	cfg := config.Load()
+	configLayers, err := config.ParseLayerSpecs(configs)
+	if err != nil {
+		log.Fatalf("configs: %v", err)
+	}
+	cfgStore, err := config.LoadLayers(configLayers)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg := cfgStore.Current()
+	for _, src := range cfgStore.Sources() {
+		log.Printf("config layer: %s", src)
+	}
 
 	// Keep the last 1000 log lines for the UI log_view tab (T8). This tees to
 	// stderr, so the normal container log is unchanged.
@@ -102,11 +126,34 @@ func main() {
 	// as the default workspace so the solo-user case works with zero setup; additional
 	// projects can be opened as further workspaces via /api/workspaces.
 	wsMgr := workspace.NewManager(cfg.FrameAncestors, cfg.WorkspaceRoot)
-	// The default workspace must exist so scoped /api/workspaces/{id}/... routes
-	// (and the frontend's auto-selected "default") resolve.
-	wsMgr.Register("default", rootFolder)
 
 	authHandler := auth.New(cfg.Password)
+	wsMgr.SetTeacherChecker(authHandler.IsTeacher)
+
+	applyConfig := func(c *config.Config) {
+		authHandler.SetCredentials(c.Password, c.Users)
+		authHandler.SetTeachers(c.Teachers)
+		wsMgr.SetDefaultTimeout(c.Defaults.Timeout())
+		wsMgr.SetTemplates(templatesFrom(c, rootFolder.Current()))
+		collab.SetDebug(c.Debug)
+		if c.Debug {
+			presence.SetDebugFn(log.Printf)
+		} else {
+			presence.SetDebugFn(nil)
+		}
+	}
+	applyConfig(cfg)
+	cfgStore.StartHotReload(time.Second, applyConfig)
+
+	// Adopt the boot folder as the default workspace so the solo-user case works
+	// with zero setup. Without a boot path there is no root to adopt; the UI then
+	// asks the user to open a folder or pick a configured template, so the
+	// workspace always ends up with a folder attached.
+	if rootFolder.HasWorkspace() {
+		wsMgr.Register("default", rootFolder)
+	}
+	wsMgr.StartJanitor(5 * time.Second)
+
 	// Optional sovereign public tunnel (owner-only): the Ephor agent dials
 	// the owner's own relay and proxies to wede's loopback listen addr. Pin the
 	// agent's local target to loopback regardless of cfg.Host (never expose an
@@ -114,6 +161,12 @@ func main() {
 	tunnelMgr := tunnel.New("127.0.0.1:" + cfg.Port)
 
 	mux := http.NewServeMux()
+
+	// Public branding for the login/theme screens (no secrets).
+	mux.HandleFunc("GET /api/branding", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"branding": cfgStore.Current().Branding})
+	})
 
 	// Public auth routes
 	mux.HandleFunc("POST /api/auth/login", authHandler.Login)
@@ -163,6 +216,12 @@ func main() {
 	// Workspace registry endpoints (multi-project backbone). Per-workspace scoping of the
 	// file/git/etc. routes under /api/workspaces/{id}/... is layered on in later slices.
 	protected.HandleFunc("GET /api/workspaces", wsMgr.HandleList)
+
+	// Sessions are running workspace instances; templates are the configured
+	// blueprints shown in the login workspace picker.
+	protected.HandleFunc("GET /api/sessions", wsMgr.HandleSessionsList)
+	protected.Handle("POST /api/sessions", re(http.HandlerFunc(wsMgr.HandleSessionCreate)))
+	protected.Handle("DELETE /api/sessions/{id}", re(http.HandlerFunc(wsMgr.HandleSessionClose)))
 
 	// Creating a workspace is editor+ only (same rationale as /api/folder/open);
 	// the requested root is validated against the allowed base in HandleCreate.
@@ -374,4 +433,40 @@ func main() {
 	if err := http.ListenAndServe(addr, securityHeaders(cfg, mux)); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func templatesFrom(c *config.Config, bootPath string) map[string]workspace.Template {
+	def := c.Defaults.Timeout()
+	out := make(map[string]workspace.Template, len(c.Workspaces))
+	for name, w := range c.Workspaces {
+		path := strings.TrimSpace(w.Path)
+		if path == "" {
+			path = "."
+		}
+		// Expand leading ~ to the user's home directory
+		path = expandTilde(path)
+		out[name] = workspace.Template{
+			Name: name, Path: path, TimeoutSecs: w.EffectiveTimeout(def), LSP: append([]string(nil), w.LSP...),
+		}
+	}
+	if len(out) == 0 && bootPath != "" {
+		out["default"] = workspace.Template{Name: "default", Path: expandTilde(bootPath), TimeoutSecs: def}
+	}
+	return out
+}
+
+// expandTilde replaces a leading ~ or ~/ with the user's home directory.
+// Returns the path unchanged if it doesn't start with ~ or if the home
+// directory cannot be determined.
+func expandTilde(p string) string {
+	if !strings.HasPrefix(p, "~") {
+		return p
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if p == "~" {
+			return home
+		}
+		return home + p[1:]
+	}
+	return p
 }

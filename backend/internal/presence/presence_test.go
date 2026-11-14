@@ -75,7 +75,7 @@ func TestUpdateReflectsInRoster(t *testing.T) {
 	h := NewHub()
 	id, ch := h.Join("alice")
 
-	h.Update(id, "src/main.go", 42)
+	h.Update(id, "src/main.go", 42, 10, 5, 42, 20)
 
 	got := lastRoster(t, ch)
 	m := find(got, id)
@@ -84,6 +84,36 @@ func TestUpdateReflectsInRoster(t *testing.T) {
 	}
 	if m.File != "src/main.go" || m.Line != 42 {
 		t.Errorf("update not reflected: file=%q line=%d", m.File, m.Line)
+	}
+	if m.AnchorLine != 10 || m.AnchorCol != 5 || m.HeadLine != 42 || m.HeadCol != 20 {
+		t.Errorf("selection not reflected: anchorLine=%d anchorCol=%d headLine=%d headCol=%d",
+			m.AnchorLine, m.AnchorCol, m.HeadLine, m.HeadCol)
+	}
+}
+
+func TestUpdateTabsReflectedAndSanitized(t *testing.T) {
+	h := NewHub()
+	id, ch := h.Join("alice")
+
+	long := make([]byte, 1025)
+	for i := range long {
+		long[i] = 'a'
+	}
+	h.UpdateTabs(id, []string{"a.go", "", "a.go", string(long), "b.go"})
+
+	got := lastRoster(t, ch)
+	m := find(got, id)
+	if m == nil {
+		t.Fatal("member missing")
+	}
+	want := []string{"a.go", "b.go"}
+	if len(m.Tabs) != len(want) {
+		t.Fatalf("tabs = %v, want %v", m.Tabs, want)
+	}
+	for i := range want {
+		if m.Tabs[i] != want[i] {
+			t.Fatalf("tabs = %v, want %v", m.Tabs, want)
+		}
 	}
 }
 
@@ -137,5 +167,51 @@ func TestCloseClosesAllChannels(t *testing.T) {
 	}
 	if _, ok := <-ch; ok {
 		t.Error("expected closed channel from Join after Close")
+	}
+}
+
+func TestPresenterIsSingleAndClearedOnLeave(t *testing.T) {
+	h := NewHub()
+	id1, ch1 := h.Join("alice")
+	id2, _ := h.Join("bob")
+
+	if !h.SetPresenter(id1) {
+		t.Fatal("alice should become presenter")
+	}
+	if h.SetPresenter(id2) {
+		t.Fatal("bob must not replace an existing presenter")
+	}
+	p := h.Presenter()
+	if p == nil || p.ID != id1 || p.Username != "alice" {
+		t.Fatalf("presenter = %+v, want alice", p)
+	}
+
+	// The roster broadcast carries the presenter so every client can force-follow.
+	var ev rosterEvent
+	for {
+		select {
+		case data := <-ch1:
+			if err := json.Unmarshal(data, &ev); err != nil {
+				t.Fatalf("bad roster json: %v", err)
+			}
+			if ev.Presenter != nil {
+				goto found
+			}
+		default:
+			t.Fatal("no presenter in broadcast")
+		}
+	}
+found:
+	if ev.Presenter.ID != id1 {
+		t.Fatalf("broadcast presenter = %+v, want %s", ev.Presenter, id1)
+	}
+
+	// Only the presenter can stop it.
+	if h.ClearPresenter(id2) {
+		t.Fatal("non-presenter must not clear the lead")
+	}
+	h.Leave(id1)
+	if h.Presenter() != nil {
+		t.Fatal("presenter should clear when the leader leaves")
 	}
 }

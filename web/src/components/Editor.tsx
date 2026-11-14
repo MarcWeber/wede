@@ -3,6 +3,7 @@ import {
   EditorView, keymap, highlightActiveLineGutter,
   highlightActiveLine, drawSelection, highlightSpecialChars,
   rectangularSelection, crosshairCursor,
+  Decoration,
 } from '@codemirror/view'
 import { numberingGutter, type NumberingMode } from '../lib/lineNumbering'
 import { EditorState, Compartment, type Extension, type StateField, type StateEffect } from '@codemirror/state'
@@ -173,6 +174,18 @@ function GoToLineWidget({ viewRef, onClose }: GoToLineWidgetProps) {
 export interface CursorPos {
   line: number
   col: number
+  anchorLine?: number // selection start line (1-based, 0 or absent = no selection)
+  anchorCol?: number  // selection start column (1-based, 0 or absent = no selection)
+  headLine?: number   // selection end line (1-based, 0 or absent = no selection)
+  headCol?: number    // selection end column (1-based, 0 or absent = no selection)
+}
+
+export interface RemoteSelection {
+  fromLine: number // 1-based start line
+  fromCol: number  // 1-based start column
+  toLine: number   // 1-based end line (inclusive)
+  toCol: number    // 1-based end column
+  color?: string   // highlight color
 }
 
 export interface EditorProps {
@@ -307,9 +320,20 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
           // triggers its debounced REST auto-save (the doc WS handles sync+persist).
           if (!collabOn && update.docChanged) onChangeRef.current?.(update.state.doc.toString())
           if (update.selectionSet || update.docChanged) {
-            const pos = update.state.selection.main.head
-            const line = update.state.doc.lineAt(pos)
-            onCursorRef.current?.({ line: line.number, col: pos - line.from + 1 })
+            const sel = update.state.selection.main
+            const headPos = sel.head
+            const headLine = update.state.doc.lineAt(headPos)
+            const anchorPos = sel.anchor
+            const anchorLineObj = update.state.doc.lineAt(anchorPos)
+            const hasSelection = sel.anchor !== sel.head
+            onCursorRef.current?.({
+              line: headLine.number,
+              col: headPos - headLine.from + 1,
+              anchorLine: hasSelection ? anchorLineObj.number : 0,
+              anchorCol: hasSelection ? anchorPos - anchorLineObj.from + 1 : 0,
+              headLine: hasSelection ? headLine.number : 0,
+              headCol: hasSelection ? headPos - headLine.from + 1 : 0,
+            })
           }
         }),
         EditorView.theme({
@@ -429,17 +453,38 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
     }
   }, [content, collab?.ytext])
 
-  // Scroll to a specific line (used by search result navigation).
+  // Scroll to a specific line (used by search result navigation) and/or apply a
+  // peer's selection range (used by follow mode). The key makes repeated tab
+  // updates idempotent so the user's own cursor is not fought over.
+  const targetSel = file?.targetSelection
+  const targetSelKey = targetSel
+    ? `${targetSel.anchorLine}:${targetSel.anchorCol}:${targetSel.headLine}:${targetSel.headCol}`
+    : ''
   useEffect(() => {
-    if (!viewRef.current || !file?.targetLine) return
     const view = viewRef.current
+    if (!view || !file) return
+    if (file.targetSelection) {
+      const sel = file.targetSelection
+      const doc = view.state.doc
+      const clampLine = (ln: number) => doc.line(Math.max(1, Math.min(ln, doc.lines)))
+      const aLine = clampLine(sel.anchorLine)
+      const hLine = clampLine(sel.headLine)
+      const anchor = Math.min(aLine.from + Math.max(0, sel.anchorCol - 1), aLine.to)
+      const head = Math.min(hLine.from + Math.max(0, sel.headCol - 1), hLine.to)
+      view.dispatch({
+        selection: { anchor, head },
+        effects: EditorView.scrollIntoView(anchor, { y: 'center' }),
+      })
+      return
+    }
+    if (!file.targetLine) return
     const line = Math.max(1, Math.min(file.targetLine, view.state.doc.lines))
     const pos = view.state.doc.line(line).from
     view.dispatch({
       selection: { anchor: pos },
       effects: EditorView.scrollIntoView(pos, { y: 'center' }),
     })
-  }, [file?.targetLine])
+  }, [file?.targetLine, targetSelKey])
 
   if (!file) {
     return (

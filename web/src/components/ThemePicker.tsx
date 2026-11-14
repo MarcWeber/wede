@@ -1,12 +1,14 @@
 import { Moon, Sun } from 'lucide-react'
 import Logo from './Logo'
 import type { ThemeName } from '../hooks/useTheme'
+import { useBranding } from '../hooks/useBranding'
 
 interface ThemePickerProps {
   onSelect: (theme: ThemeName) => void
 }
 
 export default function ThemePicker({ onSelect }: ThemePickerProps) {
+  const branding = useBranding()
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#0c0e14' }}>
       <div className="animate-fade-in text-center w-full max-w-md">
@@ -15,7 +17,7 @@ export default function ThemePicker({ onSelect }: ThemePickerProps) {
           <Logo size={36} />
         </div>
         <h1 className="text-2xl font-semibold mb-1.5" style={{ color: '#e8eaf2' }}>
-          Welcome to <span className="tracking-tight">wede</span>
+          Welcome to <span className="tracking-tight">{branding}</span>
         </h1>
         <p className="mb-8 text-sm" style={{ color: '#545b75' }}>Choose your preferred theme to get started</p>
 

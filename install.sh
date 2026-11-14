@@ -7,7 +7,8 @@
 # ────────────────────
 # This script used to `curl -fsSL -o "$TMP_FILE" "$DOWNLOAD_URL"`, `chmod +x`
 # it and move it into ~/.local/bin, having checked nothing. The release
-# workflow published checksums.txt the whole time; nothing ever read it. A
+# workflow published checksumWhy does a opne folder selection happen after        ┃  logging in the "workspace" shoud have a folder     
+  ┃  attached ?   s.txt the whole time; nothing ever read it. A
 # checksum file nobody checks is decoration — it documents what the bytes
 # should have been while the installer runs whatever bytes arrived.
 #
@@ -20,7 +21,8 @@
 # For verifying an asset you downloaded by hand — with per-failure exit codes
 # and a synthetic-origin failure matrix — see scripts/verify.sh in this repo.
 # This installer is the same contract in the shape of a one-liner.
-#
+#Why does a opne folder selection happen after        ┃  logging in the "workspace" shoud have a folder     
+  ┃  attached ?   
 # FOUR DEFECTS DELIBERATELY NOT PRESENT
 # ─────────────────────────────────────
 #  1. NO FALL-OPEN. Every fetch failure aborts. Nothing degrades to an
