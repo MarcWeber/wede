@@ -76,24 +76,24 @@ export default function EditorTabs({ tabs, activeTab, onSelect, onClose, onClose
             menu={menu}
             label={`Select ${tab.name}`}
             tone={tone}
-            draggable={!!onReorder}
-            onDragStart={onReorder ? (e) => {
+            draggable={!!onReorder && selected.size > 0}
+            onDragStart={!!onReorder && selected.size > 0 ? (e) => {
               setDragPath(tab.path)
               e.dataTransfer.effectAllowed = 'move'
               try { e.dataTransfer.setData('text/plain', tab.path) } catch { /* ignore */ }
             } : undefined}
-            onDragOver={onReorder ? (e) => {
+            onDragOver={!!onReorder && selected.size > 0 ? (e) => {
               if (!dragPath) return
               e.preventDefault()
               e.dataTransfer.dropEffect = 'move'
             } : undefined}
-            onDrop={onReorder ? (e) => {
+            onDrop={!!onReorder && selected.size > 0 ? (e) => {
               e.preventDefault()
               const from = dragPath || e.dataTransfer.getData('text/plain')
               if (from && from !== tab.path) onReorder(from, tab.path)
               setDragPath(null)
             } : undefined}
-            onDragEnd={onReorder ? () => setDragPath(null) : undefined}
+            onDragEnd={!!onReorder && selected.size > 0 ? () => setDragPath(null) : undefined}
             className={`flex items-center gap-1.5 pl-1 pr-2 h-10 min-w-[88px] border-r border-border shrink-0 select-none cursor-pointer transition-colors ${TONE_WEAK[tone]} ${
               dragPath === tab.path ? 'opacity-40' : ''
             } ${

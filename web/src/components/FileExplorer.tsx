@@ -15,6 +15,21 @@ interface TreeEntry {
   isDir: boolean
 }
 
+// Collect every directory path in the tree (including nested ones) so
+// "Expand All" can open all of them in one state update.
+function collectDirs(entries: TreeEntry[]): string[] {
+  const dirs: string[] = []
+  const walk = (list: TreeEntry[]) => {
+    for (const e of list) {
+      if (!e.isDir) continue
+      dirs.push(e.path)
+      walk(entries.filter((c) => c.path.startsWith(e.path + '/')))
+    }
+  }
+  walk(entries.filter((e) => !e.path.includes('/')))
+  return dirs
+}
+
 type GitStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed'
 type GitMap = Record<string, GitStatus>
 

@@ -506,9 +506,9 @@ export default function Selectable({
     bind.onPointerDown(e)
     if (!dragId || !onReorder) return
     if (group?.mode === 'menu') return
-    // Mouse drags work everywhere. Touch drags reorder in normal mode too, but
-    // only after a clearly horizontal gesture so vertical swipes still scroll
-    // or toggle the tab strip's multiline mode.
+    // Drag reorder works only in selecting (edit) mode so swipe scrolling
+    // works normally. In normal mode the browser handles all touch gestures.
+    if (group?.mode !== 'selecting') return
     const root = e.currentTarget
     const groupEl = root.closest('[data-reorder-group]')
     const startX = e.clientX
@@ -629,9 +629,9 @@ export default function Selectable({
       }${dragging ? ' opacity-50' : ''}`}
       style={{
         // In selecting mode the row is a drag handle (touch included), so stop
-        // the browser from turning the gesture into a scroll. Tab rows in normal
-        // mode keep vertical scrolling but claim horizontal drags for reorder.
-        touchAction: group?.mode === 'selecting' || dragId ? 'none' : 'manipulation',
+        // the browser from turning the gesture into a scroll. In normal mode
+        // the browser handles swipe scrolling freely — drag reorder is disabled.
+        touchAction: group?.mode === 'selecting' ? 'none' : 'manipulation',
         ...selectedStyle,
         ...style,
       }}

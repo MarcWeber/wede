@@ -113,6 +113,15 @@ export async function installBackend(
     if (p === '/api/workspaces' && req.method() === 'GET') {
       return json(route, { workspaces: [{ id: WORKSPACE_ID, name: 'default', root: ROOT }] })
     }
+    // Newer builds ask /api/sessions first and only fall back to
+    // /api/workspaces when that request is not OK. Returning one active session
+    // is what selects it automatically and bypasses the "Open a Folder" screen.
+    if (p === '/api/sessions' && req.method() === 'GET') {
+      return json(route, {
+        sessions: [{ id: WORKSPACE_ID, name: 'default', root: ROOT }],
+        templates: [],
+      })
+    }
 
     // ── files ───────────────────────────────────────────────────────────────
     if (p === '/api/files' && req.method() === 'GET') {

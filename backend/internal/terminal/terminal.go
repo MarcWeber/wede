@@ -278,6 +278,10 @@ func (h *Handler) getOrCreateSession(id string) (*session, bool, error) {
 		return nil, false, err
 	}
 
+	// Set a safe default size so full-screen apps (nvim, top, etc.) work
+	// even before the first resize message arrives from the client.
+	pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80}) //nolint:errcheck
+
 	s := &session{
 		id:   id,
 		ptmx: ptmx,
@@ -427,6 +431,12 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 				Rows int    `json:"rows"`
 			}
 			if json.Unmarshal(msg, &resize) == nil && resize.Type == "resize" {
+				// Ignore degenerate sizes: a buggy client can send null/0 (e.g.
+				// NaN serialised as null), and a 0x0 winsize breaks full-screen
+				// apps like vim/top.
+				if resize.Cols <= 0 || resize.Rows <= 0 {
+					continue
+				}
 				pty.Setsize(s.ptmx, &pty.Winsize{ //nolint:errcheck
 					Rows: uint16(resize.Rows),
 					Cols: uint16(resize.Cols),

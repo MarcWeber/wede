@@ -56,7 +56,7 @@ bare('signing in transitions to the IDE', async ({ page }) => {
   const { pageErrors } = watchForCrashes(page)
 
   await page.goto('/')
-  await page.getByPlaceholder('Your name (for collaboration)').fill('dev')
+  await page.getByPlaceholder('Your name').fill('dev')
   await page.getByPlaceholder('Enter password').fill(PASSWORD)
 
   const login = page.waitForResponse((r) => r.url().includes('/api/auth/login'))

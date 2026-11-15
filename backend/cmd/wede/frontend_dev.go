@@ -50,6 +50,10 @@ func newFrontendHandler() http.HandlerFunc {
 	fileServer := http.FileServer(http.Dir(distDir))
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Dev assets are rebuilt in place with the same names. Revalidate on
+		// every load (304 when unchanged) so a rebuild is picked up without
+		// forcing a full re-download of the multi-MB bundle each reload.
+		w.Header().Set("Cache-Control", "no-cache")
 		path := r.URL.Path
 		if path == "/" {
 			path = "/index.html"

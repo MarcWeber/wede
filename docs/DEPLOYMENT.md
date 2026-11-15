@@ -52,9 +52,39 @@ sudo useradd --system --create-home --home-dir /srv/wede --shell /usr/sbin/nolog
   state and its own `$HOME` for the workspace-root default (see below).
 - `--shell /usr/sbin/nologin` stops *you* from `su -`-ing into it casually, but
   has **no effect** on wede's own terminal feature — that spawns `$SHELL -l`
-  from the process's own `$SHELL` environment variable (or `/bin/bash` if
+  from the process's own `$SHELL` environment variablehild of the wede process, with
+the same filesystem and network access as the wede user. This is by design —
+wede is a developer tool, not a sandboxed IDE-as-a-service — but it means
+**the OS user you run wede as is the actual blast radius of every editor
+share link you hand out.**
+
+### Pick a dedicated, unprivileged user
+
+Don't run wede as your own login user or as `root`. Create a user that owns
+nothing you'd mind an editor-role collaborator touching:
+
+```bash
+sudo useradd --system --create-home --home-dir /srv/wede --shell /usr/sbin/nologin wede
+```
+
+- `--create-home` gives it its own `~/. (or `/bin/bash` if
   unset — see [terminal.go](../backend/internal/terminal/terminal.go)), not
-  via the user's login shell field in `/etc/passwd`. Set `Environment=SHELL=
+  via the user's login shell field in `/etc/passwd`. Shild of the wede process, with
+the same filesystem and network access as the wede user. This is by design —
+wede is a developer tool, not a sandboxed IDE-as-a-service — but it means
+**the OS user you run wede as is the actual blast radius of every editor
+share link you hand out.**
+
+### Pick a dedicated, unprivileged user
+
+Don't run wede as your own login user or as `root`. Create a user that owns
+nothing you'd mind an editor-role collaborator touching:
+
+```bash
+sudo useradd --system --create-home --home-dir /srv/wede --shell /usr/sbin/nologin wede
+```
+
+- `--create-home` gives it its own `~/.et `Environment=SHELL=
   /bin/bash` (or whatever you want editors to get) in the systemd unit below
   if you want to control this explicitly.
 - Never run wede as a user that has passwordless `sudo`, is in the `docker`

@@ -203,20 +203,10 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
             />
           ))}
         </div>
-        {inputVisible && (
-          <TerminalToolbar onSend={handleToolbarSend} dock={inputDock} onDockChange={updateDock} docked={docked} />
-        )}
-        {!inputVisible && (
-          <button
-            onClick={() => updateDock({ ...inputDock, inputSend: true })}
-            title="Show input"
-            className={`absolute right-2 z-30 w-8 h-8 rounded-md border border-border bg-bg-secondary/90 text-[13px] font-bold text-text-secondary hover:text-text-primary active:bg-bg-active ${
-              inputDock.position === 'top' ? 'top-2' : 'bottom-2'
-            }`}
-          >
-            m
-          </button>
-        )}
+        {/* Always mounted: when the input row is hidden it collapses to just
+            the floating = button, which opens the menu (including the
+            input_send toggle) rather than switching input_send on directly. */}
+        <TerminalToolbar onSend={handleToolbarSend} dock={inputDock} onDockChange={updateDock} docked={docked} />
       </div>
     </div>
   )

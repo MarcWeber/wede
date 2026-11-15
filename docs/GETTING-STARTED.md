@@ -129,6 +129,26 @@ Open [http://localhost:9090](http://localhost:9090) in your browser and log in w
 
 ---
 
+## Terminal on mobile
+
+The terminal's `[=]` button replaces hardware shortcuts on touch devices:
+
+| Gesture | Sends |
+| --- | --- |
+| Tap `[=]` | Opens the terminal menu (font size, min columns/rows, scrollback) |
+| Swipe up | `fg` + Enter (return a background job to the foreground) |
+| Swipe down | `Ctrl+Z` (suspend the foreground job) |
+| Swipe left | `Ctrl+C` (interrupt) |
+| Swipe right | Tab (completion) |
+
+**Min columns / min rows** keep the terminal from squeezing itself into an
+unusable grid on a narrow screen. Set, for example, 80 columns on a phone: the
+terminal stays 80 columns wide and the panel scrolls horizontally instead of
+re-wrapping. `0` means "fit the visible area". The minimums are floors — the
+terminal still grows to fill a larger window.
+
+---
+
 ## Adding language support
 
 wede gets code intelligence (diagnostics, hover, completion, go-to-definition)

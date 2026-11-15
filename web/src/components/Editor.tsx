@@ -47,6 +47,7 @@ import { swift } from '@codemirror/legacy-modes/mode/swift'
 import { powerShell } from '@codemirror/legacy-modes/mode/powershell'
 import { csharp, kotlin, scala, objectiveC } from '@codemirror/legacy-modes/mode/clike'
 import { breakpointSupport, setBreakpointsEffect, setStopLineEffect } from '../lib/breakpoints'
+import { targetSelectionKey } from '../lib/followSelection'
 import type { Tab, EditorSettings, EditorActions } from '../types'
 import type { UseYDocState } from '../hooks/useYDoc'
 
@@ -456,10 +457,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
   // Scroll to a specific line (used by search result navigation) and/or apply a
   // peer's selection range (used by follow mode). The key makes repeated tab
   // updates idempotent so the user's own cursor is not fought over.
-  const targetSel = file?.targetSelection
-  const targetSelKey = targetSel
-    ? `${targetSel.anchorLine}:${targetSel.anchorCol}:${targetSel.headLine}:${targetSel.headCol}`
-    : ''
+  const targetSelKey = targetSelectionKey(file?.targetSelection)
   useEffect(() => {
     const view = viewRef.current
     if (!view || !file) return

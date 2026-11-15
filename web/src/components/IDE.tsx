@@ -44,6 +44,7 @@ import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
 import { workspaceUrl } from '../api'
 import { fileKey, parseFileKey, normalizeTabIdentity } from '../lib/fileKey'
+import { followTargetFromPeer, targetSelectionKey } from '../lib/followSelection'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo } from '../types'
 
@@ -1582,7 +1583,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
 
   // openFile opens (or focuses) a real tab. Single clicks accumulate tabs; the
   // preview model is gone so browsing a folder does not replace the previous file.
-  const openFile = useCallback(async (entry: FileEntry, { preview = false, activate = true, targetLine, targetSelection }: { preview?: boolean; activate?: boolean; targetLine?: number; targetSelection?: Tab['targetSelection'] } = {}) => {
+  // `targetSelection: null` explicitly clears a previously-applied follow
+  // selection (the followed peer collapsed their selection); `undefined` means
+  // "leave whatever is there", which is what ordinary navigation passes.
+  const openFile = useCallback(async (entry: FileEntry, { preview = false, activate = true, targetLine, targetSelection }: { preview?: boolean; activate?: boolean; targetLine?: number; targetSelection?: Tab['targetSelection'] | null } = {}) => {
     if (entry.isDir) return false
     // Entries from the file tree carry {workspaceId, rel}; entries from search /
     // quick-open (which target the active workspace) carry only {path} — default
@@ -1594,6 +1598,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     const shouldActivate = activate
     const existing = tabs.find((t) => t.path === key)
     if (existing) {
+      const clearsSel = targetSelection === null && existing.targetSelection != null
       const selChanged = targetSelection != null && (
         !existing.targetSelection ||
         existing.targetSelection.anchorLine !== targetSelection.anchorLine ||
@@ -1601,13 +1606,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
         existing.targetSelection.headLine !== targetSelection.headLine ||
         existing.targetSelection.headCol !== targetSelection.headCol
       )
-      if ((!preview && existing.preview) || (targetLine != null && targetLine !== existing.targetLine) || selChanged) {
+      if ((!preview && existing.preview) || (targetLine != null && targetLine !== existing.targetLine) || selChanged || clearsSel) {
         setTabs((prev) => prev.map((t) => {
           if (t.path !== key) return t
           const next = { ...t }
           if (!preview) next.preview = false
           if (targetLine != null) next.targetLine = targetLine
-          if (targetSelection != null) next.targetSelection = targetSelection
+          if (targetSelection === null) next.targetSelection = undefined
+          else if (targetSelection != null) next.targetSelection = targetSelection
           return next
         }))
       }
@@ -1686,20 +1692,16 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
       return
     }
     if (!target.file) return
-    const line = target.line || 1
-    const al = target.anchorLine ?? 0
-    const ac = target.anchorCol ?? 0
-    const hl = target.headLine ?? 0
-    const hc = target.headCol ?? 0
-    const hasSel = al > 0 && hl > 0 && (al !== hl || ac !== hc)
-    const sel = hasSel ? { anchorLine: al, anchorCol: ac || 1, headLine: hl, headCol: hc || 1 } : undefined
-    const selKey = sel ? `${sel.anchorLine}:${sel.anchorCol}:${sel.headLine}:${sel.headCol}` : ''
+    const { line, selection: sel } = followTargetFromPeer(target)
+    const selKey = targetSelectionKey(sel)
     const key = `${effectiveFollowId}:live:${target.file}:${line}:${selKey}`
     if (lastFollowKeyRef.current === key) return
     lastFollowKeyRef.current = key
+    // `sel ?? null` is deliberate: when the followed peer collapses their
+    // selection we must CLEAR ours, not leave the previous range highlighted.
     void openFile(
       { path: target.file, rel: target.file, workspaceId },
-      { activate: true, targetLine: line, targetSelection: sel },
+      { activate: true, targetLine: line, targetSelection: sel ?? null },
     )
   }, [effectiveFollowId, effectiveFollowMode, collabRoster, openFile, workspaceId, tabs, closeTab])
 
@@ -1710,6 +1712,18 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     setFollowMode(null)
     lastFollowKeyRef.current = ''
   }, [collabRoster, followTargetId])
+
+  // Drop the peer's selection when live following stops (manual unfollow, the
+  // followed member leaving, or switching to "open" mode). The selection is
+  // stored on the tab, so leaving it behind makes the editor re-apply a stale
+  // range every time the tab remounts.
+  useEffect(() => {
+    if (effectiveFollowMode === 'live') return
+    setTabs((prev) => {
+      if (!prev.some((t) => t.targetSelection != null)) return prev
+      return prev.map((t) => (t.targetSelection != null ? { ...t, targetSelection: undefined } : t))
+    })
+  }, [effectiveFollowMode])
 
   const updateContent = useCallback((key: string, newContent: string) => {
     setTabs((prev) => prev.map((t) => {

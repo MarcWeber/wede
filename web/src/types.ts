@@ -78,13 +78,20 @@ export interface TerminalHandle {
   send: (data: string) => void
 }
 
+// What a vertical swipe on the terminal sends. 'scroll' is native touch
+// scrolling; the others send keys for TUIs (vim/less/emacs) on mobile.
+export type TerminalSwipeMode = 'scroll' | 'page' | 'half' | 'emacs'
+
 // Terminal display settings — persisted in localStorage, shared across all
 // terminal instances for a user.
 export interface TerminalSettings {
-  fontSize: number       // font size in px (default 13)
-  minCols: number        // minimum columns (0 = auto-fit, default 0)
-  minRows: number        // minimum rows / scrollback buffer height (0 = auto, default 0)
+  fontSize: number       // font size in px (default 12)
+  minCols: number        // minimum PTY columns; below this the view scrolls (0 = fit to width)
+  minRows: number        // minimum PTY rows; below this the view scrolls (0 = fit to height)
   scrollback: number     // scrollback lines (default 5000)
+  followCursor: boolean  // auto-scroll to keep cursor visible (default false)
+  swipeMode: TerminalSwipeMode  // vertical swipe action (default 'scroll')
+  writeDelayMs: number   // wait before sending a new terminal's initial command (default 250)
 }
 
 // A member of a workspace's live collaboration roster, as broadcast by the

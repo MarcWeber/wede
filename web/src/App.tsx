@@ -104,6 +104,17 @@ function App() {
     } catch { /* createWorkspace surfaces its own errors */ }
   }, [workspaces, createWorkspace, setActiveWorkspaceId])
 
+  // If the URL carries ?path= (or ?folder=) and no workspace is active yet,
+  // auto-create (or focus) the workspace from that path so the user skips the
+  // "Choose workspace" screen and lands directly in the IDE.
+  useEffect(() => {
+    if (!workspacesApi.ready) return
+    if (workspacesApi.activeWorkspaceId) return
+    const fromUrl = urlFolder()
+    if (!fromUrl) return
+    void openFolderAsWorkspace(fromUrl)
+  }, [workspacesApi.ready, workspacesApi.activeWorkspaceId, openFolderAsWorkspace])
+
   // First visit - pick theme
   if (!theme) {
     return <ThemePicker onSelect={setTheme} />
