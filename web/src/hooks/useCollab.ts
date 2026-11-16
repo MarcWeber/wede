@@ -54,12 +54,14 @@ interface CollabMessage {
   win?: string
   geo?: WindowGeo
   list?: Pick<TerminalSession, 'id' | 'name'>[]
+  visibleTabTypes?: Record<string, boolean>
 }
 
 export interface UseCollabResult {
   selfId: string | null
   roster: PresenceMember[]
   presenter: CollabPresenter | null
+  visibleTabTypes: Record<string, boolean> | null
   startLead: () => void
   stopLead: () => void
   setViewing: (file: string | null | undefined, line?: number, anchorLine?: number, anchorCol?: number, headLine?: number, headCol?: number) => void
@@ -80,6 +82,7 @@ export function useCollab(
   const [roster, setRoster] = useState<PresenceMember[]>([])
   const [presenter, setPresenter] = useState<CollabPresenter | null>(null)
   const [selfId, setSelfId] = useState<string | null>(null)
+  const [visibleTabTypes, setVisibleTabTypes] = useState<Record<string, boolean> | null>(null)
   const [mice, setMice] = useState<Record<string, MousePosition>>({})
   const wsRef = useRef<WebSocket | null>(null)
   const lastSentRef = useRef<{ file: string | null; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number }>({ file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 })
@@ -103,6 +106,9 @@ export function useCollab(
           if (!msg) return
           if (msg.type === 'self' && msg.id) {
             setSelfId(msg.id)
+            if (msg.visibleTabTypes) {
+              setVisibleTabTypes(msg.visibleTabTypes)
+            }
           } else if (msg.type === 'presence' && Array.isArray(msg.members)) {
             setRoster(msg.members)
             setPresenter(msg.presenter ?? null)
@@ -133,7 +139,7 @@ export function useCollab(
 
     return () => {
       disposed = true
-      setRoster([]); setPresenter(null); setMice({}); setSelfId(null)
+      setRoster([]); setPresenter(null); setMice({}); setSelfId(null); setVisibleTabTypes(null)
       lastSentRef.current = { file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 }
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
       if (mouseTimerRef.current) { clearTimeout(mouseTimerRef.current); mouseTimerRef.current = null }
@@ -200,5 +206,5 @@ export function useCollab(
     return () => terminalsSubsRef.current.delete(cb)
   }, [])
 
-  return { selfId, roster, presenter, startLead, stopLead, setViewing, setTabs, mice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals }
+  return { selfId, roster, presenter, visibleTabTypes, startLead, stopLead, setViewing, setTabs, mice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals }
 }

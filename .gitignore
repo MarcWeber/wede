@@ -31,3 +31,9 @@ scripts/demo-workspace/.wede/
 test-results/
 playwright-report/
 blob-report/
+
+# Large local artifacts (never commit)
+ai2.md
+experimental-build-with-esbuild.sh
+backend/cmd/wede-dev
+web/repro7.mjs
