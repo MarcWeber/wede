@@ -87,10 +87,17 @@ build_prod() {
 start_wede() {
   echo ""
   echo "=== Starting wede ==="
-  ./wede &
-  sleep 1.5
+  nohup ./wede >/tmp/wede-server.log 2>&1 </dev/null &
+  WEDE_PID=$!
+  disown "$WEDE_PID" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    if curl -s -o /dev/null http://localhost:9090/api/auth/check 2>/dev/null; then
+      break
+    fi
+    sleep 0.25
+  done
   curl -s -o /dev/null -w "HTTP status: %{http_code}\n" http://localhost:9090/api/auth/check 2>/dev/null || true
-  echo "wede running on http://0.0.0.0:9090"
+  echo "wede running on http://0.0.0.0:9090 (pid $WEDE_PID, log /tmp/wede-server.log)"
 }
 
 # --- Commands ---

@@ -90,6 +90,7 @@ export interface TerminalSettings {
   minRows: number        // minimum PTY rows; below this the view scrolls (0 = fit to height)
   scrollback: number     // scrollback lines (default 5000)
   followCursor: boolean  // auto-scroll to keep cursor visible (default false)
+  followMargin: number   // safety margin below the cursor, fraction of terminal height (default 0.2)
   swipeMode: TerminalSwipeMode  // one-finger vertical swipe action (default 'wheel')
   swipeModeDouble: TerminalSwipeMode  // two-finger vertical swipe action (default 'cursor')
   writeDelayMs: number   // wait before sending a new terminal's initial command (default 250)

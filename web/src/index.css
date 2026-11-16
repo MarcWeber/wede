@@ -464,3 +464,12 @@ body {
 .wede-markdown th, .wede-markdown td { border: 1px solid var(--c-border); padding: 0.3em 0.6em; }
 .wede-markdown img { max-width: 100%; }
 .wede-markdown hr { border: none; border-top: 1px solid var(--c-border); margin: 1em 0; }
+
+/* ── Terminal action grid: suppress Android/iOS long-press text selection ── */
+.terminal-no-select,
+.terminal-no-select * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}

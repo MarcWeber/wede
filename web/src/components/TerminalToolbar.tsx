@@ -1,7 +1,7 @@
 import { useState, useRef, useLayoutEffect, useCallback, type ReactNode } from 'react'
 import {
   ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, MoveVertical, MoveHorizontal,
-  Settings2, HelpCircle, ChevronLeft, RotateCcw, Type, Columns3, Rows3, Keyboard, X,
+  Settings2, HelpCircle, ChevronLeft, RotateCcw, Type, Columns3, Rows3, Keyboard, X, Droplets,
 } from 'lucide-react'
 import type { TerminalSettings, TerminalSwipeMode } from '../types'
 import {
@@ -16,6 +16,7 @@ import {
 export interface TerminalInputDock {
   position: 'top' | 'bottom'
   transparent: boolean
+  transparency: number // 0–80, percentage; default 50
 }
 
 interface TerminalToolbarProps {
@@ -41,7 +42,7 @@ const SWIPE_OPTIONS: { mode: TerminalSwipeMode; label: string; hint: string }[] 
 
 type View =
   | 'settings' | 'dock' | 'font' | 'minCols' | 'minRows'
-  | 'swipeSingle' | 'swipeDouble' | 'help' | 'keys'
+  | 'swipeSingle' | 'swipeDouble' | 'help' | 'keys' | 'transparency'
   | 'configure' | 'slot' | 'group' | 'actions'
 
 // TerminalToolbar — a floating, configurable grid of action buttons. Tap runs
@@ -288,12 +289,22 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
           {iconBtn(<Rows3 className="w-4 h-4" />, 'min rows', () => setView('minRows'))}
           {iconBtn(<MoveVertical className="w-4 h-4" />, 'single-finger swipe', () => setView('swipeSingle'))}
           {iconBtn(<MoveHorizontal className="w-4 h-4" />, 'two-finger swipe', () => setView('swipeDouble'))}
+          {iconBtn(<Droplets className="w-4 h-4" />, `transparency: ${dock.transparency ?? 50}%`, () => setView('transparency'))}
           {iconBtn(<Keyboard className="w-4 h-4" />, 'special keys', () => setView('keys'))}
         </div>
         {row(<Settings2 className="w-4 h-4" />, 'configure behavior', () => { setCfgCell(null); setCfgError(null); setView('configure') })}
         {row(<RotateCcw className="w-4 h-4" />, 'reset to defaults', resetGrid)}
         {row(<HelpCircle className="w-4 h-4" />, 'help', () => setView('help'))}
         {row(<Keyboard className="w-4 h-4" />, 'show more keys', () => setView('keys'))}
+      </>
+    )
+    if (view === 'transparency') return (
+      <>
+        {back('settings')}
+        {rangeRow('grid transparency', dock.transparency ?? 50, 0, 80, (n) => setDock({ transparency: n }), '%')}
+        <div className="px-3 pb-2 text-[10px] text-text-muted leading-relaxed">
+          Controls how see-through the grid button overlay is. 0% = opaque background, 80% = nearly transparent.
+        </div>
       </>
     )
     if (view === 'dock') return (
@@ -510,7 +521,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         className={`absolute z-20 grid gap-1 p-1 rounded-lg ${
           dock.position === 'top' ? 'top-2' : 'bottom-2'
         } right-2 ${dock.transparent ? 'bg-transparent' : 'bg-bg-elevated/90 border border-border shadow-lg'}`}
-        style={{ gridTemplateColumns: `repeat(${cols}, ${CELL_PX}px)` }}
+        style={{ gridTemplateColumns: `repeat(${cols}, ${CELL_PX}px)`, opacity: 1 - (dock.transparency ?? 50) / 100 }}
       >
         {order.map((id) => {
           const actions = grid[id]

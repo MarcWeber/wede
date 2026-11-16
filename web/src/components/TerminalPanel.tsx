@@ -39,11 +39,11 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<TerminalInputDock>
         if (parsed.position === 'top' || parsed.position === 'bottom') {
-          return { position: parsed.position, transparent: parsed.transparent ?? false }
+          return { position: parsed.position, transparent: parsed.transparent ?? false, transparency: parsed.transparency ?? 50 }
         }
       }
     } catch { /* ignore */ }
-    return { position: 'top', transparent: false }
+    return { position: 'top', transparent: false, transparency: 50 }
   })
   const updateDock = (next: TerminalInputDock) => {
     setInputDock(next)
