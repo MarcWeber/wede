@@ -37,25 +37,18 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
     try {
       const raw = localStorage.getItem('wede_terminal_input_dock')
       if (raw) {
-        const parsed = JSON.parse(raw) as Partial<TerminalInputDock> & { hidden?: boolean }
+        const parsed = JSON.parse(raw) as Partial<TerminalInputDock>
         if (parsed.position === 'top' || parsed.position === 'bottom') {
-          return {
-            position: parsed.position,
-            transparent: parsed.transparent ?? false,
-            inputSend: parsed.inputSend ?? (parsed.hidden === undefined ? false : !parsed.hidden),
-            more: parsed.more ?? false,
-          }
+          return { position: parsed.position, transparent: parsed.transparent ?? false }
         }
       }
     } catch { /* ignore */ }
-    return { position: 'top', transparent: false, inputSend: false, more: false }
+    return { position: 'top', transparent: false }
   })
   const updateDock = (next: TerminalInputDock) => {
     setInputDock(next)
     try { localStorage.setItem('wede_terminal_input_dock', JSON.stringify(next)) } catch { /* ignore */ }
   }
-  const inputVisible = inputDock.inputSend || inputDock.more
-  const docked = !inputDock.transparent && inputVisible
   const startRename = (t: { id: number; name: string }) => { setEditingId(t.id); setEditName(t.name) }
   const commitRename = () => { if (editingId != null) renameTerminal(editingId, editName); setEditingId(null) }
   const toggle = (id: number) => setSelected((prev) => {
@@ -206,7 +199,7 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
         {/* Always mounted: when the input row is hidden it collapses to just
             the floating = button, which opens the menu (including the
             input_send toggle) rather than switching input_send on directly. */}
-        <TerminalToolbar onSend={handleToolbarSend} dock={inputDock} onDockChange={updateDock} docked={docked} />
+        <TerminalToolbar onSend={handleToolbarSend} dock={inputDock} onDockChange={updateDock} />
       </div>
     </div>
   )

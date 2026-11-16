@@ -1,13 +1,11 @@
 /**
- * terminal.e2e.ts — the [=] button on touch/small screens.
+ * terminal.e2e.ts — the floating action grid on touch/small screens.
  *
  * Regression guards:
- *   - Tapping the collapsed [=] used to switch `input_send` on (a full input
- *     row appeared) instead of opening the menu. The menu is where that toggle
- *     belongs.
+ *   - The grid is the toolbar: tapping the default "=" cell (B2) opens the
+ *     settings menu; there is no separate input row.
  *   - The menu must stay inside a short landscape viewport (it used to be
- *     anchored with top-full/bottom-full and run off the bottom of the screen,
- *     which looked like a blank/broken view).
+ *     anchored with top-full/bottom-full and run off the bottom of the screen).
  */
 
 import { test, expect } from './fixtures.js'
@@ -20,45 +18,35 @@ async function openTerminal(page: Page) {
   await palette.waitFor()
   await palette.fill('Toggle Terminal')
   await page.keyboard.press('Enter')
-  await expect(page.getByTestId('terminal-menu-btn')).toBeVisible()
+  await expect(page.getByTestId('terminal-grid')).toBeVisible()
 }
 
-test('collapsed [=] opens the menu without enabling input_send', async ({ wede }) => {
+test('tapping the = cell opens the settings menu', async ({ wede }) => {
   const { page } = wede
   await seed(page, 'authed')
   await page.goto('/')
   await expect(page.getByText('README.md')).toBeVisible()
   await openTerminal(page)
 
-  // Collapsed: only the = button, no input row.
-  await expect(page.getByPlaceholder('Type command...')).toHaveCount(0)
   await expect(page.getByTestId('terminal-menu')).toHaveCount(0)
-
-  await page.getByTestId('terminal-menu-btn').click()
+  await page.getByTestId('terminal-cell-B2').click()
   await expect(page.getByTestId('terminal-menu')).toBeVisible()
-
-  // The bug: this click used to set input_send = true.
-  await expect(page.getByPlaceholder('Type command...')).toHaveCount(0)
-  const dock = await page.evaluate(() => localStorage.getItem('wede_terminal_input_dock'))
-  const parsed = dock ? (JSON.parse(dock) as { inputSend?: boolean }) : null
-  expect(parsed?.inputSend ?? false).toBe(false)
+  await expect(page.getByTestId('terminal-menu').getByText('configure behavior')).toBeVisible()
 })
 
-test('enabling input_send from the menu shows the input row', async ({ wede }) => {
+test('configure behavior lists the grid buttons', async ({ wede }) => {
   const { page } = wede
   await seed(page, 'authed')
   await page.goto('/')
   await expect(page.getByText('README.md')).toBeVisible()
   await openTerminal(page)
 
-  await page.getByTestId('terminal-menu-btn').click()
+  await page.getByTestId('terminal-cell-B2').click()
   const menu = page.getByTestId('terminal-menu')
   await expect(menu).toBeVisible()
-  await menu.getByText('input_send').click()
-
-  await expect(page.getByPlaceholder('Type command...')).toBeVisible()
-  const dock = await page.evaluate(() => localStorage.getItem('wede_terminal_input_dock'))
-  expect((JSON.parse(dock || '{}') as { inputSend?: boolean }).inputSend).toBe(true)
+  await menu.getByText('configure behavior').click()
+  await expect(menu.getByText('select a button')).toBeVisible()
+  await expect(menu.getByText('B2', { exact: true })).toBeVisible()
 })
 
 test('min cols keeps the grid wide and scrolls horizontally instead of wrapping', async ({ wede }) => {
@@ -89,7 +77,7 @@ test('min cols keeps the grid wide and scrolls horizontally instead of wrapping'
   expect(xtermWidth).toBeGreaterThan(clientWidth)
 })
 
-test('the [=] menu fits inside a short landscape viewport', async ({ wede }) => {
+test('the settings menu fits inside a short landscape viewport', async ({ wede }) => {
   const { page } = wede
   await page.setViewportSize({ width: 750, height: 342 })
   await seed(page, 'authed')
@@ -97,7 +85,7 @@ test('the [=] menu fits inside a short landscape viewport', async ({ wede }) => 
   await expect(page.getByText('README.md')).toBeVisible()
   await openTerminal(page)
 
-  await page.getByTestId('terminal-menu-btn').click()
+  await page.getByTestId('terminal-cell-B2').click()
   const menu = page.getByTestId('terminal-menu')
   await expect(menu).toBeVisible()
 

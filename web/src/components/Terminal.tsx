@@ -16,7 +16,7 @@ interface TerminalProps {
 }
 
 const TERM_SETTINGS_KEY = 'wede_terminal_settings'
-const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followCursor: false, swipeMode: 'wheel', writeDelayMs: 250 }
+const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followCursor: false, swipeMode: 'wheel', swipeModeDouble: 'cursor', writeDelayMs: 250 }
 
 function readTermSettings(): TerminalSettings {
   try {
@@ -450,6 +450,7 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(seq)
     }
     const seqFor = (mode: TerminalSettings['swipeMode'], down: boolean): string => {
+      if (mode === 'cursor') return down ? '\x1b[B' : '\x1b[A'
       if (mode === 'page') return down ? '\x1b[6~' : '\x1b[5~'
       if (mode === 'half') return down ? '\x04' : '\x15'
       if (mode === 'emacs') return down ? '\x16' : '\x1bv'
@@ -470,35 +471,6 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       }
       return `\x1b[<${down ? 65 : 64};${col};${row}M`
     }
-    // Two-finger swipe → ArrowUp/ArrowDown (moves cursor, doesn't scroll).
-    let twoFingerTracking = false
-    let twoFingerLastY = 0
-    const TWO_FINGER_STEP = 12 // px per arrow key — finer than single-finger
-    const onTwoFingerStart = (e: TouchEvent) => {
-      if (e.touches.length !== 2) return
-      twoFingerTracking = true
-      twoFingerLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2
-    }
-    const onTwoFingerMove = (e: TouchEvent) => {
-      if (!twoFingerTracking || e.touches.length !== 2) return
-      const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2
-      const dy = avgY - twoFingerLastY
-      const steps = Math.floor(Math.abs(dy) / TWO_FINGER_STEP)
-      if (steps < 1) return
-      e.preventDefault()
-      // ArrowDown = \x1b[B, ArrowUp = \x1b[A
-      const key = dy < 0 ? '\x1b[A' : '\x1b[B'
-      send(key.repeat(steps))
-      twoFingerLastY += dy < 0 ? -steps * TWO_FINGER_STEP : steps * TWO_FINGER_STEP
-    }
-    const onTwoFingerEnd = () => { twoFingerTracking = false }
-    const onStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) { tracking = false; onTwoFingerStart(e); return }
-      if (e.touches.length !== 1) { tracking = false; return }
-      tracking = true
-      startX = e.touches[0].clientX
-      startY = lastY = e.touches[0].clientY
-    }
     // Native scrolling applies when the terminal actually has scrollback: xterm's
     // own scrollbar in fit mode, or the container's scrollbar in min-size mode.
     // With no scrollback (alt-screen apps: vim/less/emacs/opencode) the swipe
@@ -508,6 +480,44 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       const container = containerRef.current
       if (term && term.buffer.active.type === 'normal' && term.buffer.active.length > term.rows) return true
       return !!container && container.scrollHeight > container.clientHeight + 1
+    }
+    // Two-finger swipe uses swipeModeDouble (default: cursor movement).
+    let twoFingerTracking = false
+    let twoFingerLastY = 0
+    const TWO_FINGER_STEP = 12 // px per action — finer than single-finger
+    const onTwoFingerStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return
+      twoFingerTracking = true
+      twoFingerLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+    }
+    const onTwoFingerMove = (e: TouchEvent) => {
+      if (!twoFingerTracking || e.touches.length !== 2) return
+      const mode = settingsRef.current.swipeModeDouble
+      if (mode === 'scroll') return
+      const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+      const dy = avgY - twoFingerLastY
+      const steps = Math.floor(Math.abs(dy) / TWO_FINGER_STEP)
+      if (steps < 1) return
+      if (mode === 'wheel') {
+        const term = termRef.current
+        if (!term || term.modes.mouseTrackingMode === 'none') return
+        e.preventDefault()
+        const t = e.touches[0]
+        send(mouseWheelSeq(term, dy < 0, t.clientX, t.clientY).repeat(steps))
+      } else {
+        if (mode !== 'cursor' && hasScrollback()) return
+        e.preventDefault()
+        send(seqFor(mode, dy < 0).repeat(steps))
+      }
+      twoFingerLastY += dy < 0 ? -steps * TWO_FINGER_STEP : steps * TWO_FINGER_STEP
+    }
+    const onTwoFingerEnd = () => { twoFingerTracking = false }
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) { tracking = false; onTwoFingerStart(e); return }
+      if (e.touches.length !== 1) { tracking = false; return }
+      tracking = true
+      startX = e.touches[0].clientX
+      startY = lastY = e.touches[0].clientY
     }
     const onMove = (e: TouchEvent) => {
       if (!tracking) return
@@ -529,8 +539,8 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
         lastY += dy < 0 ? -steps * STEP : steps * STEP
         return
       }
-      // Scrollback present → let the browser scroll natively.
-      if (hasScrollback()) return
+      // Cursor movement is explicit; other modes defer to native scrollback.
+      if (mode !== 'cursor' && hasScrollback()) return
       e.preventDefault()
       const steps = Math.floor(Math.abs(dy) / STEP)
       if (steps < 1) return
