@@ -24,19 +24,19 @@ export interface SpecialAction {
 }
 
 export const SPECIAL_TERMINAL_ACTIONS: Record<string, SpecialAction> = {
-  'open-settings': { label: '=', title: 'settings' },
+  'open-settings': { label: '⚙', title: 'settings' },
   'select-font-size': { label: 'S', title: 'font size', description: 'Changes the available rows/columns unless min cols/rows is set.' },
-  'select-min-columns': { label: 'mC', title: 'min columns', description: 'Keep the terminal at least this wide; scroll horizontally instead.' },
-  'select-min-rows': { label: 'mR', title: 'min rows', description: 'Keep the terminal at least this tall; scroll vertically instead.' },
-  'select-single-swipe-behavior': { label: '↕', title: 'single-finger swipe', description: 'What one-finger vertical swipes on the terminal send.' },
-  'select-double-swipe-behavior': { label: '⇕', title: 'two-finger swipe', description: 'What two-finger vertical swipes on the terminal send.' },
-  'toggle-follow-cursor': { label: 'follow', title: 'follow cursor', description: 'Scroll to keep the cursor visible.' },
+  'select-min': { label: 'mC', title: 'min size', description: 'Set minimum columns and rows. Min-rows on small screens can make the terminal too tall.' },
+  'select-single-swipe-behavior': { label: '↕↔', title: 'single-finger swipe', description: 'What one-finger swipes on the terminal send.' },
+  'select-double-swipe-behavior': { label: '⤡', title: 'two-finger swipe', description: 'What two-finger swipes on the terminal send.' },
+  'select-follow-mode': { label: 'follow', title: 'follow mode', description: 'Off: no auto-scroll. Follow: keep cursor visible. Shrink: maximize terminal to fill screen.' },
   'select-dock-position': { label: 'dock', title: 'dock position', description: 'Grid at the top or bottom of the terminal.' },
   'show-help': { label: '?', title: 'help', description: 'How the grid and the default keys work.' },
   'configure-behavior': { label: 'config', title: 'configure behavior', description: 'Assign actions to a grid button.' },
   'reset-to-defaults': { label: 'reset', title: 'reset to defaults', description: 'Restore the default 2x2 grid.' },
   'show-more': { label: 'more', title: 'more keys', description: 'Show extra keys; closes after one is sent.' },
   'show-special-keys': { label: 'keys', title: 'special keys', description: 'Show extra keys; closes after one is sent.' },
+  'select-arrow-speeds': { label: 'speed', title: 'arrow speed', description: 'Adjust swipe-to-arrow sensitivity (px per key).' },
 }
 
 export function isSpecialAction(action: string): boolean {
@@ -146,6 +146,14 @@ const HAMBURGER: CellActions = {
   l: 'send-ctrl-c', T: 'open-settings', r: 'send-key-tab',
   bl: 'send-ctrl-n', b: 'send-ctrl-z', br: 'send-ctrl-r',
 }
+const DELETE_KEYS: CellActions = {
+  T: 'send-key-backspace', l: 'send-ctrl-u', r: 'send-ctrl-k', tr: 'send-key-delete',
+}
+const ARROW_KEYS: CellActions = {
+  tl: 'send-esc-b', t: 'send-key-up', tr: 'send-esc-f',
+  l: 'send-key-left', T: 'send-key-up', r: 'send-key-right',
+  bl: 'send-ctrl-a', b: 'send-key-down', br: 'send-ctrl-e',
+}
 
 export interface QuickAssignment {
   label: string
@@ -158,16 +166,20 @@ export const QUICK_ASSIGNMENTS: Record<string, QuickAssignment> = {
   'special-chars': { label: '~ chars', description: 'Tab ~ $ | / -', actions: SPECIAL_CHARS },
   fx: { label: 'Fx', description: 'F1..F9', actions: expandFx(1) },
   'f10-f12': { label: 'F10-12', description: 'F10 F11 F12', actions: F10_12 },
+  'delete-keys': { label: '⌫ del', description: 'Backspace Ctrl-U Ctrl-K Del', actions: DELETE_KEYS },
+  'arrow-keys': { label: '↑↓←→', description: 'Arrow keys + word nav', actions: ARROW_KEYS },
   'swipe-single': { label: 'swipe 1', description: 'single-finger behavior', actions: { T: 'select-single-swipe-behavior' } },
   'swipe-double': { label: 'swipe 2', description: 'two-finger behavior', actions: { T: 'select-double-swipe-behavior' } },
 }
 
 export function defaultGrid(): GridConfig {
   return {
-    A1: { T: 'select-single-swipe-behavior', l: 'send-ctrl-u', r: 'send-ctrl-e' },
+    A1: { T: 'select-single-swipe-behavior', t: 'select-double-swipe-behavior', l: 'send-ctrl-u', r: 'send-ctrl-e' },
     A2: { ...QUICK_ASSIGNMENTS.fx.actions },
     B1: { ...QUICK_ASSIGNMENTS['special-chars'].actions },
     B2: { ...QUICK_ASSIGNMENTS.hamburger.actions },
+    A3: { ...QUICK_ASSIGNMENTS['delete-keys'].actions },
+    B3: { ...QUICK_ASSIGNMENTS['arrow-keys'].actions },
   }
 }
 

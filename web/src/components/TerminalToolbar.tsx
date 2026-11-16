@@ -1,7 +1,7 @@
 import { useState, useRef, useLayoutEffect, useCallback, type ReactNode } from 'react'
 import {
-  ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, MoveVertical, MoveHorizontal,
-  Settings2, HelpCircle, ChevronLeft, RotateCcw, Type, Columns3, Rows3, Keyboard, X, Droplets,
+  ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, Hand,
+  Settings2, HelpCircle, ChevronLeft, RotateCcw, Type, Columns3, Keyboard, X, Droplets,
 } from 'lucide-react'
 import type { TerminalSettings, TerminalSwipeMode } from '../types'
 import {
@@ -26,8 +26,9 @@ interface TerminalToolbarProps {
 }
 
 const DEFAULT_TERM_SETTINGS: TerminalSettings = {
-  fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followCursor: false,
-  swipeMode: 'wheel', swipeModeDouble: 'cursor', writeDelayMs: 250,
+  fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followMode: 'off',
+  swipeMode: 'wheel', swipeModeDouble: 'cursor',
+  swipeStep: 10, writeDelayMs: 250,
 }
 const TERM_SETTINGS_KEY = 'wede_terminal_settings'
 
@@ -41,9 +42,9 @@ const SWIPE_OPTIONS: { mode: TerminalSwipeMode; label: string; hint: string }[] 
 ]
 
 type View =
-  | 'settings' | 'dock' | 'font' | 'minCols' | 'minRows'
+  | 'settings' | 'dock' | 'font' | 'min' | 'followMode'
   | 'swipeSingle' | 'swipeDouble' | 'help' | 'keys' | 'transparency'
-  | 'configure' | 'slot' | 'group' | 'actions'
+  | 'arrowSpeed' | 'configure' | 'slot' | 'group' | 'actions'
 
 // TerminalToolbar — a floating, configurable grid of action buttons. Tap runs
 // the cell's T action, swiping runs the action for that direction, and a long
@@ -85,17 +86,17 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     switch (id) {
       case 'open-settings': setView('settings'); break
       case 'select-font-size': setView('font'); break
-      case 'select-min-columns': setView('minCols'); break
-      case 'select-min-rows': setView('minRows'); break
+      case 'select-min': setView('min'); break
       case 'select-single-swipe-behavior': setView('swipeSingle'); break
       case 'select-double-swipe-behavior': setView('swipeDouble'); break
-      case 'toggle-follow-cursor': saveTermSettings({ ...termSettings, followCursor: !termSettings.followCursor }); break
+      case 'select-follow-mode': setView('followMode'); break
       case 'select-dock-position': setView('dock'); break
       case 'show-help': setView('help'); break
       case 'configure-behavior': setCfgCell(null); setCfgError(null); setView('configure'); break
       case 'reset-to-defaults': resetGrid(); break
       case 'show-more':
       case 'show-special-keys': setView('keys'); break
+      case 'select-arrow-speeds': setView('arrowSpeed'); break
     }
   }
   const runAction = (action: string | undefined) => {
@@ -282,14 +283,14 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     if (view === 'settings') return (
       <>
         <div className="flex flex-wrap gap-1 px-2 py-2 border-b border-border/50">
-          {iconBtn(termSettings.followCursor ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />, 'follow cursor', () => saveTermSettings({ ...termSettings, followCursor: !termSettings.followCursor }), termSettings.followCursor)}
+          {iconBtn(<Eye className="w-4 h-4" />, `follow: ${termSettings.followMode ?? 'off'}`, () => setView('followMode'))}
           {iconBtn(dock.position === 'top' ? <ArrowUpToLine className="w-4 h-4" /> : <ArrowDownToLine className="w-4 h-4" />, `dock: ${dock.position}`, () => setDock({ position: dock.position === 'top' ? 'bottom' : 'top' }))}
           {iconBtn(<Type className="w-4 h-4" />, 'font size', () => setView('font'))}
-          {iconBtn(<Columns3 className="w-4 h-4" />, 'min columns', () => setView('minCols'))}
-          {iconBtn(<Rows3 className="w-4 h-4" />, 'min rows', () => setView('minRows'))}
-          {iconBtn(<MoveVertical className="w-4 h-4" />, 'single-finger swipe', () => setView('swipeSingle'))}
-          {iconBtn(<MoveHorizontal className="w-4 h-4" />, 'two-finger swipe', () => setView('swipeDouble'))}
+          {iconBtn(<Columns3 className="w-4 h-4" />, `min: ${termSettings.minCols || 'auto'}/${termSettings.minRows || 'auto'}`, () => setView('min'))}
+          {iconBtn(<span className="w-4 h-4 flex items-center justify-center text-lg font-serif">•</span>, 'single-finger swipe', () => setView('swipeSingle'))}
+          {iconBtn(<span className="w-4 h-4 flex items-center justify-center text-xs font-serif">••</span>, 'two-finger swipe', () => setView('swipeDouble'))}
           {iconBtn(<Droplets className="w-4 h-4" />, `transparency: ${dock.transparency ?? 50}%`, () => setView('transparency'))}
+          {iconBtn(<Hand className="w-4 h-4" />, `step: ${termSettings.swipeStep ?? 10}px`, () => setView('arrowSpeed'))}
           {iconBtn(<Keyboard className="w-4 h-4" />, 'special keys', () => setView('keys'))}
         </div>
         {row(<Settings2 className="w-4 h-4" />, 'configure behavior', () => { setCfgCell(null); setCfgError(null); setView('configure') })}
@@ -298,12 +299,45 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         {row(<Keyboard className="w-4 h-4" />, 'show more keys', () => setView('keys'))}
       </>
     )
+    if (view === 'followMode') {
+      const modes: { mode: 'off' | 'follow' | 'shrink'; label: string; hint: string }[] = [
+        { mode: 'off', label: 'Off', hint: 'No auto-scroll' },
+        { mode: 'follow', label: 'Follow cursor', hint: 'Keep cursor visible while scrolling' },
+        { mode: 'shrink', label: 'Shrink & maximize', hint: 'Maximize terminal to fill remaining screen space' },
+      ]
+      return (
+        <>
+          {back('settings')}
+          {modes.map((opt) => (
+            <button
+              key={opt.mode}
+              onClick={() => saveTermSettings({ ...termSettings, followMode: opt.mode })}
+              className={`w-full min-h-[44px] px-3 py-1 text-left flex flex-col justify-center transition-colors ${
+                (termSettings.followMode ?? 'off') === opt.mode ? 'bg-accent text-bg-primary' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+              }`}
+            >
+              <span className="text-sm">{opt.label}</span>
+              <span className="text-[10px] opacity-70">{opt.hint}</span>
+            </button>
+          ))}
+        </>
+      )
+    }
     if (view === 'transparency') return (
       <>
         {back('settings')}
         {rangeRow('grid transparency', dock.transparency ?? 50, 0, 80, (n) => setDock({ transparency: n }), '%')}
         <div className="px-3 pb-2 text-[10px] text-text-muted leading-relaxed">
           Controls how see-through the grid button overlay is. 0% = opaque background, 80% = nearly transparent.
+        </div>
+      </>
+    )
+    if (view === 'arrowSpeed') return (
+      <>
+        {back('settings')}
+        {rangeRow('swipe step', termSettings.swipeStep ?? 10, 4, 40, (n) => saveTermSettings({ ...termSettings, swipeStep: n }), 'px')}
+        <div className="px-3 pb-2 text-[10px] text-text-muted leading-relaxed">
+          Pixels of swipe per arrow key. Smaller = more sensitive (more keys per swipe). Larger = less sensitive.
         </div>
       </>
     )
@@ -322,16 +356,14 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         {rangeRow('font size', termSettings.fontSize, 4, 24, (n) => saveTermSettings({ ...termSettings, fontSize: n }), 'px')}
       </>
     )
-    if (view === 'minCols') return (
+    if (view === 'min') return (
       <>
         {back('settings')}
         {rangeRow('min columns (0=auto)', termSettings.minCols, 0, 160, (n) => saveTermSettings({ ...termSettings, minCols: n }))}
-      </>
-    )
-    if (view === 'minRows') return (
-      <>
-        {back('settings')}
         {rangeRow('min rows (0=auto)', termSettings.minRows, 0, 800, (n) => saveTermSettings({ ...termSettings, minRows: n }))}
+        <div className="px-3 pb-2 text-[10px] text-text-muted leading-relaxed">
+          Minimum terminal size. When set, the terminal scrolls instead of shrinking. Min-rows on small screens can make the terminal too tall.
+        </div>
       </>
     )
     if (view === 'swipeSingle' || view === 'swipeDouble') {
@@ -412,8 +444,8 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         {back('settings')}
         {cfgError && <div className="px-3 py-1 text-[11px] text-red-400">{cfgError}</div>}
         <div className="flex flex-wrap gap-1 px-2 py-2 border-b border-border/50">
-          {iconBtn(<MoveVertical className="w-4 h-4" />, 'single-finger swipe', () => setView('swipeSingle'))}
-          {iconBtn(<MoveHorizontal className="w-4 h-4" />, 'two-finger swipe', () => setView('swipeDouble'))}
+          {iconBtn(<span className="w-4 h-4 flex items-center justify-center text-lg font-serif">•</span>, 'single-finger swipe', () => setView('swipeSingle'))}
+          {iconBtn(<span className="w-4 h-4 flex items-center justify-center text-xs font-serif">••</span>, 'two-finger swipe', () => setView('swipeDouble'))}
           {iconBtn(<RotateCcw className="w-4 h-4" />, 'reset to defaults', resetGrid)}
         </div>
         <div className="px-3 py-1 text-[10px] text-text-muted">select a button</div>

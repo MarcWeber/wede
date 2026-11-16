@@ -16,7 +16,7 @@ interface TerminalProps {
 }
 
 const TERM_SETTINGS_KEY = 'wede_terminal_settings'
-const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followCursor: false, swipeMode: 'wheel', swipeModeDouble: 'cursor', writeDelayMs: 250 }
+const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followMode: 'off', swipeMode: 'wheel', swipeModeDouble: 'cursor', swipeStep: 10, writeDelayMs: 250 }
 
 function readTermSettings(): TerminalSettings {
   try {
@@ -407,8 +407,8 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
             if (rect && rect.height > 0) {
               scrollAboveKeyboard(term, rect.height)
             }
-            // If followCursor is on, also run the margin check
-            if (settingsRef.current.followCursor) {
+            // If follow mode is 'follow', also run the margin check
+            if (settingsRef.current.followMode === 'follow') {
               scrollCursorIntoView(term)
             }
           })
@@ -419,12 +419,12 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     return () => vk.removeEventListener('geometrychange', onGeometryChange)
   }, [applySizing])
 
-  // Follow cursor — when enabled, continuously watch the cursor position and
-  // scroll so it stays within a safe margin (10% padding) from all edges.
-  // Uses settingsRef to always read the latest followCursor value.
+  // Follow cursor — when followMode is 'follow', continuously watch the cursor
+  // position and scroll so it stays within a safe margin from all edges.
+  // Uses settingsRef to always read the latest followMode value.
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!settingsRef.current.followCursor) return
+      if (settingsRef.current.followMode !== 'follow') return
       const term = termRef.current
       if (term) scrollCursorIntoView(term)
     }, 200)
@@ -437,10 +437,9 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
   useEffect(() => {
     const el = containerRef.current
     if (!el) return undefined
-    // A "step" is this many CSS px of vertical finger movement per emitted
-    // action. Touch deltas are px-accurate, so a finer step (rather than
-    // repeated keys) is what makes a swipe cover more pages. Same for all modes.
-    const STEP = 40 / 3
+    // A "step" is this many CSS px of finger movement per emitted action.
+    // Read from settings (configurable via "select-arrow-speeds").
+    const getStep = () => settingsRef.current.swipeStep ?? 10
     let startX = 0
     let startY = 0
     let lastY = 0
@@ -455,6 +454,10 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       if (mode === 'half') return down ? '\x04' : '\x15'
       if (mode === 'emacs') return down ? '\x16' : '\x1bv'
       return ''
+    }
+    // Horizontal cursor movement (left/right arrows) for cursor mode.
+    const seqForH = (right: boolean): string => {
+      return right ? '\x1b[C' : '\x1b[D'
     }
     // SGR mouse wheel events (button 64 = up, 65 = down) at the touch cell.
     // For apps that only scroll on wheel input (e.g. junie/lazygit). Requires
@@ -484,32 +487,52 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     // Two-finger swipe uses swipeModeDouble (default: cursor movement).
     let twoFingerTracking = false
     let twoFingerLastY = 0
-    const TWO_FINGER_STEP = 12 // px per action — finer than single-finger
+    let twoFingerLastX = 0
+    const getTwoFingerStep = () => settingsRef.current.swipeStep ?? 10
     const onTwoFingerStart = (e: TouchEvent) => {
       if (e.touches.length !== 2) return
       twoFingerTracking = true
       twoFingerLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+      twoFingerLastX = (e.touches[0].clientX + e.touches[1].clientX) / 2
     }
     const onTwoFingerMove = (e: TouchEvent) => {
       if (!twoFingerTracking || e.touches.length !== 2) return
       const mode = settingsRef.current.swipeModeDouble
       if (mode === 'scroll') return
+      const step = getTwoFingerStep()
       const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+      const avgX = (e.touches[0].clientX + e.touches[1].clientX) / 2
       const dy = avgY - twoFingerLastY
-      const steps = Math.floor(Math.abs(dy) / TWO_FINGER_STEP)
-      if (steps < 1) return
+      const dx = avgX - twoFingerLastX
+      const absDy = Math.abs(dy)
+      const absDx = Math.abs(dx)
+      if (absDy + absDx < step) return
       if (mode === 'wheel') {
         const term = termRef.current
         if (!term || term.modes.mouseTrackingMode === 'none') return
         e.preventDefault()
         const t = e.touches[0]
-        send(mouseWheelSeq(term, dy < 0, t.clientX, t.clientY).repeat(steps))
-      } else {
-        if (mode !== 'cursor' && hasScrollback()) return
+        const steps = Math.floor(absDy / step)
+        if (steps > 0) send(mouseWheelSeq(term, dy < 0, t.clientX, t.clientY).repeat(steps))
+        twoFingerLastY += dy < 0 ? -steps * step : steps * step
+      } else if (mode === 'cursor') {
         e.preventDefault()
-        send(seqFor(mode, dy < 0).repeat(steps))
+        if (absDy > absDx * 1.15) {
+          const steps = Math.floor(absDy / step)
+          if (steps > 0) send(seqFor(mode, dy > 0).repeat(steps))
+          twoFingerLastY += dy < 0 ? -steps * step : steps * step
+        } else if (absDx > absDy * 1.15) {
+          const steps = Math.floor(absDx / step)
+          if (steps > 0) send(seqForH(dx > 0).repeat(steps))
+          twoFingerLastX += dx < 0 ? -steps * step : steps * step
+        }
+      } else {
+        if (hasScrollback()) return
+        e.preventDefault()
+        const steps = Math.floor(absDy / step)
+        if (steps > 0) send(seqFor(mode, dy > 0).repeat(steps))
+        twoFingerLastY += dy < 0 ? -steps * step : steps * step
       }
-      twoFingerLastY += dy < 0 ? -steps * TWO_FINGER_STEP : steps * TWO_FINGER_STEP
     }
     const onTwoFingerEnd = () => { twoFingerTracking = false }
     const onStart = (e: TouchEvent) => {
@@ -519,33 +542,50 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       startX = e.touches[0].clientX
       startY = lastY = e.touches[0].clientY
     }
+    let lastX = 0
     const onMove = (e: TouchEvent) => {
       if (!tracking) return
       const mode = settingsRef.current.swipeMode
       if (mode === 'scroll') return
+      const step = getStep()
       const t = e.touches[0]
-      // Only claim vertical gestures; leave horizontal pan/selection alone.
-      if (Math.abs(t.clientY - startY) <= Math.abs(t.clientX - startX)) return
       const dy = t.clientY - lastY
-      // Wheel mode: synthesize SGR wheel events at the finger position. If the
-      // app hasn't enabled mouse reporting, leave the gesture to native scroll.
+      const dx = t.clientX - (lastX || startX)
+      const absDy = Math.abs(dy)
+      const absDx = Math.abs(dx)
+      if (absDy + absDx < step) return
+      const isVertical = absDy > absDx * 1.15
+      const isHorizontal = absDx > absDy * 1.15
+      if (!isVertical && !isHorizontal) return
       if (mode === 'wheel') {
         const term = termRef.current
         if (!term || term.modes.mouseTrackingMode === 'none') return
         e.preventDefault()
-        const steps = Math.floor(Math.abs(dy) / STEP)
-        if (steps < 1) return
-        send(mouseWheelSeq(term, dy < 0, t.clientX, t.clientY).repeat(steps))
-        lastY += dy < 0 ? -steps * STEP : steps * STEP
+        if (isVertical) {
+          const steps = Math.floor(absDy / step)
+          if (steps > 0) {
+            send(mouseWheelSeq(term, dy < 0, t.clientX, t.clientY).repeat(steps))
+            lastY += dy < 0 ? -steps * step : steps * step
+          }
+        }
         return
       }
-      // Cursor movement is explicit; other modes defer to native scrollback.
       if (mode !== 'cursor' && hasScrollback()) return
       e.preventDefault()
-      const steps = Math.floor(Math.abs(dy) / STEP)
-      if (steps < 1) return
-      send(seqFor(mode, dy < 0).repeat(steps))
-      lastY += dy < 0 ? -steps * STEP : steps * STEP
+      if (isVertical) {
+        const steps = Math.floor(absDy / step)
+        if (steps > 0) {
+          send(seqFor(mode, dy > 0).repeat(steps))
+          lastY += dy < 0 ? -steps * step : steps * step
+        }
+      } else if (isHorizontal && mode === 'cursor') {
+        const steps = Math.floor(absDx / step)
+        if (steps > 0) {
+          send(seqForH(dx > 0).repeat(steps))
+          lastX = lastX || startX
+          lastX += dx < 0 ? -steps * step : steps * step
+        }
+      }
     }
     const onEnd = (e: TouchEvent) => {
       if (e.touches.length === 0) {
@@ -573,15 +613,18 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
   // scroll wrapper is the same element either way; only the overflow class and
   // the width/height set by applySizing change.
   const scrolls = termSettings.minCols > 0 || termSettings.minRows > 0
+  const isShrink = termSettings.followMode === 'shrink'
   return (
     <div
       ref={containerRef}
       data-testid="terminal-scroll"
-      className={`h-full w-full ${scrolls ? 'overflow-auto' : ''}`}
+      className={`w-full ${scrolls ? 'overflow-auto' : ''}`}
       style={{
         display: visible ? 'block' : 'none',
         touchAction: 'pan-x pan-y',
         overscrollBehavior: 'contain',
+        height: isShrink ? '300px' : '100%',
+        flexShrink: isShrink ? 0 : undefined,
       }}
     />
   )

@@ -5,12 +5,12 @@ import {
 } from './terminalGrid'
 
 describe('terminalGrid', () => {
-  it('default grid is 2x2 and keeps a settings action', () => {
+  it('default grid is 2x3 and keeps a settings action', () => {
     const g = defaultGrid()
-    expect(gridBounds(g)).toEqual({ rows: 2, cols: 2 })
+    expect(gridBounds(g)).toEqual({ rows: 2, cols: 3 })
     expect(hasSettingsAction(g)).toBe(true)
-    expect(gridOrder(g)).toEqual(['A2', 'A1', 'B2', 'B1'])
-    expect(actionLabel(g.B2!.T!)).toBe('=')
+    expect(gridOrder(g)).toEqual(['A3', 'A2', 'A1', 'B3', 'B2', 'B1'])
+    expect(actionLabel(g.B2!.T!)).toBe('⚙')
   })
 
   it('decodes key actions to PTY bytes', () => {

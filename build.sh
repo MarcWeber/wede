@@ -14,6 +14,8 @@
 # Dev mode serves web/dist/ from disk (no embed_frontend tag).
 # Prod mode embeds web/dist/ into the Go binary for a single portable binary.
 
+set -x
+
 set -euo pipefail
 cd "$(dirname "$0")"
 
