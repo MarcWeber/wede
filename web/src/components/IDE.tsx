@@ -233,7 +233,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   })
 
   // Collaboration presence: who else is in this workspace and what they're viewing.
-  const { selfId, roster: collabRoster, presenter, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, mice: collabMice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username)
+ 	const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, mice: collabMice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username)
 
   // Built-in API client — shared between the sidebar collections and the editor tab.
   const apiClient = useApiClient(workspaceId, authFetch)
@@ -759,6 +759,39 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     setEditorSettings(s)
     try { localStorage.setItem('wede_editor_settings', JSON.stringify(s)) } catch (_ignored) { void _ignored }
   }, [])
+
+  // Local visible tab type overrides — merged with server-side config.
+  // When the server sends visibleTabTypes, we merge with local overrides.
+  const [localVisibleTabTypes, setLocalVisibleTabTypesState] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('wede_visible_tab_types')
+      if (saved) return JSON.parse(saved) as Record<string, boolean>
+    } catch { /* ignore */ }
+    return {}
+  })
+  const setLocalVisibleTabTypes = useCallback((types: Record<string, boolean>) => {
+    setLocalVisibleTabTypesState(types)
+    try { localStorage.setItem('wede_visible_tab_types', JSON.stringify(types)) } catch (_ignored) { void _ignored }
+  }, [])
+
+  // Merge server config with local overrides: local overrides take precedence.
+  // Always returns a full map (defaults true) so the Settings "Tab visibility"
+  // section is available even when the server sends no config.
+  const mergedVisibleTabTypes = useMemo(() => {
+    const merged: Record<string, boolean> = {}
+    for (const kind of VIEW_TABS.map(v => v.kind)) merged[kind] = true
+    // Apply server config
+    if (visibleTabTypes) {
+      for (const [k, v] of Object.entries(visibleTabTypes)) {
+        merged[k] = v
+      }
+    }
+    // Apply local overrides
+    for (const [k, v] of Object.entries(localVisibleTabTypes)) {
+      merged[k] = v
+    }
+    return merged
+  }, [visibleTabTypes, localVisibleTabTypes])
 
   // Expose FileExplorer's refresh + new-file/folder triggers for the command palette and SSE watcher.
   const explorerActionsRef = useRef<ExplorerActions | null>(null)
@@ -2159,6 +2192,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
             lspAvailable={lspAvailable}
             desktopMode={desktopMode}
             onDesktopModeChange={setDesktopMode}
+            visibleTabTypes={mergedVisibleTabTypes}
+            onVisibleTabTypesChange={setLocalVisibleTabTypes}
           />
         )
     }
@@ -2257,11 +2292,17 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     )
   }
 
-  const viewMenu = (desktop: boolean) => (
-    <ViewMenu
-      views={VIEW_TABS}
-      visible={visible}
-      onToggle={(kind) => toggleVisible(kind as ViewKind)}
+	// Filter VIEW_TABS by merged visibleTabTypes config (server + local overrides).
+	const filteredViews = useMemo(
+		() => VIEW_TABS.filter((v) => mergedVisibleTabTypes[v.kind] !== false),
+		[mergedVisibleTabTypes],
+	)
+
+   const viewMenu = (desktop: boolean) => (
+     <ViewMenu
+       views={filteredViews}
+       visible={visible}
+       onToggle={(kind) => toggleVisible(kind as ViewKind)}
       onAdd={(kind) => {
         if (kind === 'web') addWeb()
         else if (kind === 'api') addApi()

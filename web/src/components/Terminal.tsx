@@ -16,7 +16,7 @@ interface TerminalProps {
 }
 
 const TERM_SETTINGS_KEY = 'wede_terminal_settings'
-const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followCursor: false, swipeMode: 'scroll', writeDelayMs: 250 }
+const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followCursor: false, swipeMode: 'wheel', writeDelayMs: 250 }
 
 function readTermSettings(): TerminalSettings {
   try {
@@ -455,11 +455,59 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       if (mode === 'emacs') return down ? '\x16' : '\x1bv'
       return ''
     }
+    // SGR mouse wheel events (button 64 = up, 65 = down) at the touch cell.
+    // For apps that only scroll on wheel input (e.g. junie/lazygit). Requires
+    // the app to have enabled mouse reporting; otherwise native scroll is used.
+    const mouseWheelSeq = (term: XTerminal, down: boolean, clientX: number, clientY: number): string => {
+      const el = term.element
+      const cell = (term as unknown as XtermInternals)._core?._renderService?.dimensions?.css?.cell
+      let col = Math.floor(term.cols / 2) + 1
+      let row = Math.floor(term.rows / 2) + 1
+      if (el && cell?.width && cell?.height) {
+        const r = el.getBoundingClientRect()
+        col = Math.max(1, Math.min(term.cols, Math.floor((clientX - r.left) / cell.width) + 1))
+        row = Math.max(1, Math.min(term.rows, Math.floor((clientY - r.top) / cell.height) + 1))
+      }
+      return `\x1b[<${down ? 65 : 64};${col};${row}M`
+    }
+    // Two-finger swipe → ArrowUp/ArrowDown (moves cursor, doesn't scroll).
+    let twoFingerTracking = false
+    let twoFingerLastY = 0
+    const TWO_FINGER_STEP = 12 // px per arrow key — finer than single-finger
+    const onTwoFingerStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return
+      twoFingerTracking = true
+      twoFingerLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+    }
+    const onTwoFingerMove = (e: TouchEvent) => {
+      if (!twoFingerTracking || e.touches.length !== 2) return
+      const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+      const dy = avgY - twoFingerLastY
+      const steps = Math.floor(Math.abs(dy) / TWO_FINGER_STEP)
+      if (steps < 1) return
+      e.preventDefault()
+      // ArrowDown = \x1b[B, ArrowUp = \x1b[A
+      const key = dy < 0 ? '\x1b[A' : '\x1b[B'
+      send(key.repeat(steps))
+      twoFingerLastY += dy < 0 ? -steps * TWO_FINGER_STEP : steps * TWO_FINGER_STEP
+    }
+    const onTwoFingerEnd = () => { twoFingerTracking = false }
     const onStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) { tracking = false; onTwoFingerStart(e); return }
       if (e.touches.length !== 1) { tracking = false; return }
       tracking = true
       startX = e.touches[0].clientX
       startY = lastY = e.touches[0].clientY
+    }
+    // Native scrolling applies when the terminal actually has scrollback: xterm's
+    // own scrollbar in fit mode, or the container's scrollbar in min-size mode.
+    // With no scrollback (alt-screen apps: vim/less/emacs/opencode) the swipe
+    // sends the configured key mode instead.
+    const hasScrollback = () => {
+      const term = termRef.current
+      const container = containerRef.current
+      if (term && term.buffer.active.type === 'normal' && term.buffer.active.length > term.rows) return true
+      return !!container && container.scrollHeight > container.clientHeight + 1
     }
     const onMove = (e: TouchEvent) => {
       if (!tracking) return
@@ -468,21 +516,44 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       const t = e.touches[0]
       // Only claim vertical gestures; leave horizontal pan/selection alone.
       if (Math.abs(t.clientY - startY) <= Math.abs(t.clientX - startX)) return
-      e.preventDefault()
       const dy = t.clientY - lastY
+      // Wheel mode: synthesize SGR wheel events at the finger position. If the
+      // app hasn't enabled mouse reporting, leave the gesture to native scroll.
+      if (mode === 'wheel') {
+        const term = termRef.current
+        if (!term || term.modes.mouseTrackingMode === 'none') return
+        e.preventDefault()
+        const steps = Math.floor(Math.abs(dy) / STEP)
+        if (steps < 1) return
+        send(mouseWheelSeq(term, dy < 0, t.clientX, t.clientY).repeat(steps))
+        lastY += dy < 0 ? -steps * STEP : steps * STEP
+        return
+      }
+      // Scrollback present → let the browser scroll natively.
+      if (hasScrollback()) return
+      e.preventDefault()
       const steps = Math.floor(Math.abs(dy) / STEP)
       if (steps < 1) return
       send(seqFor(mode, dy < 0).repeat(steps))
       lastY += dy < 0 ? -steps * STEP : steps * STEP
     }
-    const onEnd = () => { tracking = false }
+    const onEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        tracking = false
+        twoFingerTracking = false
+      }
+    }
+    const onMoveWrapper = (e: TouchEvent) => {
+      if (e.touches.length === 2) onTwoFingerMove(e)
+      else onMove(e)
+    }
     el.addEventListener('touchstart', onStart, { passive: true })
-    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchmove', onMoveWrapper, { passive: false })
     el.addEventListener('touchend', onEnd)
     el.addEventListener('touchcancel', onEnd)
     return () => {
       el.removeEventListener('touchstart', onStart)
-      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchmove', onMoveWrapper)
       el.removeEventListener('touchend', onEnd)
       el.removeEventListener('touchcancel', onEnd)
     }
@@ -499,7 +570,7 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       className={`h-full w-full ${scrolls ? 'overflow-auto' : ''}`}
       style={{
         display: visible ? 'block' : 'none',
-        touchAction: termSettings.swipeMode === 'scroll' ? 'auto' : 'pan-x',
+        touchAction: 'pan-x pan-y',
         overscrollBehavior: 'contain',
       }}
     />

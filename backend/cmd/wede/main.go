@@ -134,6 +134,7 @@ func main() {
 		authHandler.SetCredentials(c.Password, c.Users)
 		authHandler.SetTeachers(c.Teachers)
 		wsMgr.SetDefaultTimeout(c.Defaults.Timeout())
+		wsMgr.SetVisibleTabTypes(c.VisibleTabTypes)
 		wsMgr.SetTemplates(templatesFrom(c, rootFolder.Current()))
 		collab.SetDebug(c.Debug)
 		if c.Debug {
@@ -447,6 +448,7 @@ func templatesFrom(c *config.Config, bootPath string) map[string]workspace.Templ
 		path = expandTilde(path)
 		out[name] = workspace.Template{
 			Name: name, Path: path, TimeoutSecs: w.EffectiveTimeout(def), LSP: append([]string(nil), w.LSP...),
+			VisibleTabTypes: w.EffectiveVisibleTabTypes(c.VisibleTabTypes),
 		}
 	}
 	if len(out) == 0 && bootPath != "" {

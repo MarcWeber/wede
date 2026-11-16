@@ -50,19 +50,24 @@ type Handler struct {
 	hub      *presence.Hub
 	canLead  func(username string) bool
 	upgrader websocket.Upgrader
+	// visibleTabTypes controls which tab types are shown in the hamburger menu.
+	// nil means all tabs are visible.
+	visibleTabTypes map[string]bool
 }
 
 // New builds a collab handler bound to a room's presence hub. frameAncestors
 // mirrors the terminal/lsp origin-check behaviour (space-separated origins).
 // canLead validates the teacher permission for starting a forced-follow lead.
-func New(frameAncestors string, hub *presence.Hub, canLead func(username string) bool) *Handler {
+// visibleTabTypes controls which tab types are shown (nil = all visible).
+func New(frameAncestors string, hub *presence.Hub, canLead func(username string) bool, visibleTabTypes map[string]bool) *Handler {
 	allowed := parseOrigins(frameAncestors)
 	return &Handler{
-		hub:     hub,
-		canLead: canLead,
+		hub:             hub,
+		canLead:         canLead,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return checkOrigin(r, allowed) },
 		},
+		visibleTabTypes: visibleTabTypes,
 	}
 }
 
@@ -99,7 +104,11 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 	// Tell this client which roster id belongs to it. Roster broadcasts are
 	// shared, so identity cannot be inferred reliably from the member list.
-	if self, err := json.Marshal(map[string]any{"type": "self", "id": id}); err == nil {
+	selfMsg := map[string]any{"type": "self", "id": id}
+	if h.visibleTabTypes != nil {
+		selfMsg["visibleTabTypes"] = h.visibleTabTypes
+	}
+	if self, err := json.Marshal(selfMsg); err == nil {
 		_ = conn.WriteMessage(websocket.TextMessage, self)
 	}
 

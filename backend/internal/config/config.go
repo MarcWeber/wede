@@ -59,6 +59,12 @@ type Config struct {
 	// Debug enables verbose debug logging (collab cursor messages, presence
 	// broadcasts, etc.). Defaults to false.
 	Debug bool `json:"debug,omitempty"`
+
+	// VisibleTabTypes controls which tab types are shown in the hamburger menu.
+	// Keys are tab type names (files, search, code, terminals, web, git, api,
+	// log, help, chat, settings). Values are booleans. Only tabs listed as true
+	// are usable. If omitted, all tabs default to true.
+	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
 }
 
 // WorkspaceConfig is one workspace template. A template is not a running
@@ -72,6 +78,9 @@ type WorkspaceConfig struct {
 	Timeout *int `json:"timeout,omitempty"`
 	// LSP optionally names the language servers enabled for this template.
 	LSP StringList `json:"lsp,omitempty"`
+	// VisibleTabTypes overrides which tab types are shown for this workspace.
+	// Merged with global config: workspace-level values override global values.
+	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
 }
 
 // EffectiveTimeout returns the template timeout, falling back to def.
@@ -83,6 +92,25 @@ func (w WorkspaceConfig) EffectiveTimeout(def int) int {
 		return *w.Timeout
 	}
 	return def
+}
+
+// EffectiveVisibleTabTypes merges global visible_tab_types with workspace-level
+// overrides. If global is nil, all tabs default to true. Workspace-level entries
+// override the global values. Returns nil if both are nil (meaning all tabs visible).
+func (w WorkspaceConfig) EffectiveVisibleTabTypes(global map[string]bool) map[string]bool {
+	if global == nil && w.VisibleTabTypes == nil {
+		return nil
+	}
+	merged := make(map[string]bool)
+	if global != nil {
+		for k, v := range global {
+			merged[k] = v
+		}
+	}
+	for k, v := range w.VisibleTabTypes {
+		merged[k] = v
+	}
+	return merged
 }
 
 // Defaults holds cross-template defaults.

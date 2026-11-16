@@ -60,6 +60,9 @@ type Workspace struct {
 	frameAncestors string
 	// canLead reports whether a username may start a forced-follow lead.
 	canLead func(username string) bool
+	// visibleTabTypes controls which tab types are shown in the hamburger menu.
+	// nil means all tabs are visible.
+	visibleTabTypes map[string]bool
 
 	mu          sync.Mutex
 	files       *files.Handler
@@ -211,7 +214,7 @@ func (r *Workspace) Collab() *collab.Handler {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.collab == nil {
-		r.collab = collab.New(r.frameAncestors, hub, r.canLead)
+		r.collab = collab.New(r.frameAncestors, hub, r.canLead, r.visibleTabTypes)
 	}
 	return r.collab
 }
@@ -338,14 +341,16 @@ type Manager struct {
 	frameAncestors string // threaded into per-workspace terminal/lsp origin checks
 	allowedRoot    string // base dir under which new workspaces may be created ("" = no restriction)
 	canLead        func(username string) bool
+	visibleTabTypes map[string]bool // global visible tab types from config
 }
 
 // Template is a configured workspace blueprint. Sessions are created from it.
 type Template struct {
-	Name        string   `json:"name"`
-	Path        string   `json:"path"`
-	TimeoutSecs int      `json:"timeout_secs"`
-	LSP         []string `json:"lsp,omitempty"`
+	Name            string            `json:"name"`
+	Path            string            `json:"path"`
+	TimeoutSecs     int               `json:"timeout_secs"`
+	LSP             []string          `json:"lsp,omitempty"`
+	VisibleTabTypes map[string]bool   `json:"visible_tab_types,omitempty"`
 }
 
 // SessionInfo is a snapshot of a running session for the picker/API.
@@ -433,6 +438,23 @@ func (m *Manager) SetTeacherChecker(fn func(username string) bool) {
 	}
 }
 
+// SetVisibleTabTypes sets the global visible tab types from config. Existing
+// workspaces are updated too (custom workspaces use the global value; template
+// workspaces keep their template-level override).
+func (m *Manager) SetVisibleTabTypes(types map[string]bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.visibleTabTypes = types
+	for _, r := range m.workspaces {
+		r.mu.Lock()
+		// Only update custom workspaces; template workspaces keep their own value
+		if r.Template == "custom" {
+			r.visibleTabTypes = types
+		}
+		r.mu.Unlock()
+	}
+}
+
 func newID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
@@ -465,6 +487,7 @@ func (m *Manager) Register(name string, ws *folder.Manager) *Workspace {
 		ID: newID(), Name: name, Template: name, CreatedAt: now,
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
+		visibleTabTypes: m.visibleTabTypes,
 	}
 	m.register(r)
 	return r
@@ -493,6 +516,7 @@ func (m *Manager) Create(name, root string) (*Workspace, error) {
 		ID: newID(), Name: name, Template: "custom", CreatedAt: now,
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
+		visibleTabTypes: m.visibleTabTypes,
 	}
 	m.register(r)
 	return r, nil
@@ -530,6 +554,7 @@ func (m *Manager) CreateFromTemplate(templateName, sessionName string) (*Workspa
 		ID: newID(), Name: name, Template: templateName, CreatedAt: now,
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
+		visibleTabTypes: tpl.VisibleTabTypes,
 	}
 	m.register(r)
 	return r, nil
