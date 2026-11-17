@@ -1886,25 +1886,48 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     }
   }, [currentTab?.workspaceId, workspaceId, setActiveWorkspaceId, knownWorkspaces])
 
-  // Swipe-down on a tab copies its file path with cursor location to clipboard.
-  // Format: ~/foo.txt:20:17
-  const copyTabLocation = useCallback((shellId: string) => {
-    // shellId is like "file:<tab.path>" — extract the tab's composite path
-    if (!shellId.startsWith('file:')) return
-    const tabPath = shellId.slice(5)
-    const tab = tabs.find((t) => t.path === tabPath)
-    if (!tab || tab.type || !tab.rel) return
-    const root = (knownWorkspaces || []).find((w) => w.id === tab.workspaceId)?.root
-      || (tab.workspaceId === workspaceId ? workspace : null)
-    const isActive = tab.path === activeTab
-    const text = formatTabLocation({
-      root,
-      rel: tab.rel,
-      home,
-      line: isActive ? cursor.line : undefined,
-      col: isActive ? cursor.col : undefined,
-    })
-    if (text) void navigator.clipboard?.writeText(text).catch(() => {})
+  // Copy file path(s) with cursor location to clipboard.
+  // Format: ~/foo.txt:20:17 (multiple paths joined by newlines).
+  // Falls back to a temporary textarea when navigator.clipboard is unavailable
+  // (e.g. on non-HTTPS origins where the Clipboard API is blocked).
+  const copyToClipboard = (text: string) => {
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
+      return
+    }
+    fallbackCopy(text)
+  }
+  const fallbackCopy = (text: string) => {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    try { document.execCommand('copy') } catch {}
+    document.body.removeChild(ta)
+  }
+
+  const copyTabLocation = useCallback((shellIds: string[]) => {
+    const lines: string[] = []
+    for (const shellId of shellIds) {
+      if (!shellId.startsWith('file:')) continue
+      const tabPath = shellId.slice(5)
+      const tab = tabs.find((t) => t.path === tabPath)
+      if (!tab || tab.type || !tab.rel) continue
+      const root = (knownWorkspaces || []).find((w) => w.id === tab.workspaceId)?.root
+        || (tab.workspaceId === workspaceId ? workspace : null)
+      const isActive = tab.path === activeTab
+      const text = formatTabLocation({
+        root,
+        rel: tab.rel,
+        home,
+        line: isActive ? cursor.line : undefined,
+        col: isActive ? cursor.col : undefined,
+      })
+      if (text) lines.push(text)
+    }
+    if (lines.length > 0) copyToClipboard(lines.join('\n'))
   }, [tabs, activeTab, cursor.line, cursor.col, knownWorkspaces, workspaceId, workspace, home])
 
   // LSP — provides diagnostics + hover for supported languages.

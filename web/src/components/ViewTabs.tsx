@@ -33,7 +33,7 @@ export interface ViewTabsProps {
   onDragAway?: (id: string, at: { x: number; y: number }) => void
   onDropViewMode?: (id: string, mode: string, nearId?: string, after?: boolean) => void
   onDragCancelViewMode?: () => void
-  onCopyLocation?: (id: string) => void
+  onCopyLocation?: (ids: string[]) => void
 }
 
 // ViewTabs is the main center tab strip. It is the same Tabbed component used

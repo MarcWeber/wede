@@ -34,7 +34,7 @@ export interface TabbedProps {
   onDragDetach?: (id: string) => void
   onDropViewMode?: (id: string, mode: string, nearId?: string, after?: boolean) => void
   onDragCancelViewMode?: () => void
-  onCopyLocation?: (id: string) => void
+  onCopyLocation?: (ids: string[]) => void
 }
 
 // Tabbed — one reusable tab strip for the main center container and for each
@@ -105,7 +105,7 @@ export default function Tabbed({
       const tabId = swipeTabId.current
       swipeTabId.current = null
       if (selected.size === 0 && tabId && onCopyLocation) {
-        onCopyLocation(tabId)
+        onCopyLocation([tabId])
         return
       }
       if (dy <= 50) setMultiline(true)
@@ -177,6 +177,14 @@ export default function Tabbed({
             segments: [
               { key: 'view', label: 'View', onSelect: () => openFloatMenu(tab.id, 'current') },
               { key: 'viewSelected', label: 'Selected', tint: 'yellow' as const, disabled: selected.size === 0, onSelect: () => openFloatMenu(tab.id, 'selected') },
+            ],
+          }] : []),
+          ...(onCopyLocation ? [{
+            key: 'copySplit',
+            kind: 'split' as const,
+            segments: [
+              { key: 'copy', label: 'Copy file path', onSelect: () => onCopyLocation([tab.id]) },
+              { key: 'copySelected', label: 'Selected', tint: 'yellow' as const, disabled: selected.size === 0, onSelect: () => onCopyLocation(Array.from(selected)) },
             ],
           }] : []),
           { key: 'sep2', kind: 'separator' },
