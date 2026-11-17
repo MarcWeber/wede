@@ -40,6 +40,7 @@ import FloatingTerminals from './FloatingTerminals'
 import RemoteCursors from './RemoteCursors'
 import ViewTabs, { type ViewTab } from './ViewTabs'
 import Tabbed from './Tabbed'
+import { formatTabLocation } from '../lib/tabPath'
 import ViewMenu from './ViewMenu'
 import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
@@ -65,6 +66,7 @@ export interface IDEProps {
   authFetch: AuthFetch
   onLogout: () => void
   workspace: string | null
+  home: string | null
   recents: string[]
   onWorkspaceChange: (path: string) => void
   workspacesApi: ReturnType<typeof useWorkspaces>
@@ -227,7 +229,7 @@ interface FileReadResponse {
   size?: number
 }
 
-export default function IDE({ token, authFetch, onLogout, workspace, recents, onWorkspaceChange, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false }: IDEProps) {
+export default function IDE({ token, authFetch, onLogout, workspace, home, recents, onWorkspaceChange, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
   const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, updateScale: updateUiScale } = useUiScale()
@@ -1884,6 +1886,27 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
     }
   }, [currentTab?.workspaceId, workspaceId, setActiveWorkspaceId, knownWorkspaces])
 
+  // Swipe-down on a tab copies its file path with cursor location to clipboard.
+  // Format: ~/foo.txt:20:17
+  const copyTabLocation = useCallback((shellId: string) => {
+    // shellId is like "file:<tab.path>" — extract the tab's composite path
+    if (!shellId.startsWith('file:')) return
+    const tabPath = shellId.slice(5)
+    const tab = tabs.find((t) => t.path === tabPath)
+    if (!tab || tab.type || !tab.rel) return
+    const root = (knownWorkspaces || []).find((w) => w.id === tab.workspaceId)?.root
+      || (tab.workspaceId === workspaceId ? workspace : null)
+    const isActive = tab.path === activeTab
+    const text = formatTabLocation({
+      root,
+      rel: tab.rel,
+      home,
+      line: isActive ? cursor.line : undefined,
+      col: isActive ? cursor.col : undefined,
+    })
+    if (text) void navigator.clipboard?.writeText(text).catch(() => {})
+  }, [tabs, activeTab, cursor.line, cursor.col, knownWorkspaces, workspaceId, workspace, home])
+
   // LSP — provides diagnostics + hover for supported languages.
   // Degrades gracefully when language server binaries are not installed.
   const { extension: lspExtension, available: lspAvailable } = useLSP({
@@ -2391,6 +2414,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
                 onDropViewMode={dropViewMode}
                 onDragCancelViewMode={() => setModeDrag(null)}
                 onDragAway={handleDragAway}
+                onCopyLocation={copyTabLocation}
               />
             ) : (
               <div

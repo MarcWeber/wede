@@ -33,11 +33,12 @@ export interface ViewTabsProps {
   onDragAway?: (id: string, at: { x: number; y: number }) => void
   onDropViewMode?: (id: string, mode: string, nearId?: string, after?: boolean) => void
   onDragCancelViewMode?: () => void
+  onCopyLocation?: (id: string) => void
 }
 
 // ViewTabs is the main center tab strip. It is the same Tabbed component used
 // by the dock areas, at normal size and with multiline swipe support.
-export default function ViewTabs({ tabs, active, lockedIds, dropActive = false, onSelect, onClose, onCloseSelected, onToggleLock, onSetViewMode, onReorder, onDragDetach, onDragAway, onDropViewMode, onDragCancelViewMode }: ViewTabsProps) {
+export default function ViewTabs({ tabs, active, lockedIds, dropActive = false, onSelect, onClose, onCloseSelected, onToggleLock, onSetViewMode, onReorder, onDragDetach, onDragAway, onDropViewMode, onDragCancelViewMode, onCopyLocation }: ViewTabsProps) {
   return (
     <Tabbed
       tabs={tabs}
@@ -57,6 +58,7 @@ export default function ViewTabs({ tabs, active, lockedIds, dropActive = false, 
       onDragDetach={onDragDetach}
       onDropViewMode={onDropViewMode}
       onDragCancelViewMode={onDragCancelViewMode}
+      onCopyLocation={onCopyLocation}
     />
   )
 }

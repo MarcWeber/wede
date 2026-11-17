@@ -33,6 +33,7 @@ interface WorkspaceFolderState {
   hasWorkspace?: boolean
   current?: string
   recents?: string[]
+  home?: string
   [key: string]: unknown
 }
 
@@ -180,6 +181,7 @@ function App() {
       authFetch={authFetch}
       onLogout={logout}
       workspace={activeRoot ?? null}
+      home={workspace?.home ?? null}
       recents={workspace?.recents || []}
       onWorkspaceChange={openFolderAsWorkspace}
       workspaceId={workspacesApi.activeWorkspaceId}

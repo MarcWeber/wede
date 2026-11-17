@@ -232,10 +232,12 @@ func (m *Manager) saveRecents() {
 
 func (m *Manager) HandleGet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	home, _ := os.UserHomeDir()
 	json.NewEncoder(w).Encode(map[string]any{
 		"current":      m.Current(),
 		"recents":      m.Recents(),
 		"hasWorkspace": m.HasWorkspace(),
+		"home":         home,
 	})
 }
 

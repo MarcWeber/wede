@@ -34,6 +34,7 @@ export interface TabbedProps {
   onDragDetach?: (id: string) => void
   onDropViewMode?: (id: string, mode: string, nearId?: string, after?: boolean) => void
   onDragCancelViewMode?: () => void
+  onCopyLocation?: (id: string) => void
 }
 
 // Tabbed — one reusable tab strip for the main center container and for each
@@ -42,6 +43,7 @@ export default function Tabbed({
   tabs, active, lockedIds = [], size = 'normal', multilineSwipe = false, detachAbove = false, dragAnyDirection = false, dropMode, dropActive = false, className = '', onBackgroundPointerDown,
   onActivate, onClose, onCloseSelected, onToggleLock, onSetViewMode,
   onReorder, onDragAway, onDragDetach, onDropViewMode, onDragCancelViewMode,
+  onCopyLocation,
 }: TabbedProps) {
   const small = size === 'small'
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -50,6 +52,7 @@ export default function Tabbed({
   const tabRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const swipeStart = useRef<{ x: number; y: number } | null>(null)
   const swipeLast = useRef<{ x: number; y: number } | null>(null)
+  const swipeTabId = useRef<string | null>(null)
 
   if (tabs.length === 0) return null
 
@@ -73,6 +76,10 @@ export default function Tabbed({
     const pt = { x: t.clientX, y: t.clientY }
     swipeStart.current = pt
     swipeLast.current = pt
+    // Remember which tab (if any) the swipe started on, so a down swipe can
+    // copy that tab's file path.
+    const target = e.target instanceof Element ? e.target.closest('[data-reorder-id]') : null
+    swipeTabId.current = target?.getAttribute('data-reorder-id') ?? null
   }
   const onTouchMove = (e: ReactTouchEvent<HTMLDivElement>) => {
     const t = e.touches[0]
@@ -91,8 +98,18 @@ export default function Tabbed({
     if (Math.abs(dy) < 40) return
     // Up toggles wrapped mode; a short down swipe expands it. A long down
     // drag is handled by Selectable as the place-window gesture.
-    if (dy < 0) setMultiline((v) => !v)
-    else if (dy <= 50) setMultiline(true)
+    if (dy < 0) {
+      setMultiline((v) => !v)
+    } else {
+      // Down swipe on a tab in normal mode copies the file path with cursor.
+      const tabId = swipeTabId.current
+      swipeTabId.current = null
+      if (selected.size === 0 && tabId && onCopyLocation) {
+        onCopyLocation(tabId)
+        return
+      }
+      if (dy <= 50) setMultiline(true)
+    }
   }
 
   const rowHeight = small ? 'h-7' : 'h-10'
@@ -188,7 +205,7 @@ export default function Tabbed({
             detachAbove={detachAbove}
             dragAnyDirection={dragAnyDirection}
             verticalDownDrag
-            onDragStateChange={(id) => { if (id) swipeStart.current = null }}
+            onDragStateChange={(id) => { if (id) { swipeStart.current = null; swipeTabId.current = null } }}
             className={`flex items-center ${rowGap} ${rowPad} ${rowHeight} ${rowMin} border-r border-border shrink-0 select-none cursor-pointer transition-colors ${TONE_WEAK[tone]} ${
               isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
             }`}
