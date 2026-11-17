@@ -6,6 +6,7 @@
 // actions. Defensive: any failure leaves the session idle rather than throwing.
 
 import { useRef, useState, useCallback } from 'react'
+import { basePath } from '../api'
 
 export type DapStatus = 'idle' | 'starting' | 'running' | 'stopped' | 'terminated'
 
@@ -63,9 +64,10 @@ function buildWsUrl(workspaceId: string | null | undefined, token: string | null
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const port = window.location.port
   const host = (port === '5173' || port === '5174') ? window.location.hostname + ':9090' : window.location.host
+  const base = basePath()
   // String(...) matches the implicit ToString coercion encodeURIComponent would
   // have applied to a null/undefined workspaceId/token in the untyped original.
-  return `${proto}//${host}/api/workspaces/${encodeURIComponent(String(workspaceId))}/dap`
+  return `${proto}//${host}${base}/api/workspaces/${encodeURIComponent(String(workspaceId))}/dap`
     + `?lang=${encodeURIComponent(lang)}&token=${encodeURIComponent(String(token))}`
 }
 

@@ -5,16 +5,20 @@
 export type GridRow = 'A' | 'B' | 'C'
 export type GridCol = 1 | 2 | 3 | 4 | 5
 export type CellId = `${GridRow}${GridCol}`
-export type Dir = 'tl' | 't' | 'tr' | 'l' | 'T' | 'r' | 'bl' | 'b' | 'br'
-export type SwipeDir = Exclude<Dir, 'T'>
+export type RadialDir = 'Bl' | 'B' | 'BR'
+export type Dir = 'tl' | 't' | 'tr' | 'l' | 'T' | 'r' | 'bl' | 'b' | 'br' | RadialDir
+export type SwipeDir = Exclude<Dir, 'T' | RadialDir>
 export type CellActions = Partial<Record<Dir, string>>
 export type GridConfig = Partial<Record<CellId, CellActions>>
 
 export const GRID_KEY = 'wede_terminal_grid'
 export const CELL_PX = 44
-export const RADIAL_PX = 148
+export const RADIAL_COLS = 3
+export const RADIAL_ROWS = 4
+export const RADIAL_PX = CELL_PX * RADIAL_COLS + 4 * (RADIAL_COLS - 1) + 8
+export const RADIAL_H = CELL_PX * RADIAL_ROWS + 4 * (RADIAL_ROWS - 1) + 8
 
-export const DIRS: Dir[] = ['tl', 't', 'tr', 'l', 'T', 'r', 'bl', 'b', 'br']
+export const DIRS: Dir[] = ['tl', 't', 'tr', 'l', 'T', 'r', 'bl', 'b', 'br', 'Bl', 'B', 'BR']
 export const SWIPE_DIRS: SwipeDir[] = ['tl', 't', 'tr', 'l', 'r', 'bl', 'b', 'br']
 
 export interface SpecialAction {
@@ -33,6 +37,7 @@ export const SPECIAL_TERMINAL_ACTIONS: Record<string, SpecialAction> = {
   'select-dock-position': { label: 'dock', title: 'dock position', description: 'Grid at the top or bottom of the terminal.' },
   'show-help': { label: '?', title: 'help', description: 'How the grid and the default keys work.' },
   'configure-behavior': { label: 'config', title: 'configure behavior', description: 'Assign actions to a grid button.' },
+  'show-json-config': { label: '{ }', title: 'menu config (JSON)', description: 'Copy, paste, download, or load the grid as JSON.' },
   'reset-to-defaults': { label: 'reset', title: 'reset to defaults', description: 'Restore the default 2x2 grid.' },
   'show-more': { label: 'more', title: 'more keys', description: 'Show extra keys; closes after one is sent.' },
   'show-special-keys': { label: 'keys', title: 'special keys', description: 'Show extra keys; closes after one is sent.' },
@@ -164,7 +169,7 @@ export interface QuickAssignment {
 export const QUICK_ASSIGNMENTS: Record<string, QuickAssignment> = {
   hamburger: { label: '= menu', description: 'tap settings, old swipes', actions: HAMBURGER },
   'special-chars': { label: '~ chars', description: 'Tab ~ $ | / -', actions: SPECIAL_CHARS },
-  fx: { label: 'Fx', description: 'F1..F9', actions: expandFx(1) },
+  fx: { label: 'Fx', description: 'function keys F1–F12', actions: expandFx(1) },
   'f10-f12': { label: 'F10-12', description: 'F10 F11 F12', actions: F10_12 },
   'delete-keys': { label: '⌫ del', description: 'Backspace Ctrl-U Ctrl-K Del', actions: DELETE_KEYS },
   'arrow-keys': { label: '↑↓←→', description: 'Arrow keys + word nav', actions: ARROW_KEYS },
@@ -196,6 +201,11 @@ export function gridBounds(grid: GridConfig): { rows: number; cols: number } {
   return { rows, cols }
 }
 
+// Every configurable location, row-major with column 1 rightmost.
+export const FULL_GRID_CELLS: CellId[] = ['A', 'B', 'C'].flatMap((row) =>
+  [5, 4, 3, 2, 1].map((col) => `${row}${col}` as CellId),
+)
+
 // Render order: row-major, columns from maxCol down to 1 (column 1 is rightmost).
 export function gridOrder(grid: GridConfig): CellId[] {
   const { rows, cols } = gridBounds(grid)
@@ -226,6 +236,25 @@ export function applyQuick(grid: GridConfig, cell: CellId, quick: string): GridC
   return { ...grid, [cell]: { ...q.actions } }
 }
 
+const CELL_ID_RE = /^[ABC][1-5]$/
+
+export function sanitizeGrid(raw: unknown): GridConfig | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out: GridConfig = {}
+  for (const [cell, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!CELL_ID_RE.test(cell) || !value || typeof value !== 'object' || Array.isArray(value)) continue
+    const actions: CellActions = {}
+    for (const [dir, action] of Object.entries(value as Record<string, unknown>)) {
+      if (!(DIRS as string[]).includes(dir)) continue
+      if (typeof action !== 'string' || !action) continue
+      if (!isSpecialAction(action) && seqForAction(action) == null) continue
+      actions[dir as Dir] = action
+    }
+    if (Object.keys(actions).length) out[cell as CellId] = actions
+  }
+  return hasSettingsAction(out) ? out : null
+}
+
 export function loadGrid(): GridConfig {
   try {
     const raw = localStorage.getItem(GRID_KEY)
@@ -241,11 +270,12 @@ export function saveGrid(grid: GridConfig): void {
   try { localStorage.setItem(GRID_KEY, JSON.stringify(grid)) } catch { /* ignore */ }
 }
 
-export type ActionGroup = 'special' | 'fx' | 'ctrl' | 'esc' | 'chars'
+export type ActionGroup = 'special' | 'text' | 'fx' | 'ctrl' | 'esc' | 'chars'
 export interface ActionItem { id: string; label: string; hint?: string }
 
 export const ACTION_GROUPS: { id: ActionGroup; label: string; description: string }[] = [
   { id: 'special', label: 'special', description: 'settings, sliders, swipe behaviors' },
+  { id: 'text', label: 'text', description: 'send any literal text, e.g. ZQ for vim' },
   { id: 'fx', label: 'Fx', description: 'F1..F12' },
   { id: 'ctrl', label: 'ctrl-x', description: 'Ctrl combinations' },
   { id: 'esc', label: 'esc-x', description: 'Esc combinations' },
@@ -258,6 +288,7 @@ export function groupItems(group: ActionGroup): ActionItem[] {
   if (group === 'special') {
     return Object.entries(SPECIAL_TERMINAL_ACTIONS).map(([id, s]) => ({ id, label: s.title, hint: s.description }))
   }
+  if (group === 'text') return []
   if (group === 'fx') return Array.from({ length: 12 }, (_, i) => ({ id: `send-f${i + 1}`, label: `F${i + 1}` }))
   if (group === 'ctrl') return 'abcdefghijklmnopqrstuvwxyz'.split('').map((c) => ({ id: `send-ctrl-${c}`, label: `C-${c}` }))
   if (group === 'esc') return 'abcdefghijklmnopqrstuvwxyz'.split('').map((c) => ({ id: `send-esc-${c}`, label: `Esc-${c}` }))

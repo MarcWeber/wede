@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 const apiTarget = process.env.VITE_API_TARGET || 'http://localhost:9090'
 
 export default defineConfig({
+  base: './',
   plugins: [
     react(),
     tailwindcss(),

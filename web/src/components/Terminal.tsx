@@ -3,6 +3,8 @@ import { Terminal as XTerminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { TerminalHandle, TerminalSettings } from '../types'
+import { basePath } from '../api'
+import { logUi } from '../lib/uiLog'
 
 interface TerminalProps {
   token: string | null | undefined
@@ -16,7 +18,7 @@ interface TerminalProps {
 }
 
 const TERM_SETTINGS_KEY = 'wede_terminal_settings'
-const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followMode: 'off', swipeMode: 'wheel', swipeModeDouble: 'cursor', swipeStep: 10, writeDelayMs: 250 }
+const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followMode: 'off', followMargin: 0.2, swipeMode: 'wheel', swipeModeDouble: 'cursor', swipeStep: 10, writeDelayMs: 250 }
 
 function readTermSettings(): TerminalSettings {
   try {
@@ -39,11 +41,26 @@ interface VirtualKeyboardLike extends EventTarget {
   boundingRect: DOMRect
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)
+}
+
+function describeTarget(target: EventTarget | null): string {
+  if (!(target instanceof HTMLElement)) return 'none'
+  const id = target.id ? `#${target.id}` : ''
+  const cls = target.className && typeof target.className === 'string'
+    ? `.${target.className.split(/\s+/).filter(Boolean).slice(0, 2).join('.')}`
+    : ''
+  return `${target.tagName.toLowerCase()}${id}${cls}`
+}
+
 export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ token, workspaceId, sessionId, visible, terminalTheme, initialCommand, onInitialRun, onTitle }, ref) {
   // Settings come from localStorage, written by the toolbar's = menu. The
   // toolbar also fires a same-tab custom event (the `storage` event only fires
   // in other tabs), so no polling is needed.
   const [termSettings, setTermSettings] = useState<TerminalSettings>(readTermSettings)
+  const [keyboardPad, setKeyboardPad] = useState(0)
   const settingsRef = useRef(termSettings)
   useEffect(() => { settingsRef.current = termSettings }, [termSettings])
   useEffect(() => {
@@ -59,6 +76,10 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
   const termRef = useRef<XTerminal | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const zoomRowsRef = useRef<number | null>(null)
+  const followTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const followBurstStartRef = useRef(0)
+  const scheduleFollowRef = useRef<() => void>(() => {})
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
   const ranInitialRef = useRef(false)
@@ -101,20 +122,49 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     if (!Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return
     const minCols = Math.max(0, Math.floor(settingsRef.current.minCols || 0))
     const minRows = Math.max(0, Math.floor(settingsRef.current.minRows || 0))
+    const isZoom = settingsRef.current.followMode === 'zoom'
     const cols = Math.max(proposed.cols, minCols)
-    const rows = Math.max(proposed.rows, minRows)
+    let rows = Math.max(proposed.rows, minRows)
+    if (isZoom) {
+      // Keep the row count frozen so the PTY does not reflow when the keyboard
+      // shrinks the viewport; CSS scales the rendered terminal vertically.
+      if (zoomRowsRef.current == null) zoomRowsRef.current = rows
+      rows = Math.max(zoomRowsRef.current, minRows)
+    } else {
+      zoomRowsRef.current = rows
+    }
     if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) return
     const cell = (term as unknown as XtermInternals)._core?._renderService?.dimensions?.css?.cell
     const xtermEl = term.element
+    let zoomScale: number | null = null
     if (xtermEl && cell?.width && cell?.height) {
-      if (cols > proposed.cols || rows > proposed.rows) {
+      if (isZoom || cols > proposed.cols || rows > proposed.rows) {
         xtermEl.style.width = `${Math.round(cols * cell.width)}px`
         xtermEl.style.height = `${Math.round(rows * cell.height)}px`
       } else {
         xtermEl.style.width = ''
         xtermEl.style.height = ''
       }
+      if (isZoom) {
+        const naturalHeight = Math.max(1, rows * cell.height)
+        const availableHeight = Math.max(1, container.clientHeight - keyboardPaddingRef.current)
+        const scale = Math.min(1.5, Math.max(0.2, availableHeight / naturalHeight))
+        zoomScale = scale
+        xtermEl.style.transformOrigin = 'left top'
+        xtermEl.style.transform = `scaleY(${scale.toFixed(4)})`
+      } else {
+        xtermEl.style.transformOrigin = ''
+        xtermEl.style.transform = ''
+      }
     }
+    logUi('debug', 'terminal', 'applySizing', {
+      followMode: settingsRef.current.followMode,
+      container: [container.clientWidth, container.clientHeight],
+      keyboardPad: keyboardPaddingRef.current,
+      proposed: [proposed.cols, proposed.rows],
+      final: [cols, rows],
+      zoomScale,
+    })
     if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows)
   }, [])
 
@@ -177,6 +227,8 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       // In dev mode (Vite on 5173), connect directly to backend on 9090
       const port = window.location.port
       const host = (port === '5173' || port === '5174') ? window.location.hostname + ':9090' : window.location.host
+      // Prepend the deployment base path so the WS works behind a sub-path proxy.
+      const base = basePath()
       // Pass auth token as a WebSocket subprotocol ("auth.<token>") so it never
       // appears in server access logs or browser history. The session ID is a
       // non-secret resumption handle passed as a query param.
@@ -184,8 +236,8 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       // Workspace-scoped path so everyone in a workspace shares one PTY per session id;
       // falls back to the legacy default-workspace route until the workspace id resolves.
       const path = workspaceId
-        ? `/api/workspaces/${encodeURIComponent(workspaceId)}/terminal`
-        : '/api/terminal'
+        ? `${base}/api/workspaces/${encodeURIComponent(workspaceId)}/terminal`
+        : `${base}/api/terminal`
       const ws = new WebSocket(
         `${protocol}//${host}${path}?session=${encodeURIComponent(sid)}`,
         [`auth.${token}`]
@@ -258,6 +310,11 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       }
     })
 
+    // Follow cursor is event-driven with a short settle delay. Cursor redraws
+    // fire onCursorMove too, so debounce avoids scrolling on every repaint.
+    term.onCursorMove(() => scheduleFollowRef.current())
+    term.onWriteParsed(() => scheduleFollowRef.current())
+
     const ro = new ResizeObserver(() => { applySizing() })
     ro.observe(containerRef.current)
 
@@ -288,9 +345,12 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     if (!term) return undefined
     term.options.fontSize = termSettings.fontSize ?? 12
     term.options.scrollback = termSettings.scrollback ?? 5000
-    const frame = requestAnimationFrame(() => applySizing())
+    const frame = requestAnimationFrame(() => {
+      applySizing()
+      if (termSettings.followMode === 'follow') scheduleFollowRef.current()
+    })
     return () => cancelAnimationFrame(frame)
-  }, [termSettings.fontSize, termSettings.scrollback, termSettings.minCols, termSettings.minRows, applySizing])
+  }, [termSettings.fontSize, termSettings.scrollback, termSettings.minCols, termSettings.minRows, termSettings.followMode, termSettings.followMargin, applySizing])
 
   // Do NOT auto-focus the terminal when it becomes visible — on mobile this
   // triggers the virtual keyboard and blocks the bottom of the screen.
@@ -308,11 +368,11 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner) }
   }, [visible, termSettings.minCols, termSettings.minRows, applySizing])
 
-  // Virtual Keyboard API (Chrome 94+, Android) — when the keyboard appears,
-  // adjust the container's padding-bottom so the terminal content scrolls up
-  // and isn't hidden behind the keyboard. With overlaysContent=true the browser
-  // won't resize the viewport, so we handle layout ourselves.
+  // Detect the software keyboard through the VirtualKeyboard API when present
+  // and fall back to visualViewport (iOS Safari, Firefox). The effective inset
+  // is 0 when the browser already resized the layout viewport.
   const keyboardPaddingRef = useRef(0)
+  const viewportBaselineRef = useRef(0)
 
   // Scroll the terminal so the cursor stays within a safe margin from all edges.
   // xterm.js cursorY is the absolute line in the buffer (not relative to viewport).
@@ -322,6 +382,7 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     const buf = term.buffer.active
     const cell = (term as unknown as XtermInternals)._core?._renderService?.dimensions?.css?.cell
     const container = containerRef.current
+    const marginFraction = Math.min(0.5, Math.max(0, settingsRef.current.followMargin ?? 0.2))
 
     // Min-size mode (minCols/minRows): `.xterm` is taller than the container
     // and the container is the scroller. `term.scrollToLine` only moves xterm's
@@ -330,7 +391,7 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     if (container && term.element && cell?.height && container.scrollHeight > container.clientHeight + 1) {
       term.scrollToBottom()
       const cursorPx = buf.cursorY * cell.height
-      const margin = Math.max(cell.height, Math.round(container.clientHeight * 0.1))
+      const margin = Math.max(0, Math.round(container.clientHeight * marginFraction))
       const top = container.scrollTop
       if (cursorPx < top + margin) {
         container.scrollTop = Math.max(0, cursorPx - margin)
@@ -343,12 +404,11 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     // Fit mode: xterm's own viewport scrolls the scrollback.
     // xterm.js cursorY is the absolute line in the buffer (not relative to viewport).
     // viewportY is the first visible line. We ensure the cursor stays at least
-    // MARGIN fraction away from the top and bottom of the visible area.
-    const MARGIN = 0.1
+    // marginFraction away from the top and bottom of the visible area.
     const absCursorLine = buf.baseY + buf.cursorY  // absolute line in buffer
     const totalRows = term.rows
     const viewportY = buf.viewportY               // first visible line (absolute)
-    const paddingRows = Math.max(1, Math.floor(totalRows * MARGIN))
+    const paddingRows = Math.max(0, Math.floor(totalRows * marginFraction))
     const topVisible = viewportY + paddingRows
     const bottomVisible = viewportY + totalRows - paddingRows
     const maxScroll = Math.max(0, buf.length - totalRows)
@@ -362,6 +422,22 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       const target = Math.min(absCursorLine + paddingRows - totalRows + 1, maxScroll)
       term.scrollToLine(target)
     }
+  }
+
+  // Debounced follow: wait until the cursor has been still for 250ms, but never
+  // defer longer than 500ms during continuous output/redraw.
+  scheduleFollowRef.current = () => {
+    if (settingsRef.current.followMode !== 'follow') return
+    const now = Date.now()
+    if (!followBurstStartRef.current) followBurstStartRef.current = now
+    const wait = now - followBurstStartRef.current > 500 ? 0 : 250
+    if (followTimerRef.current) clearTimeout(followTimerRef.current)
+    followTimerRef.current = setTimeout(() => {
+      followTimerRef.current = null
+      followBurstStartRef.current = 0
+      const term = termRef.current
+      if (term && settingsRef.current.followMode === 'follow') scrollCursorIntoView(term)
+    }, wait)
   }
 
   // Scroll cursor above the keyboard when it appears. Works regardless of
@@ -388,47 +464,162 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
 
   useEffect(() => {
     const vk = (navigator as Navigator & { virtualKeyboard?: VirtualKeyboardLike }).virtualKeyboard
-    if (!vk || !containerRef.current) return undefined
-    vk.overlaysContent = true
-
-    const onGeometryChange = () => {
-      const rect = vk.boundingRect
-      const newPadding = rect && rect.height > 0 ? Math.round(rect.height) : 0
-      keyboardPaddingRef.current = newPadding
-      const el = containerRef.current
-      if (el) {
-        el.style.paddingBottom = `${newPadding}px`
-        setTimeout(() => {
-          applySizing()
-          requestAnimationFrame(() => {
-            const term = termRef.current
-            if (!term) return
-            // Always scroll cursor above keyboard, regardless of followCursor
-            if (rect && rect.height > 0) {
-              scrollAboveKeyboard(term, rect.height)
-            }
-            // If follow mode is 'follow', also run the margin check
-            if (settingsRef.current.followMode === 'follow') {
-              scrollCursorIntoView(term)
-            }
-          })
-        }, 100)
+    const vv = window.visualViewport
+    if (vk) {
+      try {
+        vk.overlaysContent = true
+      } catch {
+        logUi('warn', 'keyboard', 'virtualKeyboard.overlaysContent failed')
       }
     }
-    vk.addEventListener('geometrychange', onGeometryChange)
-    return () => vk.removeEventListener('geometrychange', onGeometryChange)
+
+    let frame = 0
+    let baselineTimer: ReturnType<typeof setTimeout> | null = null
+    let focusTimer: ReturnType<typeof setTimeout> | null = null
+    const currentHeight = () => Math.max(window.innerHeight, vv?.height ?? 0)
+    viewportBaselineRef.current = currentHeight()
+    logUi('info', 'keyboard', 'keyboard detection installed', {
+      virtualKeyboard: Boolean(vk),
+      visualViewport: Boolean(vv),
+      baseline: viewportBaselineRef.current,
+    })
+
+    const scheduleBaselineRefresh = () => {
+      if (baselineTimer) clearTimeout(baselineTimer)
+      baselineTimer = setTimeout(() => {
+        baselineTimer = null
+        if (keyboardPaddingRef.current !== 0) return
+        const baseline = currentHeight()
+        viewportBaselineRef.current = baseline
+        logUi('debug', 'keyboard', 'baseline refreshed', { baseline })
+      }, 500)
+    }
+
+    const updateInset = (reason: string) => {
+      const layoutH = window.innerHeight
+      const visualH = vv?.height ?? layoutH
+      const visualTop = vv?.offsetTop ?? 0
+      const visualBottom = visualTop + visualH
+      const scale = vv?.scale ?? 1
+      const vkRect = vk?.boundingRect
+      const vkH = vkRect && Number.isFinite(vkRect.height) ? Math.max(0, Math.round(vkRect.height)) : 0
+      const current = Math.max(layoutH, visualH)
+      if (!viewportBaselineRef.current || viewportBaselineRef.current <= 0) {
+        viewportBaselineRef.current = current
+      }
+      const baseline = viewportBaselineRef.current
+      const threshold = Math.max(120, Math.round(baseline * 0.15))
+      const layoutInset = baseline - layoutH
+      const visualInset = baseline - visualBottom
+      let inset = 0
+      let source = 'none'
+
+      if (scale > 1.02) {
+        source = 'pinch'
+      } else if (layoutInset > threshold) {
+        // The browser already made room by resizing the layout viewport.
+        source = 'layout'
+      } else if (vkH > 0) {
+        inset = Math.min(vkH, Math.max(0, layoutH))
+        source = 'virtualkeyboard'
+      } else if (visualInset > threshold) {
+        inset = Math.min(Math.round(visualInset), Math.max(0, layoutH))
+        source = 'visualviewport'
+      }
+
+      const changed = inset !== keyboardPaddingRef.current
+      if (changed) {
+        keyboardPaddingRef.current = inset
+        setKeyboardPad(inset)
+        if (frame) cancelAnimationFrame(frame)
+        frame = requestAnimationFrame(() => {
+          applySizing()
+          const term = termRef.current
+          if (!term) return
+          const mode = settingsRef.current.followMode
+          if (mode !== 'zoom' && inset > 0) scrollAboveKeyboard(term, inset)
+          if (mode === 'follow') scheduleFollowRef.current()
+        })
+      }
+
+      if (inset === 0) scheduleBaselineRefresh()
+      else if (baselineTimer) {
+        clearTimeout(baselineTimer)
+        baselineTimer = null
+      }
+
+      logUi('debug', 'keyboard', changed ? 'inset changed' : 'viewport', {
+        reason,
+        source,
+        baseline,
+        layoutH,
+        visualH,
+        visualTop,
+        scale,
+        vkH,
+        layoutInset,
+        visualInset,
+        inset,
+        focused: describeTarget(document.activeElement),
+      })
+    }
+
+    const onResize = () => updateInset('resize')
+    const onScroll = () => updateInset('scroll')
+    const onVk = () => updateInset('geometrychange')
+    const onFocusIn = (event: FocusEvent) => {
+      if (isEditableTarget(event.target)) logUi('debug', 'keyboard', 'editable focused', { target: describeTarget(event.target) })
+      updateInset('focusin')
+    }
+    const onFocusOut = (event: FocusEvent) => {
+      logUi('debug', 'keyboard', 'focusout', { target: describeTarget(event.target) })
+      if (focusTimer) clearTimeout(focusTimer)
+      focusTimer = setTimeout(() => {
+        focusTimer = null
+        updateInset('focusout')
+      }, 100)
+    }
+    const onOrientation = () => {
+      viewportBaselineRef.current = 0
+      zoomRowsRef.current = null
+      requestAnimationFrame(() => {
+        updateInset('orientation')
+        applySizing()
+      })
+    }
+
+    vv?.addEventListener('resize', onResize)
+    vv?.addEventListener('scroll', onScroll)
+    vk?.addEventListener('geometrychange', onVk)
+    window.addEventListener('resize', onResize)
+    window.addEventListener('orientationchange', onOrientation)
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
+    updateInset('install')
+
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+      if (baselineTimer) clearTimeout(baselineTimer)
+      if (focusTimer) clearTimeout(focusTimer)
+      vv?.removeEventListener('resize', onResize)
+      vv?.removeEventListener('scroll', onScroll)
+      vk?.removeEventListener('geometrychange', onVk)
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('orientationchange', onOrientation)
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
+    }
   }, [applySizing])
 
-  // Follow cursor — when followMode is 'follow', continuously watch the cursor
-  // position and scroll so it stays within a safe margin from all edges.
-  // Uses settingsRef to always read the latest followMode value.
+  // Re-fit when the keyboard height state changes (shrink mode uses it as a
+  // real height reduction, zoom mode uses it to compute the CSS scale).
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (settingsRef.current.followMode !== 'follow') return
-      const term = termRef.current
-      if (term) scrollCursorIntoView(term)
-    }, 200)
-    return () => clearInterval(interval)
+    const frame = requestAnimationFrame(() => applySizing())
+    return () => cancelAnimationFrame(frame)
+  }, [keyboardPad, applySizing])
+
+  useEffect(() => () => {
+    if (followTimerRef.current) clearTimeout(followTimerRef.current)
   }, [])
 
   // Vertical swipe → keys (mobile). In 'scroll' mode the gesture is left to the
@@ -614,17 +805,20 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
   // the width/height set by applySizing change.
   const scrolls = termSettings.minCols > 0 || termSettings.minRows > 0
   const isShrink = termSettings.followMode === 'shrink'
+  const isZoom = termSettings.followMode === 'zoom'
   return (
     <div
       ref={containerRef}
       data-testid="terminal-scroll"
-      className={`w-full ${scrolls ? 'overflow-auto' : ''}`}
+      className={`w-full ${scrolls ? 'overflow-auto' : isZoom ? 'overflow-hidden' : ''}`}
       style={{
         display: visible ? 'block' : 'none',
         touchAction: 'pan-x pan-y',
         overscrollBehavior: 'contain',
-        height: isShrink ? '300px' : '100%',
-        flexShrink: isShrink ? 0 : undefined,
+        height: isShrink && keyboardPad > 0 ? `calc(100% - ${keyboardPad}px)` : '100%',
+        minHeight: 0,
+        flex: isShrink || isZoom ? '1 1 0%' : undefined,
+        paddingBottom: !isShrink && !isZoom && keyboardPad > 0 ? `${keyboardPad}px` : undefined,
       }}
     />
   )

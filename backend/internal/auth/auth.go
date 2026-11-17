@@ -252,6 +252,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 			Path:     "/",
 			MaxAge:   int(SessionTTL / time.Second),
 			HttpOnly: true,
+			Secure:   isHTTPS(r),
 			SameSite: http.SameSiteLaxMode,
 		})
 		json.NewEncoder(w).Encode(map[string]any{
@@ -298,6 +299,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   int(SessionTTL / time.Second),
 		HttpOnly: true,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -307,6 +309,19 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		"role":     string(RoleOwner),
 		"teacher":  true,
 	})
+}
+
+// isHTTPS reports whether the request arrived over HTTPS, checking both the
+// direct TLS connection and the X-Forwarded-Proto header set by a trusted
+// reverse proxy.
+func isHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto == "https" {
+		return true
+	}
+	return false
 }
 
 // checkPassword compares a password against a stored value that may be plain
@@ -441,6 +456,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 

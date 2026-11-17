@@ -323,6 +323,9 @@ for the SSRF guard on `/send`.
 
 ## Tunnel (public exposure, owner-only)
 
+These routes are mounted only when `"tunnel_enabled": true` is set in
+`wede.config.json` (the default is `false`); otherwise they return 404.
+
 | Method & path | Role | Description |
 |---|---|---|
 | `GET /api/tunnel` | owner | `{"status","publicUrl","config":{serverUrl,token:"",name},"log":[...]}` — token always redacted. |

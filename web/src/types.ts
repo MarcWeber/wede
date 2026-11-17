@@ -89,7 +89,7 @@ export interface TerminalSettings {
   minCols: number        // minimum PTY columns; below this the view scrolls (0 = fit to width)
   minRows: number        // minimum PTY rows; below this the view scrolls (0 = fit to height)
   scrollback: number     // scrollback lines (default 5000)
-  followMode: 'off' | 'follow' | 'shrink'  // 'off': no auto-scroll; 'follow': keep cursor visible; 'shrink': maximize terminal to fill remaining space (default 'off')
+  followMode: 'off' | 'follow' | 'shrink' | 'zoom'  // 'off': no auto-scroll; 'follow': keep cursor visible; 'shrink': fill remaining space and reflow rows; 'zoom': keep rows/cols and y-scale to fit (default 'off')
   followMargin: number   // safety margin below the cursor, fraction of terminal height (default 0.2)
   swipeMode: TerminalSwipeMode  // one-finger vertical swipe action (default 'wheel')
   swipeModeDouble: TerminalSwipeMode  // two-finger vertical swipe action (default 'cursor')

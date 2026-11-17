@@ -53,6 +53,11 @@ func securityHeaders(cfg *config.Config, next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// When the request arrived over HTTPS (direct TLS or via a reverse proxy
+		// that sets X-Forwarded-Proto), tell the browser to always use HTTPS.
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -155,11 +160,10 @@ func main() {
 	}
 	wsMgr.StartJanitor(5 * time.Second)
 
-	// Optional sovereign public tunnel (owner-only): the Ephor agent dials
-	// the owner's own relay and proxies to wede's loopback listen addr. Pin the
-	// agent's local target to loopback regardless of cfg.Host (never expose an
-	// off-loopback bind through the tunnel).
-	tunnelMgr := tunnel.New("127.0.0.1:" + cfg.Port)
+	var tunnelMgr *tunnel.Manager
+	if cfg.TunnelEnabled {
+		tunnelMgr = tunnel.New("127.0.0.1:" + cfg.Port)
+	}
 
 	mux := http.NewServeMux()
 
@@ -187,13 +191,12 @@ func main() {
 	protected.Handle("GET /api/auth/tokens", ro(http.HandlerFunc(authHandler.HandleListTokens)))
 	protected.Handle("DELETE /api/auth/tokens/{id}", ro(http.HandlerFunc(authHandler.HandleRevokeToken)))
 
-	// Public-tunnel management — owner-only. Lets an owner expose a loopback-bound
-	// wede via their OWN sovereign Ephor server; wede runs the embedded relay
-	// agent and reports the live public URL. No third-party frp binary.
-	protected.Handle("GET /api/tunnel", ro(http.HandlerFunc(tunnelMgr.HandleGet)))
-	protected.Handle("PUT /api/tunnel/config", ro(http.HandlerFunc(tunnelMgr.HandleSetConfig)))
-	protected.Handle("POST /api/tunnel/start", ro(http.HandlerFunc(tunnelMgr.HandleStart)))
-	protected.Handle("POST /api/tunnel/stop", ro(http.HandlerFunc(tunnelMgr.HandleStop)))
+	if tunnelMgr != nil {
+		protected.Handle("GET /api/tunnel", ro(http.HandlerFunc(tunnelMgr.HandleGet)))
+		protected.Handle("PUT /api/tunnel/config", ro(http.HandlerFunc(tunnelMgr.HandleSetConfig)))
+		protected.Handle("POST /api/tunnel/start", ro(http.HandlerFunc(tunnelMgr.HandleStart)))
+		protected.Handle("POST /api/tunnel/stop", ro(http.HandlerFunc(tunnelMgr.HandleStop)))
+	}
 
 	// Server log tail for the UI log_view tab (T8). Returns the last n lines.
 	protected.HandleFunc("GET /api/logs", func(w http.ResponseWriter, r *http.Request) {
@@ -421,13 +424,13 @@ func main() {
 		log.Printf("tip: run with a path to open directly: ./wede /path/to/project")
 	}
 
-	// Stop the relay tunnel on shutdown so we don't leave a public tunnel open to
-	// a dead local port.
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		<-sig
-		tunnelMgr.Close()
+		if tunnelMgr != nil {
+			tunnelMgr.Close()
+		}
 		os.Exit(0)
 	}()
 

@@ -146,10 +146,15 @@ is stored per browser in `localStorage["wede_terminal_grid"]`.
   one-/two-finger swipe behavior, special keys, configure behavior, JSON
   config, reset, and help. The `←→` preset sends arrows/word/line movements; the `⌫` preset sends Backspace, Del, Ctrl-U, and Ctrl-K.
 - Configure behavior shows the full 15-location grid (`A5..A1`, `B5..B1`,
-  `C5..C1`). Empty locations are dimmed. Select any location, then use
-  **clear all**, the direction grid, or a preset below it. At least one cell
+  `C5..C1`). Empty locations are dimmed. Select a location, then **clear all**,
+  the 3×4 direction grid, and finally the fast assignments. At least one cell
   must keep `T = open-settings`; assign settings to a second button before
   overwriting the last one.
+- Follow modes: **Follow cursor** scrolls after the cursor has been still for
+  ~250 ms (max ~500 ms during continuous output); the follow margin controls
+  the safe top/bottom band. **Shrink & maximize** fills the remaining space and
+  reflows rows above the keyboard. **Zoom (distort)** keeps rows, columns, and
+  font size, and y-scales the rendered terminal to fit the remaining space.
 - **text** assigns any literal text, including escapes: `\n` Enter, `\r` CR,
   `\t` Tab, `\e` Esc. Example: `ZQ` to quit vim.
 - **menu config (JSON)** shows the grid as JSON: paste and apply, copy,
@@ -352,8 +357,16 @@ mint a bearer token authorizing your chosen public name (`wede`). Point a DNS
 record for the relay (and the name's subdomain, if your relay uses vhost routing)
 at the VPS.
 
-**In wede** — no config files. Open **Settings → Public access (Ephor)** as
-the owner and fill in:
+**In wede** — enable the feature in `wede.config.json` first (it is off by
+default), then restart wede:
+
+```json
+{
+  "tunnel_enabled": true
+}
+```
+
+Open **Settings → Public access (Ephor)** as the owner and fill in:
 
 | Field | Example | Notes |
 |-------|---------|-------|

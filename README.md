@@ -223,6 +223,7 @@ directory and its parents, `~/.config/wede/`, then next to the binary. A
 | `port` | `9090` | HTTP port. Override at runtime with `--port` / `-p`. |
 | `host` | `127.0.0.1` | Bind address. Loopback only by default; set to `0.0.0.0` to expose on the network. |
 | `frame_ancestors` | `""` | CSP `frame-ancestors` allow-list for iframe embedding. Empty denies all cross-origin framing; set to e.g. `https://vulos.org` to embed in the Vulos OS shell. |
+| `tunnel_enabled` | `false` | Enables the owner-only public tunnel and **Settings → Public access** panel. Off by default. |
 
 The config file holds your password and is gitignored by default — never commit
 it. Start from [`wede.config.example.json`](wede.config.example.json).

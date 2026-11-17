@@ -41,6 +41,31 @@ test('tapping the ⚙ cell opens the settings menu', async ({ wede }) => {
   expect(box!.y + box!.height).toBeLessThanOrEqual(await page.evaluate(() => window.innerHeight))
 })
 
+test('help shows the complete terminal guide', async ({ wede }) => {
+  const { page } = wede
+  await seed(page, 'authed')
+  await page.goto('/')
+  await expect(page.getByText('README.md')).toBeVisible()
+  await openTerminal(page)
+
+  await page.getByTestId('terminal-cell-B2').click()
+  const menu = page.getByTestId('terminal-menu')
+  await expect(menu).toBeVisible()
+  await menu.getByText('help', { exact: true }).click()
+
+  const help = menu.getByTestId('terminal-help')
+  await expect(help).toBeVisible()
+  await expect(help.getByText('Keys that usually work')).toBeVisible()
+  await expect(help.getByText('Shrink & maximize')).toBeVisible()
+  await expect(help.getByText('window.wedeLog')).toBeVisible()
+  await expect(help.getByText('menu config (JSON)')).toBeVisible()
+
+  const box = await menu.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.y).toBeGreaterThanOrEqual(0)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(await page.evaluate(() => window.innerHeight))
+})
+
 test('configure behavior lists the grid buttons', async ({ wede }) => {
   const { page } = wede
   await seed(page, 'authed')
@@ -116,6 +141,25 @@ test('follow cursor margin defaults to 20% and is adjustable', async ({ wede }) 
     const raw = localStorage.getItem('wede_terminal_settings')
     return raw ? (JSON.parse(raw) as { followMargin?: number }).followMargin : undefined
   })).toBe(0.5)
+})
+
+test('follow mode offers shrink and zoom-distort', async ({ wede }) => {
+  const { page } = wede
+  await seed(page, 'authed')
+  await page.goto('/')
+  await expect(page.getByText('README.md')).toBeVisible()
+  await openTerminal(page)
+
+  await page.getByTestId('terminal-cell-B2').click()
+  const menu = page.getByTestId('terminal-menu')
+  await menu.getByTitle('follow: off').click()
+  await expect(menu.getByText('Shrink & maximize')).toBeVisible()
+  await expect(menu.getByText('Zoom (distort)')).toBeVisible()
+  await menu.getByText('Zoom (distort)').click()
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = localStorage.getItem('wede_terminal_settings')
+    return raw ? (JSON.parse(raw) as { followMode?: string }).followMode : undefined
+  })).toBe('zoom')
 })
 
 test('the settings menu fits inside a short landscape viewport', async ({ wede }) => {

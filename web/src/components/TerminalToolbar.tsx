@@ -1,13 +1,15 @@
 import { useState, useRef, useLayoutEffect, useCallback, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
-  ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, Hand,
+  ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, Hand, Braces,
   Settings2, HelpCircle, ChevronLeft, RotateCcw, Type, Columns3, Keyboard, X, Droplets,
 } from 'lucide-react'
 import type { TerminalSettings, TerminalSwipeMode } from '../types'
+import TerminalHelp from './TerminalHelp'
 import {
-  CELL_PX, RADIAL_PX, DIRS, ACTION_GROUPS, QUICK_ASSIGNMENTS, KEYS, CTRL_KEYS,
+  CELL_PX, RADIAL_PX, RADIAL_H, FULL_GRID_CELLS, DIRS, ACTION_GROUPS, QUICK_ASSIGNMENTS, KEYS, CTRL_KEYS,
   FN_KEYS, CHAR_KEYS, actionLabel, actionTitle, applyQuick, cellPrimaryLabel,
-  cellTitle, defaultGrid, dirFromDelta, gridBounds, gridOrder, groupItems,
+  cellTitle, defaultGrid, dirFromDelta, gridBounds, gridOrder, groupItems, sanitizeGrid,
   hasSettingsAction, isSpecialAction, loadGrid, saveGrid, seqForAction,
   setCellAction,
   type ActionGroup, type CellId, type CellActions, type Dir, type GridConfig,
@@ -26,11 +28,16 @@ interface TerminalToolbarProps {
 }
 
 const DEFAULT_TERM_SETTINGS: TerminalSettings = {
-  fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followMode: 'off',
+  fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followMode: 'off', followMargin: 0.2,
   swipeMode: 'wheel', swipeModeDouble: 'cursor',
   swipeStep: 10, writeDelayMs: 250,
 }
 const TERM_SETTINGS_KEY = 'wede_terminal_settings'
+
+function decodeEscapes(text: string): string {
+  return text.replace(/\\([nrte])/g, (_m, c: string) =>
+    c === 'n' ? '\n' : c === 'r' ? '\r' : c === 't' ? '\t' : '\x1b')
+}
 
 const SWIPE_OPTIONS: { mode: TerminalSwipeMode; label: string; hint: string }[] = [
   { mode: 'cursor', label: 'Cursor movement', hint: '↑ / ↓' },
@@ -42,7 +49,7 @@ const SWIPE_OPTIONS: { mode: TerminalSwipeMode; label: string; hint: string }[] 
 ]
 
 type View =
-  | 'settings' | 'dock' | 'font' | 'min' | 'followMode'
+  | 'settings' | 'dock' | 'font' | 'min' | 'followMode' | 'followMargin' | 'json'
   | 'swipeSingle' | 'swipeDouble' | 'help' | 'keys' | 'transparency'
   | 'arrowSpeed' | 'configure' | 'slot' | 'group' | 'actions'
 
@@ -58,10 +65,15 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
   const [cfgError, setCfgError] = useState<string | null>(null)
   const [radial, setRadial] = useState<{ id: CellId; left: number; top: number } | null>(null)
   const [box, setBox] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null)
+  const [jsonText, setJsonText] = useState('')
+  const [jsonMsg, setJsonMsg] = useState<string | null>(null)
+  const [customText, setCustomText] = useState('')
 
   const gridRef = useRef<HTMLDivElement>(null)
   const gestureRef = useRef<{ id: CellId; x: number; y: number; t: number; moved: boolean; long: boolean } | null>(null)
   const longTimerRef = useRef<number | null>(null)
+  const mouseTimerRef = useRef<number | null>(null)
+  const lastTouchAtRef = useRef(0)
   const suppressClickRef = useRef(false)
   const suppressRadialClickRef = useRef(false)
 
@@ -81,6 +93,25 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
 
   const commitGrid = (next: GridConfig) => { setGrid(next); saveGrid(next) }
   const resetGrid = () => { commitGrid(defaultGrid()); setCfgError(null) }
+  const applyJson = (text: string) => {
+    try {
+      const parsed = sanitizeGrid(JSON.parse(text))
+      if (!parsed) { setJsonMsg('invalid grid: keep at least one settings action'); return }
+      commitGrid(parsed)
+      setJsonMsg('applied')
+    } catch {
+      setJsonMsg('invalid JSON')
+    }
+  }
+  const downloadJson = () => {
+    const blob = new Blob([jsonText], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'wede-terminal-grid.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const runSpecial = (id: string) => {
     switch (id) {
@@ -90,8 +121,10 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
       case 'select-single-swipe-behavior': setView('swipeSingle'); break
       case 'select-double-swipe-behavior': setView('swipeDouble'); break
       case 'select-follow-mode': setView('followMode'); break
+      case 'select-follow-margin': setView('followMargin'); break
       case 'select-dock-position': setView('dock'); break
       case 'show-help': setView('help'); break
+      case 'show-json-config': setJsonText(JSON.stringify(grid, null, 2)); setJsonMsg(null); setView('json'); break
       case 'configure-behavior': setCfgCell(null); setCfgError(null); setView('configure'); break
       case 'reset-to-defaults': resetGrid(); break
       case 'show-more':
@@ -116,7 +149,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     setRadial({
       id,
       left: Math.min(Math.max(margin, cx - RADIAL_PX / 2), window.innerWidth - margin - RADIAL_PX),
-      top: Math.min(Math.max(margin, cy - RADIAL_PX / 2), window.innerHeight - margin - RADIAL_PX),
+      top: Math.min(Math.max(margin, cy - RADIAL_H / 2), window.innerHeight - margin - RADIAL_H),
     })
   }, [])
 
@@ -128,6 +161,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
   }
   const onCellDown = (e: React.TouchEvent, id: CellId) => {
     const t = e.touches[0]
+    lastTouchAtRef.current = Date.now()
     gestureRef.current = { id, x: t.clientX, y: t.clientY, t: Date.now(), moved: false, long: false }
     suppressClickRef.current = false
     clearLong()
@@ -165,6 +199,30 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     }
   }
   const onCellCancel = () => { clearLong(); gestureRef.current = null }
+  const clearMouseLong = () => {
+    if (mouseTimerRef.current != null) {
+      clearTimeout(mouseTimerRef.current)
+      mouseTimerRef.current = null
+    }
+  }
+  const onCellMouseDown = (e: React.MouseEvent, id: CellId) => {
+    if (e.button !== 0) return
+    // Synthetic mouse events follow a real touch; the touch handlers already
+    // open the radial and would otherwise get a second one here.
+    if (Date.now() - lastTouchAtRef.current < 600) return
+    clearMouseLong()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    mouseTimerRef.current = window.setTimeout(() => {
+      mouseTimerRef.current = null
+      suppressClickRef.current = true
+      showRadial(id, rect)
+    }, 450)
+  }
+  const onCellMouseMove = (e: React.MouseEvent) => {
+    if (mouseTimerRef.current == null) return
+    if (Math.hypot(e.movementX, e.movementY) > 2) clearMouseLong()
+  }
+  const onCellMouseUp = () => { clearMouseLong() }
   const onCellClick = (e: React.MouseEvent, id: CellId) => {
     if (suppressClickRef.current) { suppressClickRef.current = false; return }
     const actions = grid[id]
@@ -180,7 +238,8 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     const margin = 8
     const vw = window.innerWidth
     const vh = window.innerHeight
-    const width = Math.min(280, Math.max(200, vw - margin * 2))
+    const preferred = view === 'help' ? 420 : 280
+    const width = Math.min(preferred, Math.max(200, vw - margin * 2))
     const left = Math.min(Math.max(margin, r.right - width), vw - margin - width)
     const below = vh - r.bottom - margin
     const above = r.top - margin
@@ -189,16 +248,14 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     setBox(openBelow
       ? { left, width, top: r.bottom + 6, maxHeight }
       : { left, width, bottom: vh - r.top + 6, maxHeight })
-  }, [])
+  }, [view])
   useLayoutEffect(() => {
     if (!view) return undefined
     placeMenu()
     const reposition = () => placeMenu()
     window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)
     return () => {
       window.removeEventListener('resize', reposition)
-      window.removeEventListener('scroll', reposition, true)
     }
   }, [view, placeMenu])
 
@@ -206,7 +263,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     if (!cfgCell || !cfgDir) return
     const next = setCellAction(grid, cfgCell, cfgDir, action)
     if (!hasSettingsAction(next)) {
-      setCfgError('Keep at least one settings (=) action in the grid')
+      setCfgError('assign a second button to the settings before overwriting it!')
       return
     }
     setCfgError(null)
@@ -217,13 +274,24 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     if (!cfgCell) return
     const next = applyQuick(grid, cfgCell, quick)
     if (!hasSettingsAction(next)) {
-      setCfgError('Keep at least one settings (=) action in the grid')
+      setCfgError('assign a second button to the settings before overwriting it!')
       return
     }
     setCfgError(null)
     commitGrid(next)
   }
 
+  const clearCell = () => {
+    if (!cfgCell) return
+    const next: GridConfig = { ...grid }
+    delete next[cfgCell]
+    if (!hasSettingsAction(next)) {
+      setCfgError('assign a second button to the settings before overwriting it!')
+      return
+    }
+    setCfgError(null)
+    commitGrid(next)
+  }
   const back = (to: View) => (
     <button
       onClick={() => setView(to)}
@@ -232,9 +300,10 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
       <ChevronLeft className="w-3 h-3" /> back
     </button>
   )
-  const row = (icon: ReactNode, label: string, onClick: () => void, hint?: string, active = false) => (
+  const row = (icon: ReactNode, label: string, onClick: () => void, hint?: string, active = false, testId?: string) => (
     <button
       key={label}
+      data-testid={testId}
       onClick={onClick}
       className={`w-full min-h-[40px] px-3 text-left text-sm flex items-center gap-2 transition-colors ${
         active ? 'bg-accent text-bg-primary' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
@@ -284,6 +353,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
       <>
         <div className="flex flex-wrap gap-1 px-2 py-2 border-b border-border/50">
           {iconBtn(<Eye className="w-4 h-4" />, `follow: ${termSettings.followMode ?? 'off'}`, () => setView('followMode'))}
+          {iconBtn(<span className="text-[11px] font-semibold">%</span>, 'follow margin', () => setView('followMargin'))}
           {iconBtn(dock.position === 'top' ? <ArrowUpToLine className="w-4 h-4" /> : <ArrowDownToLine className="w-4 h-4" />, `dock: ${dock.position}`, () => setDock({ position: dock.position === 'top' ? 'bottom' : 'top' }))}
           {iconBtn(<Type className="w-4 h-4" />, 'font size', () => setView('font'))}
           {iconBtn(<Columns3 className="w-4 h-4" />, `min: ${termSettings.minCols || 'auto'}/${termSettings.minRows || 'auto'}`, () => setView('min'))}
@@ -295,15 +365,17 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         </div>
         {row(<Settings2 className="w-4 h-4" />, 'configure behavior', () => { setCfgCell(null); setCfgError(null); setView('configure') })}
         {row(<RotateCcw className="w-4 h-4" />, 'reset to defaults', resetGrid)}
+        {row(<Braces className="w-4 h-4" />, 'menu config (JSON)', () => { setJsonText(JSON.stringify(grid, null, 2)); setJsonMsg(null); setView('json') })}
         {row(<HelpCircle className="w-4 h-4" />, 'help', () => setView('help'))}
         {row(<Keyboard className="w-4 h-4" />, 'show more keys', () => setView('keys'))}
       </>
     )
     if (view === 'followMode') {
-      const modes: { mode: 'off' | 'follow' | 'shrink'; label: string; hint: string }[] = [
+      const modes: { mode: TerminalSettings['followMode']; label: string; hint: string }[] = [
         { mode: 'off', label: 'Off', hint: 'No auto-scroll' },
         { mode: 'follow', label: 'Follow cursor', hint: 'Keep cursor visible while scrolling' },
-        { mode: 'shrink', label: 'Shrink & maximize', hint: 'Maximize terminal to fill remaining screen space' },
+        { mode: 'shrink', label: 'Shrink & maximize', hint: 'Fill the remaining space; rows reflow above the keyboard' },
+        { mode: 'zoom', label: 'Zoom (distort)', hint: 'Y-scale to fit remaining space; keep rows/cols and font size' },
       ]
       return (
         <>
@@ -323,6 +395,15 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         </>
       )
     }
+    if (view === 'followMargin') return (
+      <>
+        {back('settings')}
+        {rangeRow('follow margin', Math.round((termSettings.followMargin ?? 0.2) * 100), 0, 50, (n) => saveTermSettings({ ...termSettings, followMargin: n / 100 }), '%')}
+        <div className="px-3 pb-2 text-[10px] text-text-muted leading-relaxed">
+          How far the cursor stays from the top/bottom edge. 0% scrolls only when the cursor would leave the view; 50% keeps it near the middle.
+        </div>
+      </>
+    )
     if (view === 'transparency') return (
       <>
         {back('settings')}
@@ -395,19 +476,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     if (view === 'help') return (
       <>
         {back('settings')}
-        <div className="px-3 py-2 text-[11px] text-text-secondary leading-relaxed space-y-1">
-          <div className="text-text-primary font-semibold">grid</div>
-          <div>tap: run the button's action</div>
-          <div>swipe: run the action assigned to that direction</div>
-          <div>long-press: show the assigned directions</div>
-          <div className="pt-1 text-text-primary font-semibold">default = button</div>
-          <div>↑ fg · ↓ C-z · ← C-c · → Tab</div>
-          <div>↖ C-p · ↗ C-l · ↙ C-n · ↘ C-r</div>
-          <div className="pt-1 text-text-primary font-semibold">shell</div>
-          <div><span className="font-mono">C-p</span> / <span className="font-mono">C-n</span> cycle previous commands</div>
-          <div><span className="font-mono">C-r</span> search previous commands</div>
-          <div><span className="font-mono">C-l</span> redraw</div>
-        </div>
+        <TerminalHelp />
       </>
     )
     if (view === 'keys') {
@@ -439,6 +508,39 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         </>
       )
     }
+    if (view === 'json') return (
+      <>
+        {back('settings')}
+        <div className="px-3 py-1 text-[11px] text-text-primary font-semibold">menu config (JSON)</div>
+        <textarea
+          data-testid="terminal-json"
+          value={jsonText}
+          onChange={(e) => { setJsonText(e.target.value); setJsonMsg(null) }}
+          spellCheck={false}
+          className="mx-2 mb-2 h-40 w-[calc(100%-1rem)] resize-none rounded border border-border bg-bg-secondary p-2 font-mono text-[11px] text-text-primary"
+        />
+        {jsonMsg && <div className="px-3 pb-1 text-[11px] text-text-muted">{jsonMsg}</div>}
+        <div className="flex flex-wrap gap-1 px-2 pb-2">
+          <button data-testid="terminal-json-apply" onClick={() => applyJson(jsonText)} className="px-2 py-1 text-[11px] rounded bg-bg-secondary border border-border text-text-primary active:bg-bg-active">apply</button>
+          <button data-testid="terminal-json-copy" onClick={() => { void navigator.clipboard?.writeText(jsonText) }} className="px-2 py-1 text-[11px] rounded bg-bg-secondary border border-border text-text-primary active:bg-bg-active">copy</button>
+          <button data-testid="terminal-json-download" onClick={downloadJson} className="px-2 py-1 text-[11px] rounded bg-bg-secondary border border-border text-text-primary active:bg-bg-active">download</button>
+          <label className="px-2 py-1 text-[11px] rounded bg-bg-secondary border border-border text-text-primary active:bg-bg-active">
+            load file
+            <input
+              data-testid="terminal-json-file"
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                void file.text().then((text) => { setJsonText(text); applyJson(text) })
+              }}
+            />
+          </label>
+        </div>
+      </>
+    )
     if (view === 'configure') return (
       <>
         {back('settings')}
@@ -448,21 +550,35 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
           {iconBtn(<span className="w-4 h-4 flex items-center justify-center text-xs font-serif">••</span>, 'two-finger swipe', () => setView('swipeDouble'))}
           {iconBtn(<RotateCcw className="w-4 h-4" />, 'reset to defaults', resetGrid)}
         </div>
+        <div className="px-3 py-1 text-[10px] text-text-muted leading-relaxed">
+          You can customize the grid button behavior: T = tapping, directions = swipe or long-press.
+        </div>
         <div className="px-3 py-1 text-[10px] text-text-muted">select a button</div>
-        <div className="flex flex-wrap gap-1 px-2 pb-2">
-          {gridOrder(grid).map((id) => {
-            const actions = grid[id]
-            if (!actions || !Object.keys(actions).length) return null
-            return (
-              <button
-                key={id}
-                onClick={() => { setCfgCell(id); setCfgError(null); setView('slot') }}
-                className="flex items-center justify-center w-11 h-11 rounded-md border bg-bg-secondary border-border text-text-primary"
-              >
-                <span className="font-mono text-[11px] font-semibold">{id}</span>
-              </button>
-            )
-          })}
+        <div className="px-2 pb-2">
+          <div className="grid grid-cols-5 gap-1">
+            {FULL_GRID_CELLS.map((id) => {
+              const actions = grid[id]
+              const hasActions = actions && Object.keys(actions).length > 0
+              return (
+                <button
+                  key={id}
+                  data-testid={`configure-cell-${id}`}
+                  onClick={() => { setCfgCell(id); setCfgError(null); setView('slot') }}
+                  className={`flex items-center justify-center h-11 rounded-md border text-[11px] font-semibold ${
+                    hasActions
+                      ? 'bg-bg-secondary border-border text-text-primary'
+                      : 'border-dashed border-border/40 bg-bg-secondary/30 text-text-muted/50'
+                  }`}
+                  title={hasActions ? cellTitle(actions) : `empty cell ${id}`}
+                >
+                  <span className="flex flex-col items-center leading-tight">
+                    <span className="text-[9px] opacity-60">{id}</span>
+                    <span>{hasActions ? cellPrimaryLabel(actions) : '·'}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         </div>
       </>
     )
@@ -472,24 +588,22 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         <>
           {back('configure')}
           <div className="px-3 py-1 text-[11px] text-text-primary font-semibold">button {cfgCell}</div>
-          <div className="px-3 py-1 text-[10px] text-text-muted">presets</div>
-          <div className="flex flex-wrap gap-1 px-2 pb-2">
-            {Object.entries(QUICK_ASSIGNMENTS).map(([id, q]) => (
-              <button
-                key={id}
-                onClick={() => applyPreset(id)}
-                title={q.description}
-                className="px-2 py-1 text-[11px] rounded bg-bg-secondary border border-border text-text-primary active:bg-bg-active"
-              >
-                {q.label}
-              </button>
-            ))}
+          {cfgError && <div className="px-3 py-1 text-[11px] text-red-400">{cfgError}</div>}
+          <div className="px-2 pb-2">
+            <button
+              data-testid="cell-clear-all"
+              onClick={clearCell}
+              className="w-full flex items-center justify-center h-10 rounded-md border border-red-400/30 bg-red-400/10 text-red-400 text-[11px] font-semibold active:bg-red-400/20"
+            >
+              clear all
+            </button>
           </div>
           <div className="px-2 pb-2">
             <div className="grid grid-cols-3 gap-1" style={{ width: RADIAL_PX }}>
               {DIRS.map((dir) => (
                 <button
                   key={dir}
+                  data-testid={`slot-${dir}`}
                   onClick={() => { setCfgDir(dir); setCfgGroup(null); setView('group') }}
                   className="flex flex-col items-center justify-center w-11 h-11 rounded-md border bg-bg-secondary border-border text-text-primary active:bg-bg-active"
                 >
@@ -501,6 +615,21 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
               ))}
             </div>
           </div>
+          <div className="px-3 py-1 text-[10px] text-text-primary font-semibold border-t border-border/50">fast assignments</div>
+          <div className="px-3 pb-1 text-[9px] text-text-muted">presets (fast assigning many triggers)</div>
+          <div className="flex flex-wrap gap-1 px-2 pb-2">
+            {Object.entries(QUICK_ASSIGNMENTS).map(([id, q]) => (
+              <button
+                key={id}
+                onClick={() => applyPreset(id)}
+                title={q.description}
+                className="flex flex-col px-2 py-1 text-left text-[11px] rounded bg-bg-secondary border border-border text-text-primary active:bg-bg-active"
+              >
+                <span className="font-semibold">{q.label}</span>
+                <span className="text-[9px] opacity-70">{q.description}</span>
+              </button>
+            ))}
+          </div>
         </>
       )
     }
@@ -508,6 +637,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
       <>
         {back('slot')}
         <div className="px-3 py-1 text-[11px] text-text-primary font-semibold">button {cfgCell} · {cfgDir}</div>
+        {cfgError && <div className="px-3 py-1 text-[11px] text-red-400">{cfgError}</div>}
         {ACTION_GROUPS.map((g) => row(
           <span className="font-mono text-xs">{g.label}</span>,
           g.label,
@@ -515,15 +645,45 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
           g.description,
         ))}
         {divider}
-        {row(<X className="w-4 h-4" />, 'clear', () => applySlot(null))}
+        {row(<X className="w-4 h-4" />, 'clear', () => applySlot(null), undefined, false, 'action-clear')}
       </>
     )
     if (view === 'actions' && cfgCell && cfgDir && cfgGroup) {
       const group = ACTION_GROUPS.find((g) => g.id === cfgGroup)
+      if (cfgGroup === 'text') return (
+        <>
+          {back('group')}
+          <div className="px-3 py-1 text-[10px] text-text-muted">text</div>
+          <div className="px-2 pb-2">
+            <input
+              data-testid="custom-text"
+              value={customText}
+              onChange={(e) => setCustomText(e.target.value)}
+              placeholder="literal text"
+              className="mb-1 w-full rounded border border-border bg-bg-secondary px-2 py-1 font-mono text-[12px] text-text-primary"
+            />
+            <button
+              data-testid="custom-text-apply"
+              onClick={() => {
+                if (!customText) { setCfgError('enter some text'); return }
+                setCfgError(null)
+                applySlot(`send-text-${decodeEscapes(customText)}`)
+              }}
+              className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-[11px] text-text-primary active:bg-bg-active"
+            >
+              apply
+            </button>
+          </div>
+          <div className="px-3 pb-2 text-[10px] text-text-muted">
+            Escapes: \n Enter, \r CR, \t Tab, \e Esc. Example: ZQ for vim.
+          </div>
+        </>
+      )
       return (
         <>
           {back('group')}
           <div className="px-3 py-1 text-[10px] text-text-muted">{group?.label}</div>
+          {cfgError && <div className="px-3 py-1 text-[11px] text-red-400">{cfgError}</div>}
           <div className="max-h-[50vh] overflow-y-auto">
             {groupItems(cfgGroup).map((a) => (
               <button
@@ -550,7 +710,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
       <div
         ref={gridRef}
         data-testid="terminal-grid"
-        className={`absolute z-20 grid gap-1 p-1 rounded-lg ${
+        className={`terminal-no-select absolute z-20 grid gap-1 p-1 rounded-lg ${
           dock.position === 'top' ? 'top-2' : 'bottom-2'
         } right-2 ${dock.transparent ? 'bg-transparent' : 'bg-bg-elevated/90 border border-border shadow-lg'}`}
         style={{ gridTemplateColumns: `repeat(${cols}, ${CELL_PX}px)`, opacity: 1 - (dock.transparency ?? 50) / 100 }}
@@ -567,6 +727,11 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
               onTouchMove={onCellMove}
               onTouchEnd={(e) => onCellUp(e, id)}
               onTouchCancel={onCellCancel}
+              onMouseDown={(e) => onCellMouseDown(e, id)}
+              onMouseMove={onCellMouseMove}
+              onMouseUp={onCellMouseUp}
+              onMouseLeave={onCellMouseUp}
+              onContextMenu={(e) => e.preventDefault()}
               onClick={(e) => onCellClick(e, id)}
               style={{ touchAction: 'none' }}
               title={cellTitle(actions)}
@@ -578,13 +743,15 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         })}
       </div>
 
-      {radial && (
+      {radial && createPortal(
         <>
           <div className="fixed inset-0 z-30" onClick={closeRadial} />
           <div
             data-testid="terminal-radial"
-            className="fixed z-40 grid grid-cols-3 gap-1 p-1 rounded-lg bg-bg-elevated border border-border shadow-xl"
-            style={{ left: radial.left, top: radial.top, width: RADIAL_PX, height: RADIAL_PX }}
+            onPointerDown={() => { suppressRadialClickRef.current = false }}
+            onContextMenu={(e) => e.preventDefault()}
+            className="terminal-no-select fixed z-40 grid grid-cols-3 gap-1 p-1 rounded-lg bg-bg-elevated border border-border shadow-xl"
+            style={{ left: radial.left, top: radial.top, width: RADIAL_PX, height: RADIAL_H }}
           >
             {DIRS.map((dir) => {
               const action = grid[radial.id]?.[dir]
@@ -620,15 +787,15 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
             })}
           </div>
         </>
-      )}
+      , document.body)}
 
-      {view && (
+      {view && createPortal(
         <>
           <div className="fixed inset-0 z-30" onClick={() => setView(null)} />
           <div
             role="menu"
             data-testid="terminal-menu"
-            className="fixed z-40 overflow-y-auto overscroll-contain bg-bg-elevated border border-border rounded-lg shadow-xl py-1"
+            className="terminal-no-select fixed z-40 overflow-y-auto overscroll-contain bg-bg-elevated border border-border rounded-lg shadow-xl py-1"
             style={{
               left: box?.left ?? 0,
               width: box?.width ?? 280,
@@ -641,7 +808,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
             {settingsBody}
           </div>
         </>
-      )}
+      , document.body)}
     </>
   )
 }

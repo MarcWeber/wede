@@ -12,6 +12,7 @@
 // The hook intentionally does not throw if the server is unavailable — it
 // degrades gracefully to null (no LSP).
 
+import { basePath } from '../api'
 import { useEffect, useMemo, useState } from 'react'
 import { languageServer } from 'codemirror-languageserver'
 import type { Extension, StateField } from '@codemirror/state'
@@ -41,7 +42,10 @@ function langFromFile(file: Pick<Tab, 'path'> | null | undefined): string | null
 
 function buildWsUrl(lang: string, token: string | null | undefined, workspaceId: string | null | undefined): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const path = workspaceId ? `/api/workspaces/${encodeURIComponent(workspaceId)}/lsp` : '/api/lsp'
+  const subpath = basePath()
+  const path = workspaceId
+    ? `${subpath}/api/workspaces/${encodeURIComponent(workspaceId)}/lsp`
+    : `${subpath}/api/lsp`
   const base = `${proto}//${window.location.host}${path}?lang=${encodeURIComponent(lang)}`
   // Token passed as ?token= because WebSocket subprotocol approach mirrors
   // the terminal but codemirror-languageserver manages the WS internally.

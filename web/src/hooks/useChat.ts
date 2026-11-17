@@ -11,6 +11,7 @@
 // throwing into the IDE.
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { basePath } from '../api'
 import type { ChatMessage } from '../types'
 
 function buildWsUrl(
@@ -26,7 +27,8 @@ function buildWsUrl(
   const host = (port === '5173' || port === '5174')
     ? window.location.hostname + ':9090'
     : window.location.host
-  return `${proto}//${host}/api/workspaces/${encodeURIComponent(workspaceId)}/chat`
+  const base = basePath()
+  return `${proto}//${host}${base}/api/workspaces/${encodeURIComponent(workspaceId)}/chat`
     + `?token=${encodeURIComponent(token || '')}`
     + `&username=${encodeURIComponent(username || '')}`
     + `&color=${encodeURIComponent(color || '#888888')}`

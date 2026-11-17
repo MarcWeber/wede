@@ -24,6 +24,19 @@ func TestParseDefaults(t *testing.T) {
 	if cfg.ServeLanding {
 		t.Error("ServeLanding should default to false")
 	}
+	if cfg.TunnelEnabled {
+		t.Error("TunnelEnabled should default to false")
+	}
+}
+
+func TestParseTunnelEnabled(t *testing.T) {
+	cfg, err := parse([]byte(`{"password":"x","tunnel_enabled":true}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !cfg.TunnelEnabled {
+		t.Error("tunnel_enabled:true should set TunnelEnabled")
+	}
 }
 
 func TestParseServeLanding(t *testing.T) {

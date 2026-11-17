@@ -219,9 +219,12 @@ host, including any cloud metadata endpoint if you're on a cloud VM.
 ### 11. Understand what the tunnel does and doesn't expose
 
 The owner-only public tunnel (`GET/PUT/POST /api/tunnel/...`, all
-`RequireOwner`) dials a single outbound `wss://` connection to a relay server
-*you* run, authenticates with a bearer token, and proxies inbound requests to
-wede's own loopback address — `tunnel.New()` in `main.go` pins the local
+`RequireOwner`) is disabled by default. It is mounted only when
+`"tunnel_enabled": true` is set in the config file; otherwise the routes and
+the **Settings → Public access** panel are absent. When enabled, it dials a
+single outbound `wss://` connection to a relay server *you* run, authenticates
+with a bearer token, and proxies inbound requests to wede's own loopback
+address — `tunnel.New()` in `main.go` pins the local
 target to `"127.0.0.1:" + cfg.Port` regardless of `cfg.Host`, so the tunnel
 can never be pointed at an arbitrary host even if wede itself is bound wider.
 The tunnel config, including the relay bearer token, is persisted to

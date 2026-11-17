@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
+import { apiBase } from '../api'
 import { scopedUrl } from '../lib/activeWorkspace'
 import type { AuthFetch } from '../types'
-
-const API = '/api'
 
 interface AuthCheckResponse {
   authenticated?: boolean
@@ -61,7 +60,7 @@ export function useAuth() {
   useEffect(() => {
     const t = localStorage.getItem('wede_token')
     if (!t) return
-    fetch(`${API}/auth/check`, { headers: { Authorization: t } })
+    fetch(`${apiBase()}/auth/check`, { headers: { Authorization: t } })
       .then(r => r.json())
       .then((data: AuthCheckResponse) => {
         if (data.authenticated && data.role) {
@@ -88,7 +87,7 @@ export function useAuth() {
   const login = useCallback(async (password: string, name = ''): Promise<boolean> => {
     setError(null)
     try {
-      const res = await fetch(`${API}/auth/login`, {
+      const res = await fetch(`${apiBase()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password, username: name }),
@@ -131,7 +130,7 @@ export function useAuth() {
   // exactly like login does.
   const redeem = useCallback(async (inviteToken: string): Promise<boolean> => {
     try {
-      const res = await fetch(`${API}/auth/redeem`, {
+      const res = await fetch(`${apiBase()}/auth/redeem`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: inviteToken }),
@@ -171,7 +170,7 @@ export function useAuth() {
     setTeacher(false)
     if (t) {
       // Revoke the token server-side (fire-and-forget; ignore network errors)
-      fetch(`${API}/auth/logout`, {
+      fetch(`${apiBase()}/auth/logout`, {
         method: 'DELETE',
         headers: { Authorization: t },
       }).catch(() => {})

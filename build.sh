@@ -57,7 +57,7 @@ build_dev() {
       cp web/src/index.css web/dist/styles.css
 
     cat web/index.html | sed \
-      -e 's|<script type="module" src="/src/main.tsx"></script>|<link rel="stylesheet" href="/styles.css" />\n    <script type="module" src="/index.js"></script>|' \
+      -e 's|<script type="module" src="./src/main.tsx"></script>|<link rel="stylesheet" href="./styles.css" />\n    <script type="module" src="./index.js"></script>|' \
       > web/dist/index.html
 
     cp -r web/public/. web/dist/ 2>/dev/null || true

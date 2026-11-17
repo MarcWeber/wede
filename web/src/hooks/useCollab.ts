@@ -14,6 +14,7 @@
 // never throwing into the IDE.
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { basePath } from '../api'
 import type { PresenceMember, MousePosition, TerminalSession, CollabPresenter } from '../types'
 
 function buildWsUrl(workspaceId: string, token: string, username: string | null | undefined): string {
@@ -23,7 +24,8 @@ function buildWsUrl(workspaceId: string, token: string, username: string | null 
   const host = (port === '5173' || port === '5174')
     ? window.location.hostname + ':9090'
     : window.location.host
-  return `${proto}//${host}/api/workspaces/${encodeURIComponent(workspaceId)}/collab`
+  const base = basePath()
+  return `${proto}//${host}${base}/api/workspaces/${encodeURIComponent(workspaceId)}/collab`
     + `?token=${encodeURIComponent(token)}`
     + `&username=${encodeURIComponent(username || '')}`
 }

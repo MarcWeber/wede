@@ -56,6 +56,8 @@ type Config struct {
 	// docs viewer are hosted. Cloud-only; local wede serves only the IDE.
 	ServeLanding bool `json:"serve_landing,omitempty"`
 
+	TunnelEnabled bool `json:"tunnel_enabled,omitempty"`
+
 	// Debug enables verbose debug logging (collab cursor messages, presence
 	// broadcasts, etc.). Defaults to false.
 	Debug bool `json:"debug,omitempty"`
