@@ -5,6 +5,11 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { TerminalHandle, TerminalSettings } from '../types'
 import { basePath } from '../api'
 import { logUi } from '../lib/uiLog'
+import { readTermSettings } from '../lib/terminalSettings'
+import {
+  DEFAULT_SWIPE_CONFIG, createSwipeState, lockAxis, nextSwipeDelta, swipeSequence,
+  type SwipeConfig, type SwipeState,
+} from '../lib/terminalSwipe'
 
 interface TerminalProps {
   token: string | null | undefined
@@ -15,17 +20,6 @@ interface TerminalProps {
   initialCommand?: string
   onInitialRun?: () => void
   onTitle?: (title: string) => void
-}
-
-const TERM_SETTINGS_KEY = 'wede_terminal_settings'
-const DEFAULT_TERM_SETTINGS: TerminalSettings = { fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followMode: 'off', followMargin: 0.2, swipeMode: 'wheel', swipeModeDouble: 'cursor', swipeStep: 10, writeDelayMs: 250 }
-
-function readTermSettings(): TerminalSettings {
-  try {
-    const raw = localStorage.getItem(TERM_SETTINGS_KEY)
-    if (raw) return { ...DEFAULT_TERM_SETTINGS, ...(JSON.parse(raw) as Partial<TerminalSettings>) }
-  } catch { /* ignore */ }
-  return DEFAULT_TERM_SETTINGS
 }
 
 // xterm exposes cell dimensions only on its internal render service. FitAddon
@@ -347,10 +341,10 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     term.options.scrollback = termSettings.scrollback ?? 5000
     const frame = requestAnimationFrame(() => {
       applySizing()
-      if (termSettings.followMode === 'follow') scheduleFollowRef.current()
+      if (termSettings.followCursor) scheduleFollowRef.current()
     })
     return () => cancelAnimationFrame(frame)
-  }, [termSettings.fontSize, termSettings.scrollback, termSettings.minCols, termSettings.minRows, termSettings.followMode, termSettings.followMargin, applySizing])
+  }, [termSettings.fontSize, termSettings.scrollback, termSettings.minCols, termSettings.minRows, termSettings.followMode, termSettings.followCursor, termSettings.followMargin, applySizing])
 
   // Do NOT auto-focus the terminal when it becomes visible — on mobile this
   // triggers the virtual keyboard and blocks the bottom of the screen.
@@ -383,6 +377,10 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     const cell = (term as unknown as XtermInternals)._core?._renderService?.dimensions?.css?.cell
     const container = containerRef.current
     const marginFraction = Math.min(0.5, Math.max(0, settingsRef.current.followMargin ?? 0.2))
+    const mode = settingsRef.current.followMode
+    // Shrink/zoom already reduce or scale the terminal itself. Subtracting the
+    // keyboard inset again would scroll twice.
+    const effectiveInset = mode === 'shrink' || mode === 'zoom' ? 0 : keyboardPaddingRef.current
 
     // Min-size mode (minCols/minRows): `.xterm` is taller than the container
     // and the container is the scroller. `term.scrollToLine` only moves xterm's
@@ -390,13 +388,14 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     // the container's visible area. Scroll the container to the cursor's row.
     if (container && term.element && cell?.height && container.scrollHeight > container.clientHeight + 1) {
       term.scrollToBottom()
+      const visibleHeight = Math.max(1, container.clientHeight - effectiveInset)
       const cursorPx = buf.cursorY * cell.height
-      const margin = Math.max(0, Math.round(container.clientHeight * marginFraction))
+      const margin = Math.max(0, Math.round(visibleHeight * marginFraction))
       const top = container.scrollTop
       if (cursorPx < top + margin) {
         container.scrollTop = Math.max(0, cursorPx - margin)
-      } else if (cursorPx > top + container.clientHeight - margin) {
-        container.scrollTop = cursorPx - container.clientHeight + margin
+      } else if (cursorPx > top + visibleHeight - margin) {
+        container.scrollTop = cursorPx - visibleHeight + margin
       }
       return
     }
@@ -408,9 +407,11 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     const absCursorLine = buf.baseY + buf.cursorY  // absolute line in buffer
     const totalRows = term.rows
     const viewportY = buf.viewportY               // first visible line (absolute)
-    const paddingRows = Math.max(0, Math.floor(totalRows * marginFraction))
+    const keyboardRows = cell?.height ? Math.floor(effectiveInset / cell.height) : 0
+    const visibleRows = Math.max(1, totalRows - keyboardRows)
+    const paddingRows = Math.max(0, Math.floor(visibleRows * marginFraction))
     const topVisible = viewportY + paddingRows
-    const bottomVisible = viewportY + totalRows - paddingRows
+    const bottomVisible = viewportY + visibleRows - paddingRows
     const maxScroll = Math.max(0, buf.length - totalRows)
 
     if (absCursorLine < topVisible) {
@@ -419,7 +420,7 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       term.scrollToLine(target)
     } else if (absCursorLine >= bottomVisible) {
       // Cursor too close to bottom — scroll down so it's at the safe margin
-      const target = Math.min(absCursorLine + paddingRows - totalRows + 1, maxScroll)
+      const target = Math.min(absCursorLine + paddingRows - visibleRows + 1, maxScroll)
       term.scrollToLine(target)
     }
   }
@@ -427,7 +428,7 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
   // Debounced follow: wait until the cursor has been still for 250ms, but never
   // defer longer than 500ms during continuous output/redraw.
   scheduleFollowRef.current = () => {
-    if (settingsRef.current.followMode !== 'follow') return
+    if (!settingsRef.current.followCursor) return
     const now = Date.now()
     if (!followBurstStartRef.current) followBurstStartRef.current = now
     const wait = now - followBurstStartRef.current > 500 ? 0 : 250
@@ -436,7 +437,7 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       followTimerRef.current = null
       followBurstStartRef.current = 0
       const term = termRef.current
-      if (term && settingsRef.current.followMode === 'follow') scrollCursorIntoView(term)
+      if (term && settingsRef.current.followCursor) scrollCursorIntoView(term)
     }, wait)
   }
 
@@ -537,8 +538,8 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
           const term = termRef.current
           if (!term) return
           const mode = settingsRef.current.followMode
-          if (mode !== 'zoom' && inset > 0) scrollAboveKeyboard(term, inset)
-          if (mode === 'follow') scheduleFollowRef.current()
+          if (inset > 0 && mode !== 'shrink' && mode !== 'zoom') scrollAboveKeyboard(term, inset)
+          if (settingsRef.current.followCursor) scheduleFollowRef.current()
         })
       }
 
@@ -628,27 +629,16 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
   useEffect(() => {
     const el = containerRef.current
     if (!el) return undefined
-    // A "step" is this many CSS px of finger movement per emitted action.
-    // Read from settings (configurable via "select-arrow-speeds").
-    const getStep = () => settingsRef.current.swipeStep ?? 10
+    const swipeConfig = (): SwipeConfig => ({
+      ...DEFAULT_SWIPE_CONFIG,
+      stepPx: settingsRef.current.swipeStep ?? DEFAULT_SWIPE_CONFIG.stepPx,
+    })
     let startX = 0
     let startY = 0
-    let lastY = 0
     let tracking = false
     const send = (seq: string) => {
       const ws = wsRef.current
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(seq)
-    }
-    const seqFor = (mode: TerminalSettings['swipeMode'], down: boolean): string => {
-      if (mode === 'cursor') return down ? '\x1b[B' : '\x1b[A'
-      if (mode === 'page') return down ? '\x1b[6~' : '\x1b[5~'
-      if (mode === 'half') return down ? '\x04' : '\x15'
-      if (mode === 'emacs') return down ? '\x16' : '\x1bv'
-      return ''
-    }
-    // Horizontal cursor movement (left/right arrows) for cursor mode.
-    const seqForH = (right: boolean): string => {
-      return right ? '\x1b[C' : '\x1b[D'
     }
     // SGR mouse wheel events (button 64 = up, 65 = down) at the touch cell.
     // For apps that only scroll on wheel input (e.g. junie/lazygit). Requires
@@ -675,108 +665,115 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       if (term && term.buffer.active.type === 'normal' && term.buffer.active.length > term.rows) return true
       return !!container && container.scrollHeight > container.clientHeight + 1
     }
+    const sendSwipe = (mode: TerminalSettings['swipeMode'], delta: number, vertical: boolean) => {
+      const dir = vertical
+        ? (delta > 0 ? 'down' : 'up')
+        : (delta > 0 ? 'right' : 'left')
+      const seq = swipeSequence(mode, dir)
+      if (seq) send(seq.repeat(Math.abs(delta)))
+    }
+    const lockState = (state: SwipeState, totalX: number, totalY: number, cfg: SwipeConfig): SwipeState | null => {
+      const axis = lockAxis(totalX, totalY, state.axis, cfg)
+      if (!axis) return null
+      return axis === state.axis ? state : { ...state, axis, sent: 0 }
+    }
+    const nextState = (totalPx: number, state: SwipeState, cfg: SwipeConfig) => (
+      nextSwipeDelta(totalPx, state, performance.now(), cfg)
+    )
     // Two-finger swipe uses swipeModeDouble (default: cursor movement).
     let twoFingerTracking = false
-    let twoFingerLastY = 0
-    let twoFingerLastX = 0
-    const getTwoFingerStep = () => settingsRef.current.swipeStep ?? 10
+    let twoFingerStartY = 0
+    let twoFingerStartX = 0
+    let twoFingerState = createSwipeState(performance.now())
     const onTwoFingerStart = (e: TouchEvent) => {
       if (e.touches.length !== 2) return
       twoFingerTracking = true
-      twoFingerLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2
-      twoFingerLastX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+      twoFingerStartY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+      twoFingerStartX = (e.touches[0].clientX + e.touches[1].clientX) / 2
+      twoFingerState = createSwipeState(performance.now())
     }
     const onTwoFingerMove = (e: TouchEvent) => {
       if (!twoFingerTracking || e.touches.length !== 2) return
       const mode = settingsRef.current.swipeModeDouble
       if (mode === 'scroll') return
-      const step = getTwoFingerStep()
+      const cfg = swipeConfig()
       const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2
       const avgX = (e.touches[0].clientX + e.touches[1].clientX) / 2
-      const dy = avgY - twoFingerLastY
-      const dx = avgX - twoFingerLastX
-      const absDy = Math.abs(dy)
-      const absDx = Math.abs(dx)
-      if (absDy + absDx < step) return
-      if (mode === 'wheel') {
-        const term = termRef.current
-        if (!term || term.modes.mouseTrackingMode === 'none') return
-        e.preventDefault()
-        const t = e.touches[0]
-        const steps = Math.floor(absDy / step)
-        if (steps > 0) send(mouseWheelSeq(term, dy < 0, t.clientX, t.clientY).repeat(steps))
-        twoFingerLastY += dy < 0 ? -steps * step : steps * step
-      } else if (mode === 'cursor') {
-        e.preventDefault()
-        if (absDy > absDx * 1.15) {
-          const steps = Math.floor(absDy / step)
-          if (steps > 0) send(seqFor(mode, dy > 0).repeat(steps))
-          twoFingerLastY += dy < 0 ? -steps * step : steps * step
-        } else if (absDx > absDy * 1.15) {
-          const steps = Math.floor(absDx / step)
-          if (steps > 0) send(seqForH(dx > 0).repeat(steps))
-          twoFingerLastX += dx < 0 ? -steps * step : steps * step
+      const totalY = avgY - twoFingerStartY
+      const totalX = avgX - twoFingerStartX
+      const state = lockState(twoFingerState, totalX, totalY, cfg)
+      if (!state) return
+      twoFingerState = state
+      if (state.axis === 'y') {
+        if (mode === 'wheel') {
+          const term = termRef.current
+          if (!term || term.modes.mouseTrackingMode === 'none') return
+          e.preventDefault()
+          const next = nextState(totalY, state, cfg)
+          twoFingerState = next.state
+          if (next.delta !== 0) {
+            const t = e.touches[0]
+            send(mouseWheelSeq(term, next.delta < 0, t.clientX, t.clientY).repeat(Math.abs(next.delta)))
+          }
+          return
         }
-      } else {
-        if (hasScrollback()) return
+        if (mode !== 'cursor' && hasScrollback()) return
         e.preventDefault()
-        const steps = Math.floor(absDy / step)
-        if (steps > 0) send(seqFor(mode, dy > 0).repeat(steps))
-        twoFingerLastY += dy < 0 ? -steps * step : steps * step
+        const next = nextState(totalY, state, cfg)
+        twoFingerState = next.state
+        if (next.delta !== 0) sendSwipe(mode, next.delta, true)
+        return
       }
+      if (mode !== 'cursor') return
+      e.preventDefault()
+      const next = nextState(totalX, state, cfg)
+      twoFingerState = next.state
+      if (next.delta !== 0) sendSwipe(mode, next.delta, false)
     }
-    const onTwoFingerEnd = () => { twoFingerTracking = false }
+    let oneFingerState = createSwipeState(performance.now())
     const onStart = (e: TouchEvent) => {
       if (e.touches.length === 2) { tracking = false; onTwoFingerStart(e); return }
       if (e.touches.length !== 1) { tracking = false; return }
       tracking = true
       startX = e.touches[0].clientX
-      startY = lastY = e.touches[0].clientY
+      startY = e.touches[0].clientY
+      oneFingerState = createSwipeState(performance.now())
     }
-    let lastX = 0
     const onMove = (e: TouchEvent) => {
       if (!tracking) return
       const mode = settingsRef.current.swipeMode
       if (mode === 'scroll') return
-      const step = getStep()
+      const cfg = swipeConfig()
       const t = e.touches[0]
-      const dy = t.clientY - lastY
-      const dx = t.clientX - (lastX || startX)
-      const absDy = Math.abs(dy)
-      const absDx = Math.abs(dx)
-      if (absDy + absDx < step) return
-      const isVertical = absDy > absDx * 1.15
-      const isHorizontal = absDx > absDy * 1.15
-      if (!isVertical && !isHorizontal) return
-      if (mode === 'wheel') {
-        const term = termRef.current
-        if (!term || term.modes.mouseTrackingMode === 'none') return
-        e.preventDefault()
-        if (isVertical) {
-          const steps = Math.floor(absDy / step)
-          if (steps > 0) {
-            send(mouseWheelSeq(term, dy < 0, t.clientX, t.clientY).repeat(steps))
-            lastY += dy < 0 ? -steps * step : steps * step
+      const totalY = t.clientY - startY
+      const totalX = t.clientX - startX
+      const state = lockState(oneFingerState, totalX, totalY, cfg)
+      if (!state) return
+      oneFingerState = state
+      if (state.axis === 'y') {
+        if (mode === 'wheel') {
+          const term = termRef.current
+          if (!term || term.modes.mouseTrackingMode === 'none') return
+          e.preventDefault()
+          const next = nextState(totalY, state, cfg)
+          oneFingerState = next.state
+          if (next.delta !== 0) {
+            send(mouseWheelSeq(term, next.delta < 0, t.clientX, t.clientY).repeat(Math.abs(next.delta)))
           }
+          return
         }
+        if (mode !== 'cursor' && hasScrollback()) return
+        e.preventDefault()
+        const next = nextState(totalY, state, cfg)
+        oneFingerState = next.state
+        if (next.delta !== 0) sendSwipe(mode, next.delta, true)
         return
       }
-      if (mode !== 'cursor' && hasScrollback()) return
+      if (mode !== 'cursor') return
       e.preventDefault()
-      if (isVertical) {
-        const steps = Math.floor(absDy / step)
-        if (steps > 0) {
-          send(seqFor(mode, dy > 0).repeat(steps))
-          lastY += dy < 0 ? -steps * step : steps * step
-        }
-      } else if (isHorizontal && mode === 'cursor') {
-        const steps = Math.floor(absDx / step)
-        if (steps > 0) {
-          send(seqForH(dx > 0).repeat(steps))
-          lastX = lastX || startX
-          lastX += dx < 0 ? -steps * step : steps * step
-        }
-      }
+      const next = nextState(totalX, state, cfg)
+      oneFingerState = next.state
+      if (next.delta !== 0) sendSwipe(mode, next.delta, false)
     }
     const onEnd = (e: TouchEvent) => {
       if (e.touches.length === 0) {

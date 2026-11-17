@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import type { TerminalSettings, TerminalSwipeMode } from '../types'
 import TerminalHelp from './TerminalHelp'
+import { readTermSettings, TERM_SETTINGS_KEY } from '../lib/terminalSettings'
 import {
   CELL_PX, RADIAL_PX, RADIAL_H, FULL_GRID_CELLS, DIRS, ACTION_GROUPS, QUICK_ASSIGNMENTS, KEYS, CTRL_KEYS,
   FN_KEYS, CHAR_KEYS, actionLabel, actionTitle, applyQuick, cellPrimaryLabel,
@@ -26,13 +27,6 @@ interface TerminalToolbarProps {
   dock: TerminalInputDock
   onDockChange: (dock: TerminalInputDock) => void
 }
-
-const DEFAULT_TERM_SETTINGS: TerminalSettings = {
-  fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000, followMode: 'off', followMargin: 0.2,
-  swipeMode: 'wheel', swipeModeDouble: 'cursor',
-  swipeStep: 10, writeDelayMs: 250,
-}
-const TERM_SETTINGS_KEY = 'wede_terminal_settings'
 
 function decodeEscapes(text: string): string {
   return text.replace(/\\([nrte])/g, (_m, c: string) =>
@@ -77,13 +71,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
   const suppressClickRef = useRef(false)
   const suppressRadialClickRef = useRef(false)
 
-  const [termSettings, setTermSettings] = useState<TerminalSettings>(() => {
-    try {
-      const raw = localStorage.getItem(TERM_SETTINGS_KEY)
-      if (raw) return { ...DEFAULT_TERM_SETTINGS, ...(JSON.parse(raw) as Partial<TerminalSettings>) }
-    } catch { /* ignore */ }
-    return DEFAULT_TERM_SETTINGS
-  })
+  const [termSettings, setTermSettings] = useState<TerminalSettings>(readTermSettings)
   const saveTermSettings = (s: TerminalSettings) => {
     setTermSettings(s)
     try { localStorage.setItem(TERM_SETTINGS_KEY, JSON.stringify(s)) } catch { /* ignore */ }
@@ -372,10 +360,10 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     )
     if (view === 'followMode') {
       const modes: { mode: TerminalSettings['followMode']; label: string; hint: string }[] = [
-        { mode: 'off', label: 'Off', hint: 'No auto-scroll' },
-        { mode: 'follow', label: 'Follow cursor', hint: 'Keep cursor visible while scrolling' },
-        { mode: 'shrink', label: 'Shrink & maximize', hint: 'Fill the remaining space; rows reflow above the keyboard' },
-        { mode: 'zoom', label: 'Zoom (distort)', hint: 'Y-scale to fit remaining space; keep rows/cols and font size' },
+        { mode: 'off', label: 'Off', hint: 'Normal layout; no auto-scroll' },
+        { mode: 'follow', label: 'Follow cursor', hint: 'Normal layout; keep the cursor visible' },
+        { mode: 'shrink', label: 'Shrink & maximize', hint: 'Fill the space above the keyboard; follow cursor on' },
+        { mode: 'zoom', label: 'Zoom (distort)', hint: 'Scale rows above the keyboard; follow cursor on' },
       ]
       return (
         <>
@@ -383,7 +371,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
           {modes.map((opt) => (
             <button
               key={opt.mode}
-              onClick={() => saveTermSettings({ ...termSettings, followMode: opt.mode })}
+              onClick={() => saveTermSettings({ ...termSettings, followMode: opt.mode, followCursor: opt.mode !== 'off' })}
               className={`w-full min-h-[44px] px-3 py-1 text-left flex flex-col justify-center transition-colors ${
                 (termSettings.followMode ?? 'off') === opt.mode ? 'bg-accent text-bg-primary' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
               }`}
@@ -392,6 +380,17 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
               <span className="text-[10px] opacity-70">{opt.hint}</span>
             </button>
           ))}
+          <div className="h-px bg-border/50 my-1" />
+          {row(
+            <Eye className="w-4 h-4" />,
+            `follow cursor: ${termSettings.followCursor ? 'on' : 'off'}`,
+            () => saveTermSettings({ ...termSettings, followCursor: !termSettings.followCursor }),
+            termSettings.followCursor ? 'on' : 'off',
+            termSettings.followCursor,
+          )}
+          <div className="px-3 py-2 text-[10px] text-text-muted leading-relaxed">
+            Follow cursor is independent of the layout. It keeps the cursor above the keyboard in the shell as well as in full-screen apps like vim.
+          </div>
         </>
       )
     }
