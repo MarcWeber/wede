@@ -3,6 +3,7 @@ import { FolderOpen, Info, Minus, Plus, Check, User, ShieldCheck, Monitor } from
 import TunnelSettings from './TunnelSettings'
 import WedeLocation from './WedeLocation'
 import type { AuthFetch, EditorSettings } from '../types'
+import type { UiOrientation, UiScale } from '../lib/uiScale'
 import { Eye, EyeOff } from 'lucide-react'
 
 interface TrustState {
@@ -28,9 +29,12 @@ interface SettingsProps {
   onDesktopModeChange: (v: boolean) => void
   visibleTabTypes: Record<string, boolean> | null
   onVisibleTabTypesChange: (types: Record<string, boolean>) => void
+  uiScale: UiScale
+  onUiScaleChange: (scale: UiScale) => void
+  uiOrientation: UiOrientation
 }
 
-export default function Settings({ visible, onClose, onOpenFolder, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange }: SettingsProps) {
+export default function Settings({ visible, onClose, onOpenFolder, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation }: SettingsProps) {
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
   const saveName = () => {
@@ -86,6 +90,16 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
 
   const update = (patch: Partial<EditorSettings>) => onEditorSettingsChange?.({ ...s, ...patch })
 
+  const updateUiScale = (profile: UiOrientation, axis: 'x' | 'y', percent: number) => {
+    onUiScaleChange({
+      ...uiScale,
+      [profile]: { ...uiScale[profile], [axis]: percent / 100 },
+    })
+  }
+  const resetUiScale = (profile: UiOrientation) => {
+    onUiScaleChange({ ...uiScale, [profile]: { x: 1, y: 1 } })
+  }
+
   return (
     <div className="h-full flex flex-col bg-bg-secondary overflow-y-auto">
       <div className="p-4 space-y-6">
@@ -130,6 +144,49 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
             </div>
             <Toggle checked={desktopMode} onChange={onDesktopModeChange} />
           </label>
+
+          <div className="mt-3 space-y-2">
+            <div className="text-[11px] text-text-muted">UI scale</div>
+            <div className="flex flex-wrap gap-2">
+              {(['portrait', 'landscape'] as const).map((profile) => (
+                <div key={profile} className="flex-1 min-w-[200px] bg-bg-primary border border-border rounded-lg px-3 py-2.5">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-text-secondary capitalize">
+                      {profile}{uiOrientation === profile ? ' (current)' : ''}
+                    </span>
+                    <button
+                      onClick={() => resetUiScale(profile)}
+                      className="text-[10px] text-text-muted hover:text-text-primary transition-colors"
+                      title={`Reset ${profile} scale to 100%`}
+                    >
+                      100%
+                    </button>
+                  </div>
+                  {(['x', 'y'] as const).map((axis) => {
+                    const percent = Math.round(uiScale[profile][axis] * 100)
+                    return (
+                      <label key={axis} className="flex items-center gap-2 py-0.5">
+                        <span className="w-3 text-[10px] font-mono text-text-muted uppercase">{axis}</span>
+                        <input
+                          type="range"
+                          min={50}
+                          max={100}
+                          step={1}
+                          value={percent}
+                          onChange={(e) => updateUiScale(profile, axis, Number(e.target.value))}
+                          className="flex-1 h-1 accent-accent cursor-pointer"
+                        />
+                        <span className="w-9 text-right text-[10px] font-mono text-text-primary">{percent}%</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-text-muted leading-relaxed">
+              Scales the whole app. Portrait and landscape keep separate X/Y values. 100% is normal; below 100% fits more content. Above 100% is intentionally unavailable.
+            </p>
+          </div>
         </div>
 
         {/* Tab visibility */}
@@ -137,9 +194,9 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Tab visibility</h3>
             <p className="text-[10px] text-text-muted mb-2">Show or hide tab types in the menu. Controlled by workspace config.</p>
-            <div className="space-y-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {Object.entries(visibleTabTypes).map(([kind, shown]) => (
-                <label key={kind} className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2 cursor-pointer group">
+                <label key={kind} className="flex-1 min-w-[200px] flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2 cursor-pointer group">
                   <div className="flex items-center gap-2">
                     {shown ? <Eye className="w-3.5 h-3.5 text-text-muted" /> : <EyeOff className="w-3.5 h-3.5 text-text-muted" />}
                     <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors capitalize">{kind}</span>

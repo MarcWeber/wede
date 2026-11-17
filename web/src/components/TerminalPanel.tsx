@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, TerminalSquare, Maximize2, Minimize2, PictureInPicture2 } from 'lucide-react'
 import Terminal from './Terminal'
 import TerminalToolbar, { type TerminalInputDock } from './TerminalToolbar'
 import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
 import { TONE_WEAK, TONE_VAR } from '../lib/viewTypes'
 import { useTheme } from '../hooks/useTheme'
+import { readTermSettings } from '../lib/terminalSettings'
 import type { useTerminals } from '../hooks/useTerminals'
 
 interface TerminalPanelProps {
@@ -30,6 +31,18 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
   const currentActive = onlyId ?? activeId
 
   // Inline rename: double-click a tab to edit its name.
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
+  const [maximizeOnKeyboard, setMaximizeOnKeyboard] = useState(() => readTermSettings().maximizeOnKeyboard)
+  useEffect(() => {
+    const handler = () => setMaximizeOnKeyboard(readTermSettings().maximizeOnKeyboard)
+    window.addEventListener('storage', handler)
+    window.addEventListener('wede:term-settings', handler)
+    return () => {
+      window.removeEventListener('storage', handler)
+      window.removeEventListener('wede:term-settings', handler)
+    }
+  }, [])
+  const maximized = keyboardOpen && maximizeOnKeyboard
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -66,7 +79,7 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
   if (!visible) return null
 
   return (
-    <div className="h-full flex flex-col bg-bg-tertiary">
+    <div className={`${maximized ? 'fixed inset-0 z-50' : 'h-full'} flex flex-col bg-bg-tertiary`}>
       {/* Terminal tab bar (hidden when this panel is a single flat tab) */}
       {onlyId == null && (
       <div className="flex items-center border-b border-border compact-touch shrink-0" style={{ height: 34 }}>
@@ -193,6 +206,7 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
               initialCommand={t.initial}
               onInitialRun={() => clearInitial?.(t.id)}
               onTitle={(title) => autoNameTerminal(t.id, title)}
+              onKeyboardChange={currentActive === t.id ? (open) => setKeyboardOpen(open) : undefined}
             />
           ))}
         </div>

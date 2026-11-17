@@ -92,13 +92,25 @@ start_wede() {
   nohup ./wede >/tmp/wede-server.log 2>&1 </dev/null &
   WEDE_PID=$!
   disown "$WEDE_PID" 2>/dev/null || true
-  for _ in $(seq 1 20); do
-    if curl -s -o /dev/null http://localhost:9090/api/auth/check 2>/dev/null; then
+  READY=0
+  for _ in $(seq 1 40); do
+    if ! kill -0 "$WEDE_PID" 2>/dev/null; then
+      echo "wede exited during startup; last log lines:"
+      tail -30 /tmp/wede-server.log
+      return 1
+    fi
+    if curl --max-time 1 --connect-timeout 1 -fsS -o /dev/null http://127.0.0.1:9090/api/auth/check 2>/dev/null; then
+      READY=1
       break
     fi
     sleep 0.25
   done
-  curl -s -o /dev/null -w "HTTP status: %{http_code}\n" http://localhost:9090/api/auth/check 2>/dev/null || true
+  if [ "$READY" != 1 ]; then
+    echo "wede did not become ready on 127.0.0.1:9090; last log lines:"
+    tail -30 /tmp/wede-server.log
+    return 1
+  fi
+  curl --max-time 2 --connect-timeout 1 -s -o /dev/null -w "HTTP status: %{http_code}\n" http://127.0.0.1:9090/api/auth/check 2>/dev/null || true
   echo "wede running on http://0.0.0.0:9090 (pid $WEDE_PID, log /tmp/wede-server.log)"
 }
 

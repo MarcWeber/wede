@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useMobile } from '../hooks/useMobile'
 import { useDesktopMode } from '../hooks/useDesktopMode'
+import { useUiScale } from '../hooks/useUiScale'
 import { useTheme } from '../hooks/useTheme'
 import type { ViewMode } from '../lib/viewTypes'
 import Logo from './Logo'
@@ -45,6 +46,7 @@ import { useDap } from '../hooks/useDap'
 import { workspaceUrl } from '../api'
 import { fileKey, parseFileKey, normalizeTabIdentity } from '../lib/fileKey'
 import { followTargetFromPeer, targetSelectionKey } from '../lib/followSelection'
+import { elementScale } from '../lib/uiScale'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo } from '../types'
 
@@ -115,7 +117,7 @@ interface FloatWindowProps {
 
 function FloatWindow({ geom, onChange, onRaise, children }: FloatWindowProps) {
   const ref = useRef<HTMLDivElement>(null)
-  const drag = useRef<{ dx: number; dy: number; rect: DOMRect } | null>(null)
+  const drag = useRef<{ dx: number; dy: number; rect: DOMRect; scaleX: number; scaleY: number } | null>(null)
 
   const startDrag = (e: ReactPointerEvent) => {
     if (e.button !== 0) return
@@ -127,16 +129,24 @@ function FloatWindow({ geom, onChange, onRaise, children }: FloatWindowProps) {
     e.preventDefault()
     e.stopPropagation()
     const rect = parent.getBoundingClientRect()
-    drag.current = { dx: e.clientX - rect.left - geom.x, dy: e.clientY - rect.top - geom.y, rect }
+    const scaleX = elementScale(el, 'x')
+    const scaleY = elementScale(el, 'y')
+    drag.current = {
+      dx: (e.clientX - rect.left) / scaleX - geom.x,
+      dy: (e.clientY - rect.top) / scaleY - geom.y,
+      rect, scaleX, scaleY,
+    }
     const move = (ev: PointerEvent) => {
       const d = drag.current
       if (!d) return
-      const maxX = Math.max(0, d.rect.width - Math.min(geom.w, d.rect.width))
-      const maxY = Math.max(0, d.rect.height - 40)
+      const layoutW = d.rect.width / d.scaleX
+      const layoutH = d.rect.height / d.scaleY
+      const maxX = Math.max(0, layoutW - Math.min(geom.w, layoutW))
+      const maxY = Math.max(0, layoutH - 40 / d.scaleY)
       onChange({
         ...geom,
-        x: Math.max(0, Math.min(ev.clientX - d.rect.left - d.dx, maxX)),
-        y: Math.max(0, Math.min(ev.clientY - d.rect.top - d.dy, maxY)),
+        x: Math.max(0, Math.min((ev.clientX - d.rect.left) / d.scaleX - d.dx, maxX)),
+        y: Math.max(0, Math.min((ev.clientY - d.rect.top) / d.scaleY - d.dy, maxY)),
       })
     }
     const up = () => {
@@ -168,9 +178,13 @@ function FloatWindow({ geom, onChange, onRaise, children }: FloatWindowProps) {
     const startW = geom.w
     const startH = geom.h
     const rect = parent.getBoundingClientRect()
+    const scaleX = elementScale(el, 'x')
+    const scaleY = elementScale(el, 'y')
+    const layoutW = rect.width / scaleX
+    const layoutH = rect.height / scaleY
     const move = (ev: PointerEvent) => {
-      const w = Math.max(260, Math.min(startW + ev.clientX - sx, rect.width - geom.x))
-      const h = Math.max(160, Math.min(startH + ev.clientY - sy, rect.height - geom.y))
+      const w = Math.max(260 / scaleX, Math.min(startW + (ev.clientX - sx) / scaleX, layoutW - geom.x))
+      const h = Math.max(160 / scaleY, Math.min(startH + (ev.clientY - sy) / scaleY, layoutH - geom.y))
       onChange({ ...geom, w, h })
     }
     const up = () => {
@@ -216,6 +230,7 @@ interface FileReadResponse {
 export default function IDE({ token, authFetch, onLogout, workspace, recents, onWorkspaceChange, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
+  const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, updateScale: updateUiScale } = useUiScale()
   const { isDark, toggle: toggleTheme } = useTheme()
 
   const [tabs, setTabs] = useState<Tab[]>(() => {
@@ -2194,6 +2209,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
             onDesktopModeChange={setDesktopMode}
             visibleTabTypes={mergedVisibleTabTypes}
             onVisibleTabTypesChange={setLocalVisibleTabTypes}
+            uiScale={uiScale}
+            onUiScaleChange={updateUiScale}
+            uiOrientation={uiOrientation}
           />
         )
     }
@@ -2334,7 +2352,16 @@ export default function IDE({ token, authFetch, onLogout, workspace, recents, on
   )
 
   return (
-    <div className="h-[100dvh] flex bg-bg-base overflow-hidden">
+    <div
+      data-testid="app-root"
+      className="flex bg-bg-base overflow-hidden"
+      style={{
+        width: `${100 / activeUiScale.x}vw`,
+        height: `${100 / activeUiScale.y}dvh`,
+        transform: `scale(${activeUiScale.x}, ${activeUiScale.y})`,
+        transformOrigin: 'top left',
+      }}
+    >
       {desktopMode && viewMenu(true)}
 
       <div className="flex-1 flex flex-col min-w-0">

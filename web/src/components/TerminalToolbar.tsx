@@ -2,7 +2,7 @@ import { useState, useRef, useLayoutEffect, useCallback, type ReactNode } from '
 import { createPortal } from 'react-dom'
 import {
   ArrowUpToLine, ArrowDownToLine, Eye, EyeOff, Hand, Braces,
-  Settings2, HelpCircle, ChevronLeft, RotateCcw, Type, Columns3, Keyboard, X, Droplets,
+  Settings2, HelpCircle, ChevronLeft, RotateCcw, Type, Columns3, Keyboard, X, Droplets, Maximize2,
 } from 'lucide-react'
 import type { TerminalSettings, TerminalSwipeMode } from '../types'
 import TerminalHelp from './TerminalHelp'
@@ -130,14 +130,17 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
   const closeRadial = () => setRadial(null)
   const showRadial = useCallback((id: CellId, rect: DOMRect) => {
     const margin = 8
+    const vv = window.visualViewport
+    const vw = vv?.width ?? window.innerWidth
+    const vh = vv?.height ?? window.innerHeight
     const cx = rect.left + rect.width / 2
     const cy = rect.top + rect.height / 2
     suppressRadialClickRef.current = true
     window.setTimeout(() => { suppressRadialClickRef.current = false }, 500)
     setRadial({
       id,
-      left: Math.min(Math.max(margin, cx - RADIAL_PX / 2), window.innerWidth - margin - RADIAL_PX),
-      top: Math.min(Math.max(margin, cy - RADIAL_H / 2), window.innerHeight - margin - RADIAL_H),
+      left: Math.min(Math.max(margin, cx - RADIAL_PX / 2), vw - margin - RADIAL_PX),
+      top: Math.min(Math.max(margin, cy - RADIAL_H / 2), vh - margin - RADIAL_H),
     })
   }, [])
 
@@ -224,8 +227,10 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     if (!el) return
     const r = el.getBoundingClientRect()
     const margin = 8
-    const vw = window.innerWidth
-    const vh = window.innerHeight
+    const vv = window.visualViewport
+    const vw = vv?.width ?? window.innerWidth
+    const vh = vv?.height ?? window.innerHeight
+    const layoutH = window.innerHeight
     const preferred = view === 'help' ? 420 : 280
     const width = Math.min(preferred, Math.max(200, vw - margin * 2))
     const left = Math.min(Math.max(margin, r.right - width), vw - margin - width)
@@ -235,15 +240,20 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
     const maxHeight = Math.max(120, openBelow ? below : above)
     setBox(openBelow
       ? { left, width, top: r.bottom + 6, maxHeight }
-      : { left, width, bottom: vh - r.top + 6, maxHeight })
+      : { left, width, bottom: layoutH - r.top + 6, maxHeight })
   }, [view])
   useLayoutEffect(() => {
     if (!view) return undefined
     placeMenu()
     const reposition = () => placeMenu()
+    const vv = window.visualViewport
     window.addEventListener('resize', reposition)
+    vv?.addEventListener('resize', reposition)
+    vv?.addEventListener('scroll', reposition)
     return () => {
       window.removeEventListener('resize', reposition)
+      vv?.removeEventListener('resize', reposition)
+      vv?.removeEventListener('scroll', reposition)
     }
   }, [view, placeMenu])
 
@@ -309,7 +319,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
       title={label}
       aria-label={label}
       onClick={onClick}
-      className={`flex items-center justify-center w-10 h-10 rounded-md border transition-colors ${
+      className={`flex items-center justify-center w-10 h-10 shrink-0 rounded-md border transition-colors ${
         active
           ? 'bg-accent text-bg-primary border-accent'
           : 'bg-bg-secondary border-border text-text-secondary active:bg-bg-active'
@@ -339,7 +349,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
   const settingsBody = (() => {
     if (view === 'settings') return (
       <>
-        <div className="flex flex-wrap gap-1 px-2 py-2 border-b border-border/50">
+        <div className="flex gap-1 px-2 py-2 border-b border-border/50 overflow-x-auto">
           {iconBtn(<Eye className="w-4 h-4" />, `follow: ${termSettings.followMode ?? 'off'}`, () => setView('followMode'))}
           {iconBtn(<span className="text-[11px] font-semibold">%</span>, 'follow margin', () => setView('followMargin'))}
           {iconBtn(dock.position === 'top' ? <ArrowUpToLine className="w-4 h-4" /> : <ArrowDownToLine className="w-4 h-4" />, `dock: ${dock.position}`, () => setDock({ position: dock.position === 'top' ? 'bottom' : 'top' }))}
@@ -390,6 +400,16 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
           )}
           <div className="px-3 py-2 text-[10px] text-text-muted leading-relaxed">
             Follow cursor is independent of the layout. It keeps the cursor above the keyboard in the shell as well as in full-screen apps like vim.
+          </div>
+          {row(
+            <Maximize2 className="w-4 h-4" />,
+            `maximize on keyboard: ${termSettings.maximizeOnKeyboard ? 'on' : 'off'}`,
+            () => saveTermSettings({ ...termSettings, maximizeOnKeyboard: !termSettings.maximizeOnKeyboard }),
+            termSettings.maximizeOnKeyboard ? 'on' : 'off',
+            termSettings.maximizeOnKeyboard,
+          )}
+          <div className="px-3 py-2 text-[10px] text-text-muted leading-relaxed">
+            Expands the whole terminal panel to the viewport while the software keyboard is open, then restores it when the keyboard closes. Works with every layout.
           </div>
         </>
       )

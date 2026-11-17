@@ -6,6 +6,7 @@ import type { TerminalHandle, TerminalSettings } from '../types'
 import { basePath } from '../api'
 import { logUi } from '../lib/uiLog'
 import { readTermSettings } from '../lib/terminalSettings'
+import { elementScale } from '../lib/uiScale'
 import {
   DEFAULT_SWIPE_CONFIG, createSwipeState, lockAxis, nextSwipeDelta, swipeSequence,
   type SwipeConfig, type SwipeState,
@@ -20,6 +21,7 @@ interface TerminalProps {
   initialCommand?: string
   onInitialRun?: () => void
   onTitle?: (title: string) => void
+  onKeyboardChange?: (open: boolean, height: number) => void
 }
 
 // xterm exposes cell dimensions only on its internal render service. FitAddon
@@ -27,6 +29,12 @@ interface TerminalProps {
 // with the addon instead of guessing from font metrics.
 interface XtermInternals {
   _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number; height?: number } } } } }
+}
+
+type MouseCoords = [number, number] | undefined
+
+interface MouseServiceLike {
+  getCoords(event: { clientX: number; clientY: number }, element: HTMLElement, cols: number, rows: number, isSelection?: boolean): MouseCoords
 }
 
 // VirtualKeyboard API (Chrome 94+, Android) is not in the default DOM lib.
@@ -49,12 +57,13 @@ function describeTarget(target: EventTarget | null): string {
   return `${target.tagName.toLowerCase()}${id}${cls}`
 }
 
-export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ token, workspaceId, sessionId, visible, terminalTheme, initialCommand, onInitialRun, onTitle }, ref) {
+export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ token, workspaceId, sessionId, visible, terminalTheme, initialCommand, onInitialRun, onTitle, onKeyboardChange }, ref) {
   // Settings come from localStorage, written by the toolbar's = menu. The
   // toolbar also fires a same-tab custom event (the `storage` event only fires
   // in other tabs), so no polling is needed.
   const [termSettings, setTermSettings] = useState<TerminalSettings>(readTermSettings)
   const [keyboardPad, setKeyboardPad] = useState(0)
+  const [keyboardPadLayout, setKeyboardPadLayout] = useState(0)
   const settingsRef = useRef(termSettings)
   useEffect(() => { settingsRef.current = termSettings }, [termSettings])
   useEffect(() => {
@@ -81,6 +90,8 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
   // in the setup effect below) always calls the current one without re-running setup.
   const onTitleRef = useRef(onTitle)
   useEffect(() => { onTitleRef.current = onTitle }, [onTitle])
+  const onKeyboardChangeRef = useRef(onKeyboardChange)
+  useEffect(() => { onKeyboardChangeRef.current = onKeyboardChange }, [onKeyboardChange])
 
   // Expose send function for external toolbar
   useImperativeHandle(ref, () => ({
@@ -111,6 +122,8 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     // 0x0 resize to the PTY, so vim/top render only a cursor at the top-left.
     // (The old fitAddon.fit() had exactly this isNaN guard; applySizing must too.)
     if (container.clientWidth === 0 || container.clientHeight === 0) return
+    const layoutPad = keyboardPaddingRef.current / elementScale(container, 'y')
+    setKeyboardPadLayout((prev) => (Math.abs(prev - layoutPad) < 0.5 ? prev : layoutPad))
     const proposed = fit.proposeDimensions()
     if (!proposed) return
     if (!Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return
@@ -141,7 +154,7 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       }
       if (isZoom) {
         const naturalHeight = Math.max(1, rows * cell.height)
-        const availableHeight = Math.max(1, container.clientHeight - keyboardPaddingRef.current)
+        const availableHeight = Math.max(1, container.clientHeight - keyboardPaddingRef.current / elementScale(container, 'y'))
         const scale = Math.min(1.5, Math.max(0.2, availableHeight / naturalHeight))
         zoomScale = scale
         xtermEl.style.transformOrigin = 'left top'
@@ -179,6 +192,24 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     term.loadAddon(fitAddon)
     term.loadAddon(webLinksAddon)
     term.open(containerRef.current)
+
+    // xterm maps mouse coordinates with the unscaled cell size. When the app
+    // root is CSS-scaled, divide the visual delta by the element scale first so
+    // selection, links and mouse reporting still hit the right cell.
+    const mouseService = (term as unknown as { _mouseService?: MouseServiceLike })._mouseService
+    if (mouseService) {
+      const originalGetCoords = mouseService.getCoords.bind(mouseService)
+      mouseService.getCoords = (event, element, cols, rows, isSelection) => {
+        const sx = elementScale(element, 'x')
+        const sy = elementScale(element, 'y')
+        if (sx === 1 && sy === 1) return originalGetCoords(event, element, cols, rows, isSelection)
+        const r = element.getBoundingClientRect()
+        return originalGetCoords(
+          { clientX: r.left + (event.clientX - r.left) / sx, clientY: r.top + (event.clientY - r.top) / sy },
+          element, cols, rows, isSelection,
+        )
+      }
+    }
 
     // Disable mobile keyboard autocomplete/autocorrect on xterm's hidden textarea
     const textarea = containerRef.current.querySelector('textarea')
@@ -378,9 +409,10 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
     const container = containerRef.current
     const marginFraction = Math.min(0.5, Math.max(0, settingsRef.current.followMargin ?? 0.2))
     const mode = settingsRef.current.followMode
+    const scaleY = elementScale(container, 'y')
     // Shrink/zoom already reduce or scale the terminal itself. Subtracting the
     // keyboard inset again would scroll twice.
-    const effectiveInset = mode === 'shrink' || mode === 'zoom' ? 0 : keyboardPaddingRef.current
+    const effectiveInset = (mode === 'shrink' || mode === 'zoom' ? 0 : keyboardPaddingRef.current) / scaleY
 
     // Min-size mode (minCols/minRows): `.xterm` is taller than the container
     // and the container is the scroller. `term.scrollToLine` only moves xterm's
@@ -427,31 +459,35 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
 
   // Debounced follow: wait until the cursor has been still for 250ms, but never
   // defer longer than 500ms during continuous output/redraw.
-  scheduleFollowRef.current = () => {
-    if (!settingsRef.current.followCursor) return
-    const now = Date.now()
-    if (!followBurstStartRef.current) followBurstStartRef.current = now
-    const wait = now - followBurstStartRef.current > 500 ? 0 : 250
-    if (followTimerRef.current) clearTimeout(followTimerRef.current)
-    followTimerRef.current = setTimeout(() => {
-      followTimerRef.current = null
-      followBurstStartRef.current = 0
-      const term = termRef.current
-      if (term && settingsRef.current.followCursor) scrollCursorIntoView(term)
-    }, wait)
-  }
+  useEffect(() => {
+    scheduleFollowRef.current = () => {
+      if (!settingsRef.current.followCursor) return
+      const now = Date.now()
+      if (!followBurstStartRef.current) followBurstStartRef.current = now
+      const wait = now - followBurstStartRef.current > 500 ? 0 : 250
+      if (followTimerRef.current) clearTimeout(followTimerRef.current)
+      followTimerRef.current = setTimeout(() => {
+        followTimerRef.current = null
+        followBurstStartRef.current = 0
+        const term = termRef.current
+        if (term && settingsRef.current.followCursor) scrollCursorIntoView(term)
+      }, wait)
+    }
+  })
 
   // Scroll cursor above the keyboard when it appears. Works regardless of
   // followCursor setting — always keeps the cursor visible.
   const scrollAboveKeyboard = (term: XTerminal, keyboardHeight: number) => {
     if (!term || keyboardHeight <= 0) return
+    const scaleY = elementScale(containerRef.current, 'y')
+    const layoutKeyboardHeight = keyboardHeight / scaleY
     const buf = term.buffer.active
     const absCursorLine = buf.baseY + buf.cursorY  // absolute line in buffer
     const totalRows = term.rows
     const viewportY = buf.viewportY               // first visible line (absolute)
     const cell = (term as unknown as XtermInternals)._core?._renderService?.dimensions?.css?.cell
     const charHeight = cell?.height || 15
-    const keyboardRows = Math.floor(keyboardHeight / charHeight)
+    const keyboardRows = Math.floor(layoutKeyboardHeight / charHeight)
     if (keyboardRows <= 0) return
     // The bottom of the visible area, accounting for the keyboard hiding rows
     const bottomVisibleLine = viewportY + totalRows - keyboardRows
@@ -532,6 +568,8 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       if (changed) {
         keyboardPaddingRef.current = inset
         setKeyboardPad(inset)
+        setKeyboardPadLayout(inset / elementScale(containerRef.current, 'y'))
+        onKeyboardChangeRef.current?.(inset > 0, inset)
         if (frame) cancelAnimationFrame(frame)
         frame = requestAnimationFrame(() => {
           applySizing()
@@ -650,8 +688,10 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       let row = Math.floor(term.rows / 2) + 1
       if (el && cell?.width && cell?.height) {
         const r = el.getBoundingClientRect()
-        col = Math.max(1, Math.min(term.cols, Math.floor((clientX - r.left) / cell.width) + 1))
-        row = Math.max(1, Math.min(term.rows, Math.floor((clientY - r.top) / cell.height) + 1))
+        const sx = elementScale(el, 'x')
+        const sy = elementScale(el, 'y')
+        col = Math.max(1, Math.min(term.cols, Math.floor((clientX - r.left) / sx / cell.width) + 1))
+        row = Math.max(1, Math.min(term.rows, Math.floor((clientY - r.top) / sy / cell.height) + 1))
       }
       return `\x1b[<${down ? 65 : 64};${col};${row}M`
     }
@@ -812,10 +852,10 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
         display: visible ? 'block' : 'none',
         touchAction: 'pan-x pan-y',
         overscrollBehavior: 'contain',
-        height: isShrink && keyboardPad > 0 ? `calc(100% - ${keyboardPad}px)` : '100%',
+        height: isShrink && keyboardPad > 0 ? `calc(100% - ${keyboardPadLayout}px)` : '100%',
         minHeight: 0,
         flex: isShrink || isZoom ? '1 1 0%' : undefined,
-        paddingBottom: !isShrink && !isZoom && keyboardPad > 0 ? `${keyboardPad}px` : undefined,
+        paddingBottom: !isShrink && !isZoom && keyboardPad > 0 ? `${keyboardPadLayout}px` : undefined,
       }}
     />
   )

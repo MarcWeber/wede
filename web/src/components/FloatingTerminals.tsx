@@ -8,6 +8,7 @@ import { TerminalSquare, X, Plus, PanelBottom } from 'lucide-react'
 import Terminal from './Terminal'
 import { useTheme } from '../hooks/useTheme'
 import type { useTerminals } from '../hooks/useTerminals'
+import { elementScale } from '../lib/uiScale'
 import type { WindowGeo } from '../hooks/useCollab'
 
 interface Geo {
@@ -38,15 +39,25 @@ function FloatingWindow({ geo, title, focused, onFocus, onMove, onResize, onClos
   const startDrag = (e: ReactMouseEvent) => {
     if (e.button !== 0) return
     onFocus()
+    const scaleX = elementScale(e.currentTarget as HTMLElement, 'x')
+    const scaleY = elementScale(e.currentTarget as HTMLElement, 'y')
     const sx = e.clientX, sy = e.clientY, ox = geo.x, oy = geo.y
-    const move = (ev: globalThis.MouseEvent) => onMove(Math.max(0, ox + ev.clientX - sx), Math.max(0, oy + ev.clientY - sy))
+    const move = (ev: globalThis.MouseEvent) => onMove(
+      Math.max(0, ox + (ev.clientX - sx) / scaleX),
+      Math.max(0, oy + (ev.clientY - sy) / scaleY),
+    )
     const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up) }
     document.addEventListener('mousemove', move); document.addEventListener('mouseup', up)
   }
   const startResize = (e: ReactMouseEvent) => {
     e.stopPropagation(); e.preventDefault()
+    const scaleX = elementScale(e.currentTarget as HTMLElement, 'x')
+    const scaleY = elementScale(e.currentTarget as HTMLElement, 'y')
     const sx = e.clientX, sy = e.clientY, ow = geo.w, oh = geo.h
-    const move = (ev: globalThis.MouseEvent) => onResize(Math.max(300, ow + ev.clientX - sx), Math.max(160, oh + ev.clientY - sy))
+    const move = (ev: globalThis.MouseEvent) => onResize(
+      Math.max(300 / scaleX, ow + (ev.clientX - sx) / scaleX),
+      Math.max(160 / scaleY, oh + (ev.clientY - sy) / scaleY),
+    )
     const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up) }
     document.addEventListener('mousemove', move); document.addEventListener('mouseup', up)
   }
