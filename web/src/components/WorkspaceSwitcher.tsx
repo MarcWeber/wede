@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Boxes, ChevronDown, Plus, Check, X } from 'lucide-react'
 import type { useWorkspaces } from '../hooks/useWorkspaces'
 
@@ -6,13 +6,25 @@ export interface WorkspaceSwitcherProps {
   workspacesApi: ReturnType<typeof useWorkspaces>
   // Open the list upward (the switcher lives in the menu footer, above Logout).
   menuUp?: boolean
+  // Render the list inline instead of as an absolute popover (Settings).
+  inline?: boolean
+  // Override the trigger text (e.g. "Open Workspace").
+  label?: string
+  // Controlled open state, used by Settings to keep the selector visible.
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 // WorkspaceSwitcher shows the active workspace ("workspace") and lets you switch between
 // open workspaces or open a new one. Workspaces are the multi-workspace backbone: each is an
 // isolated workspace served by the same wede instance.
-export default function WorkspaceSwitcher({ workspacesApi, menuUp = false }: WorkspaceSwitcherProps) {
-  const [open, setOpen] = useState(false)
+export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inline = false, label, open: controlledOpen, onOpenChange }: WorkspaceSwitcherProps) {
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = useCallback((next: boolean) => {
+    if (onOpenChange) onOpenChange(next)
+    else setInternalOpen(next)
+  }, [onOpenChange])
   const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
   const [name, setName] = useState('')
@@ -30,7 +42,7 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false }: Wor
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) { setOpen(false); setAdding(false) } }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
+  }, [open, setOpen])
 
   const create = async () => {
     if (!path.trim()) { setError('Enter a folder path'); return }
@@ -49,16 +61,18 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false }: Wor
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+        onClick={() => setOpen(!open)}
+        className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors ${inline ? 'w-full justify-center border border-border' : ''}`}
         title="Switch workspace">
         <Boxes className="w-3.5 h-3.5 text-accent" />
-        <span className="max-w-32 truncate font-medium">{active?.name || 'default'}</span>
+        <span className="max-w-32 truncate font-medium">{label || active?.name || 'default'}</span>
         <ChevronDown className="w-3 h-3 opacity-60" />
       </button>
 
       {open && (
-        <div className={`absolute left-0 w-64 bg-bg-elevated border border-border rounded-lg shadow-xl shadow-shadow z-50 p-1 animate-fade-in ${menuUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+        <div className={inline
+          ? 'mt-2 w-full bg-bg-elevated border border-border rounded-lg shadow-xl shadow-shadow z-50 p-1 animate-fade-in'
+          : `absolute left-0 w-64 bg-bg-elevated border border-border rounded-lg shadow-xl shadow-shadow z-50 p-1 animate-fade-in ${menuUp ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-text-muted">Workspaces</div>
           <div className="max-h-56 overflow-auto">
             {workspaces.map((r) => (

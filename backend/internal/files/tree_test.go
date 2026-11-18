@@ -36,6 +36,7 @@ func TestTreeListsFilesAndSkipsNoise(t *testing.T) {
 	}
 	var out struct {
 		Files     []string `json:"files"`
+		Dirs      []string `json:"dirs"`
 		Truncated bool     `json:"truncated"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
@@ -48,6 +49,18 @@ func TestTreeListsFilesAndSkipsNoise(t *testing.T) {
 	}
 	if !got["main.go"] || !got["src/app.js"] {
 		t.Errorf("missing expected files, got %v", out.Files)
+	}
+	dirGot := map[string]bool{}
+	for _, d := range out.Dirs {
+		dirGot[d] = true
+	}
+	if !dirGot["src"] {
+		t.Errorf("missing expected directory, got %v", out.Dirs)
+	}
+	for _, bad := range []string{"node_modules", "node_modules/dep", ".git"} {
+		if dirGot[bad] {
+			t.Errorf("noise directory %q should be skipped", bad)
+		}
 	}
 	for _, bad := range []string{"node_modules/dep/index.js", ".git/config"} {
 		if got[bad] {

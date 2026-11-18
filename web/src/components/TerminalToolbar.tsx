@@ -364,7 +364,7 @@ export default function TerminalToolbar({ onSend, dock, onDockChange }: Terminal
         {row(<Settings2 className="w-4 h-4" />, 'configure behavior', () => { setCfgCell(null); setCfgError(null); setView('configure') })}
         {row(<RotateCcw className="w-4 h-4" />, 'reset to defaults', resetGrid)}
         {row(<Braces className="w-4 h-4" />, 'menu config (JSON)', () => { setJsonText(JSON.stringify(grid, null, 2)); setJsonMsg(null); setView('json') })}
-        {row(<HelpCircle className="w-4 h-4" />, 'help', () => setView('help'))}
+        {row(<HelpCircle className="w-4 h-4" />, 'terminal help', () => setView('help'))}
         {row(<Keyboard className="w-4 h-4" />, 'show more keys', () => setView('keys'))}
       </>
     )

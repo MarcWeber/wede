@@ -51,7 +51,7 @@ test('help shows the complete terminal guide', async ({ wede }) => {
   await page.getByTestId('terminal-cell-B2').click()
   const menu = page.getByTestId('terminal-menu')
   await expect(menu).toBeVisible()
-  await menu.getByText('help', { exact: true }).click()
+  await menu.getByText('terminal help', { exact: true }).click()
 
   const help = menu.getByTestId('terminal-help')
   await expect(help).toBeVisible()

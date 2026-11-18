@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { FolderOpen, Info, Minus, Plus, Check, User, ShieldCheck, Monitor } from 'lucide-react'
 import TunnelSettings from './TunnelSettings'
 import WedeLocation from './WedeLocation'
+import WorkspaceSwitcher from './WorkspaceSwitcher'
+import type { useWorkspaces } from '../hooks/useWorkspaces'
 import type { AuthFetch, EditorSettings } from '../types'
 import type { UiOrientation, UiScale } from '../lib/uiScale'
 import { Eye, EyeOff } from 'lucide-react'
@@ -16,6 +18,7 @@ interface SettingsProps {
   onClose: () => void
   onOpenFolder: () => void
   workspace: string | null
+  workspacesApi: ReturnType<typeof useWorkspaces>
   editorSettings: EditorSettings
   onEditorSettingsChange: (s: EditorSettings) => void
   lspAvailable: Record<string, boolean> | null
@@ -34,9 +37,10 @@ interface SettingsProps {
   uiOrientation: UiOrientation
 }
 
-export default function Settings({ visible, onClose, onOpenFolder, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation }: SettingsProps) {
+export default function Settings({ visible, onClose, onOpenFolder, workspace, workspacesApi, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation }: SettingsProps) {
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
+  const [showWorkspaces, setShowWorkspaces] = useState(true)
   const saveName = () => {
     const v = name.trim()
     if (v && v !== username) { onUsernameChange?.(v); setSavedName(true); setTimeout(() => setSavedName(false), 1500) }
@@ -196,7 +200,7 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
             <p className="text-[10px] text-text-muted mb-2">Show or hide tab types in the menu. Controlled by workspace config.</p>
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(visibleTabTypes).map(([kind, shown]) => (
-                <label key={kind} className="flex-1 min-w-[200px] flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2 cursor-pointer group">
+                <label key={kind} className="flex items-center gap-3 bg-bg-primary border border-border rounded-lg px-3 py-2 cursor-pointer group">
                   <div className="flex items-center gap-2">
                     {shown ? <Eye className="w-3.5 h-3.5 text-text-muted" /> : <EyeOff className="w-3.5 h-3.5 text-text-muted" />}
                     <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors capitalize">{kind}</span>
@@ -343,18 +347,27 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Workspace</h3>
           <div className="bg-bg-primary border border-border rounded-lg p-3">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-3">
               <FolderOpen className="w-4 h-4 text-yellow" />
               <span className="text-xs text-text-secondary font-mono truncate flex-1">
                 {workspace || 'No folder open'}
               </span>
             </div>
-            <button
-              onClick={onOpenFolder}
-              className="w-full text-xs py-2 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-            >
-              Change Folder
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={onOpenFolder}
+                className="text-xs py-2 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              >
+                Open Folder
+              </button>
+              <WorkspaceSwitcher
+                workspacesApi={workspacesApi}
+                label="Open Workspace"
+                inline
+                open={showWorkspaces}
+                onOpenChange={setShowWorkspaces}
+              />
+            </div>
           </div>
         </div>
 
@@ -394,29 +407,6 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
           </div>
         )}
 
-        {/* Keyboard shortcuts */}
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Shortcuts</h3>
-          <div className="space-y-1.5 text-xs">
-            {[
-              ['Command palette', 'Ctrl/Cmd + Shift + P'],
-              ['Save file', 'Ctrl/Cmd + S'],
-              ['Go to line', 'Ctrl + G'],
-              ['Search in file', 'Ctrl/Cmd + F'],
-              ['Workspace search', 'Ctrl/Cmd + Shift + F'],
-              ['Close tab', 'Ctrl/Cmd + W'],
-              ['Multi-cursor', 'Alt + Click'],
-              ['Column select', 'Alt + Drag'],
-            ].map(([action, keys]) => (
-              <div key={action} className="flex items-center justify-between py-1.5 px-3 bg-bg-primary rounded-lg border border-border">
-                <span className="text-text-secondary">{action}</span>
-                <kbd className="text-[10px] font-mono text-text-muted bg-bg-hover px-1.5 py-0.5 rounded border border-border">
-                  {keys}
-                </kbd>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   )

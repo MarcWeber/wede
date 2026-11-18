@@ -15,21 +15,6 @@ interface TreeEntry {
   isDir: boolean
 }
 
-// Collect every directory path in the tree (including nested ones) so
-// "Expand All" can open all of them in one state update.
-function collectDirs(entries: TreeEntry[]): string[] {
-  const dirs: string[] = []
-  const walk = (list: TreeEntry[]) => {
-    for (const e of list) {
-      if (!e.isDir) continue
-      dirs.push(e.path)
-      walk(entries.filter((c) => c.path.startsWith(e.path + '/')))
-    }
-  }
-  walk(entries.filter((e) => !e.path.includes('/')))
-  return dirs
-}
-
 type GitStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed'
 type GitMap = Record<string, GitStatus>
 
@@ -447,6 +432,60 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
     return () => clearInterval(interval)
   }, [loadRoot, loadGitStatus])
 
+  // Flat file + directory list for this root (Select all / Open selected /
+  // Expand one level). Directory entries come from the same tree endpoint.
+  const allEntries = useCallback(async () => {
+    try {
+      const res = await wsFetch('/api/files/tree')
+      const data: { files?: string[]; dirs?: string[] } = await res.json()
+      const files = (data.files || []).map((rel) => ({ rel, key: fileKey(ws.id, rel), isDir: false }))
+      const dirs = (data.dirs || []).map((rel) => ({ rel, key: fileKey(ws.id, rel), isDir: true }))
+      return [...files, ...dirs]
+    } catch { return [] }
+  }, [wsFetch, ws.id])
+
+  const toggleExpand = (path: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path); else next.add(path)
+      return next
+    })
+  }
+
+  // Expand one level: selected directories (plus the ancestors needed to reveal
+  // them) when there is a selection, otherwise every top-level directory.
+  const expandAll = useCallback(() => {
+    void allEntries().then((list) => {
+      const dirs = list.filter((e) => e.isDir).map((e) => e.rel)
+      const dirSet = new Set(dirs)
+      const prefix = fileKey(ws.id, '')
+      const selectedRel = new Set<string>()
+      for (const k of selectedFiles) {
+        if (k.startsWith(prefix)) selectedRel.add(k.slice(prefix.length))
+      }
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        if (selectedRel.size === 0) {
+          for (const d of dirs) if (!d.includes('/')) next.add(d)
+        } else {
+          for (const rel of selectedRel) {
+            const parts = rel.split('/')
+            for (let i = 1; i < parts.length; i++) {
+              const ancestor = parts.slice(0, i).join('/')
+              if (dirSet.has(ancestor)) next.add(ancestor)
+            }
+            if (dirSet.has(rel)) next.add(rel)
+          }
+        }
+        return next
+      })
+    })
+  }, [allEntries, selectedFiles, ws.id])
+
+  const collapseAll = useCallback(() => {
+    setExpanded(new Set())
+  }, [])
+
   // Register per-section actions so the parent can route global new-file/refresh
   // triggers (command palette / SSE watcher) to the focused root.
   useEffect(() => {
@@ -458,33 +497,7 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
       collapseAll,
     })
     return () => register(ws.id, null)
-  }, [register, ws.id, loadRoot, loadGitStatus, onFocus])
-
-  const toggleExpand = (path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path); else next.add(path)
-      return next
-    })
-  }
-
-  // Collect all directory paths from the tree recursively.
-  const collectDirs = (entries: TreeEntry[]): string[] => {
-    const dirs: string[] = []
-    const walk = (e: TreeEntry) => {
-      if (e.isDir) { dirs.push(e.path); entries.filter((c) => c.path.startsWith(e.path + '/')).forEach(walk) }
-    }
-    entries.filter((e) => !e.path.includes('/')).forEach(walk)
-    return dirs
-  }
-
-  const expandAll = () => {
-    setExpanded(new Set(collectDirs(files)))
-  }
-
-  const collapseAll = () => {
-    setExpanded(new Set())
-  }
+  }, [register, ws.id, loadRoot, loadGitStatus, onFocus, expandAll, collapseAll])
 
   // handleCreate/confirmAndDelete/submitRename previously had no try/catch,
   // unlike every read (loadRoot/loadGitStatus) and handlePaste in this file —
@@ -580,30 +593,21 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
     onFileSelect({ ...entry, workspaceId: ws.id, rel: entry.path }, opts)
   }, [onFileSelect, ws.id])
 
-  // Flat file list for this root (used by Select all / Open selected).
-  const allFiles = useCallback(async () => {
-    try {
-      const res = await wsFetch('/api/files/tree')
-      const data: { files?: string[] } = await res.json()
-      const list = Array.isArray(data.files) ? data.files : []
-      return list.map((rel) => ({ rel, key: fileKey(ws.id, rel) }))
-    } catch { return [] }
-  }, [wsFetch, ws.id])
-
-  const handleSelectAll = () => { void allFiles().then((list) => onSelectMany(list.map((f) => f.key), true)) }
-  const handleUnselectAll = () => { void allFiles().then((list) => onSelectMany(list.map((f) => f.key), false)) }
+  const handleSelectAll = () => { void allEntries().then((list) => onSelectMany(list.map((f) => f.key), true)) }
+  const handleUnselectAll = () => { void allEntries().then((list) => onSelectMany(list.map((f) => f.key), false)) }
   const handleOpenSelected = () => {
-    void allFiles().then((list) => {
+    void allEntries().then((list) => {
       for (const f of list) {
-        if (!selectedFiles.has(f.key)) continue
+        if (f.isDir || !selectedFiles.has(f.key)) continue
         onFileSelect({ workspaceId: ws.id, rel: f.rel, path: f.rel, name: f.rel.split('/').pop() || f.rel, isDir: false }, { preview: false })
       }
     })
   }
 
   const handleOpenAll = () => {
-    void allFiles().then((list) => {
+    void allEntries().then((list) => {
       for (const f of list) {
+        if (f.isDir) continue
         onFileSelect({ workspaceId: ws.id, rel: f.rel, path: f.rel, name: f.rel.split('/').pop() || f.rel, isDir: false }, { preview: false })
       }
     })
@@ -750,7 +754,7 @@ export default function FileExplorer({ authFetch, workspaces = [], onFileSelect,
         </span>
         <div className="flex items-center gap-0.5">
           {/* Expand/Collapse all directories */}
-          <IconBtn icon={Maximize2} title="Expand All" onClick={() => Object.values(sectionActions.current).forEach((a) => a?.expandAll?.())} />
+          <IconBtn icon={Maximize2} title="Expand one level" onClick={() => Object.values(sectionActions.current).forEach((a) => a?.expandAll?.())} />
           <IconBtn icon={Minimize2} title="Collapse All" onClick={() => Object.values(sectionActions.current).forEach((a) => a?.collapseAll?.())} />
           {/* New file/folder route to the focused root (used when its own header is hidden). */}
           <IconBtn icon={FilePlus} title="New File" onClick={() => (activeRoot ? sectionActions.current[activeRoot] : undefined)?.newFile?.()} />

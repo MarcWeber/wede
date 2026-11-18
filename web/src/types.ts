@@ -91,7 +91,7 @@ export interface TerminalSettings {
   scrollback: number     // scrollback lines (default 5000)
   followMode: 'off' | 'follow' | 'shrink' | 'zoom'  // 'off': normal layout; 'follow': normal layout; 'shrink': fill remaining space and reflow rows; 'zoom': keep rows/cols and y-scale to fit (default 'off')
   followCursor: boolean  // keep the cursor visible in any keyboard layout (default false)
-  maximizeOnKeyboard: boolean  // expand the terminal panel to the viewport while the keyboard is open (default false)
+  maximizeOnKeyboard: boolean  // expand the terminal panel to the viewport while the keyboard is open (default true)
   followMargin: number   // safety margin below the cursor, fraction of terminal height (default 0.2)
   swipeMode: TerminalSwipeMode  // one-finger vertical swipe action (default 'wheel')
   swipeModeDouble: TerminalSwipeMode  // two-finger vertical swipe action (default 'cursor')

@@ -52,7 +52,7 @@ allows to watch log files
 TODO: Allow to click on lines and open in editor
 
 T9 help
-Shows this help
+Shows this help. Terminal help: see terminal > settings > help.
 
 #long_press_selectable: tab long to change to select mode, hold long again or
 right click to see menu

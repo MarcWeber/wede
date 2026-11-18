@@ -54,10 +54,11 @@ func isNoiseFile(name string) bool {
 
 const treeMaxFiles = 10000
 
-// Tree returns a flat, sorted list of file paths (relative to the workspace root,
-// slash-separated) for the Quick Open finder. Directory noise (.git, node_modules,
-// hidden dirs, …) is skipped and the count is capped to stay responsive on large
-// repos.
+// Tree returns flat, sorted lists of file and directory paths (relative to the
+// workspace root, slash-separated). Files feed the Quick Open finder; directories
+// let the explorer select folders too. Directory noise (.git, node_modules,
+// hidden dirs, …) is skipped and the file count is capped to stay responsive on
+// large repos.
 func (h *Handler) Tree(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if !h.checkWorkspace(w) {
@@ -66,6 +67,7 @@ func (h *Handler) Tree(w http.ResponseWriter, r *http.Request) {
 	root := h.workspace()
 
 	files := make([]string, 0, 256)
+	dirs := make([]string, 0, 64)
 	truncated := false
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -75,6 +77,11 @@ func (h *Handler) Tree(w http.ResponseWriter, r *http.Request) {
 			name := d.Name()
 			if p != root && (treeSkipDirs[name] || strings.HasPrefix(name, ".")) {
 				return filepath.SkipDir
+			}
+			if p != root {
+				if rel, relErr := filepath.Rel(root, p); relErr == nil {
+					dirs = append(dirs, filepath.ToSlash(rel))
+				}
 			}
 			return nil
 		}
@@ -94,7 +101,8 @@ func (h *Handler) Tree(w http.ResponseWriter, r *http.Request) {
 	})
 
 	sort.Strings(files)
-	json.NewEncoder(w).Encode(map[string]any{"files": files, "truncated": truncated})
+	sort.Strings(dirs)
+	json.NewEncoder(w).Encode(map[string]any{"files": files, "dirs": dirs, "truncated": truncated})
 }
 
 type FileEntry struct {

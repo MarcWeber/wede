@@ -197,12 +197,12 @@ export default function ViewMenu({
             checked={!!visible[view.kind]}
             onToggle={() => onToggle(view.kind)}
             onSwipeRight={
-              view.kind === 'web' || view.kind === 'terminals' || view.kind === 'api' || view.kind === 'search' || view.kind === 'log'
+              view.kind === 'files' || view.kind === 'web' || view.kind === 'terminals' || view.kind === 'api' || view.kind === 'search' || view.kind === 'log'
                 ? () => onAdd(view.kind)
                 : undefined
             }
             hint={
-              view.kind === 'web' || view.kind === 'terminals' || view.kind === 'api' || view.kind === 'search' || view.kind === 'log' ? 'swipe → add'
+              view.kind === 'files' || view.kind === 'web' || view.kind === 'terminals' || view.kind === 'api' || view.kind === 'search' || view.kind === 'log' ? 'swipe → add'
                 : view.kind === 'settings' || view.kind === 'help' ? 'show' : undefined
             }
             slim={slim}

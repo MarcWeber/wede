@@ -4,7 +4,7 @@ export const TERM_SETTINGS_KEY = 'wede_terminal_settings'
 
 export const DEFAULT_TERM_SETTINGS: TerminalSettings = {
   fontSize: 12, minCols: 0, minRows: 0, scrollback: 5000,
-  followMode: 'off', followCursor: false, maximizeOnKeyboard: false, followMargin: 0.2,
+  followMode: 'off', followCursor: false, maximizeOnKeyboard: true, followMargin: 0.2,
   swipeMode: 'wheel', swipeModeDouble: 'cursor',
   swipeStep: 10, writeDelayMs: 250,
 }

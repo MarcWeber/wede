@@ -140,7 +140,13 @@ export async function installBackend(
       wrote.push(req.postDataJSON())
       return json(route, { ok: true })
     }
-    if (p === '/api/files/tree') return json(route, FILE_TREE)
+    if (p === '/api/files/tree') {
+      return json(route, {
+        files: ['README.md', 'main.go', 'src/app.js'],
+        dirs: ['src'],
+        truncated: false,
+      })
+    }
 
     // ── git ─────────────────────────────────────────────────────────────────
     if (p === '/api/git/status') {

@@ -5,7 +5,7 @@ import {
   rectangularSelection, crosshairCursor,
   Decoration,
 } from '@codemirror/view'
-import { numberingGutter, type NumberingMode } from '../lib/lineNumbering'
+import { numberingGutter } from '../lib/lineNumbering'
 import { EditorState, Compartment, type Extension, type StateField, type StateEffect } from '@codemirror/state'
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands'
 import {
@@ -14,6 +14,7 @@ import {
 } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { languageServerPlugin } from 'codemirror-languageserver'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { showMinimap, type MinimapConfig } from '@replit/codemirror-minimap'
@@ -85,6 +86,42 @@ const wedeHeadingHighlight = HighlightStyle.define([
   { tag: [tags.heading2, tags.heading3, tags.heading4, tags.heading5, tags.heading6], class: 'cm-wede-heading2' },
 ])
 
+// Light-mode syntax highlighting — oneDark covers dark mode, but light mode
+// needs its own token colours.  These match the VS Code light palette so
+// keywords, strings, numbers, comments, etc. are distinct.
+const lightHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: '#795E26' },
+  { tag: tags.string, color: '#A31515' },
+  { tag: tags.number, color: '#098658' },
+  { tag: tags.comment, color: '#008000' },
+  { tag: tags.variableName, color: '#001080' },
+  { tag: tags.propertyName, color: '#795E26' },
+  { tag: tags.function(tags.variableName), color: '#795E26' },
+  { tag: tags.definition(tags.variableName), color: '#795E26' },
+  { tag: tags.typeName, color: '#267F99' },
+  { tag: tags.typeOperator, color: '#000000' },
+  { tag: tags.operator, color: '#000000' },
+  { tag: tags.className, color: '#267F99' },
+  { tag: tags.tagName, color: '#800000' },
+  { tag: tags.attributeName, color: '#EE0000' },
+  { tag: tags.meta, color: '#565656' },
+  { tag: tags.regexp, color: '#008000' },
+  { tag: tags.literal, color: '#098658' },
+  { tag: tags.bool, color: '#098658' },
+  { tag: tags.null, color: '#098658' },
+  { tag: tags.self, color: '#795E26' },
+  { tag: tags.separator, color: '#000000' },
+  { tag: tags.punctuation, color: '#393A34' },
+  { tag: tags.bracket, color: '#0431FA' },
+  { tag: tags.strong, fontWeight: '700' },
+  { tag: tags.emphasis, fontStyle: 'italic' },
+  { tag: tags.link, color: '#0B66C3', textDecoration: 'underline' },
+  { tag: tags.url, color: '#0B66C3' },
+  { tag: tags.monospace, color: '#A31515' },
+  { tag: tags.quote, color: '#008000' },
+  { tag: tags.list, color: '#795E26' },
+])
+
 // Build a theme extension from editor settings.
 function makeEditorTheme(settings: EditorSettings, isDark: boolean): Extension {
   const fontSize = `${settings.fontSize || 13}px`
@@ -107,8 +144,8 @@ function makeEditorTheme(settings: EditorSettings, isDark: boolean): Extension {
     '.cm-activeLine': { backgroundColor: 'var(--c-accent-glow)' },
     '.cm-cursor': { borderLeftColor: 'var(--c-accent)' },
     '.cm-content': { fontFamily, fontSize, color: 'var(--c-text-primary)' },
-    '.cm-wede-heading1': { color: 'var(--c-text-primary) !important', fontWeight: '700' },
-    '.cm-wede-heading2': { color: 'var(--c-text-primary) !important', fontWeight: '600' },
+    '.cm-wede-heading1': { color: `${isDark ? 'var(--c-text-primary)' : '#795E26'} !important`, fontWeight: '700' },
+    '.cm-wede-heading2': { color: `${isDark ? 'var(--c-text-primary)' : '#267F99'} !important`, fontWeight: '600' },
     // Multi-cursor: secondary cursors are slightly dimmer.
     '.cm-cursor-secondary': { borderLeftColor: 'var(--c-accent)', opacity: '0.6' },
   }, { dark: isDark })
@@ -198,6 +235,7 @@ export interface EditorProps {
   settings?: EditorSettings
   lspExtension?: (Extension | StateField<string>)[] | null
   onRegisterActions?: (actions: EditorActions) => void
+  onDefinition?: (uri: string, line: number, col: number) => void
   collab?: UseYDocState | null
   editable?: boolean
   breakpoints?: number[]
@@ -205,13 +243,14 @@ export interface EditorProps {
   stopLine?: number | null
 }
 
-export default function Editor({ file, content, onChange, onSave, onCursorChange, settings = {} as EditorSettings, lspExtension = null, onRegisterActions, collab = null, editable = true, breakpoints = [], onToggleBreakpoint, stopLine = null }: EditorProps) {
+export default function Editor({ file, content, onChange, onSave, onCursorChange, settings = {} as EditorSettings, lspExtension = null, onRegisterActions, onDefinition, collab = null, editable = true, breakpoints = [], onToggleBreakpoint, stopLine = null }: EditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onSaveRef = useRef(onSave)
   const onCursorRef = useRef(onCursorChange)
   const onToggleBpRef = useRef(onToggleBreakpoint)
+  const onDefinitionRef = useRef(onDefinition)
   const breakpointsRef = useRef(breakpoints)
   const stopLineRef = useRef(stopLine)
 
@@ -225,6 +264,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
   const lineNumCompRef = useRef(new Compartment())
   const lspCompRef     = useRef(new Compartment())
   const editCompRef    = useRef(new Compartment())
+  const syntaxCompRef  = useRef(new Compartment())
 
   const { isDark } = useTheme()
 
@@ -235,12 +275,30 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
     onSaveRef.current = onSave
     onCursorRef.current = onCursorChange
     onToggleBpRef.current = onToggleBreakpoint
+    onDefinitionRef.current = onDefinition
   })
 
   // Register editor actions (goToLine) with the parent IDE.
   useEffect(() => {
     onRegisterActions?.({ goToLine: () => setShowGoToLine(true) })
   }, [onRegisterActions])
+
+  // Go to definition across files. codemirror-languageserver only moves the
+  // cursor when the target URI is the current document; for another file we
+  // hand the LSP target to IDE, which opens the tab and applies the selection.
+  const goToDefinitionAt = useCallback(async (view: EditorView, pos: number, typeDefinition: boolean) => {
+    const plugin = view.plugin(languageServerPlugin)
+    if (!plugin) return false
+    const line = view.state.doc.lineAt(pos)
+    const position = { line: line.number - 1, character: pos - line.from }
+    const target = typeDefinition
+      ? await plugin.requestTypeDefinition(view, position)
+      : await plugin.requestDefinition(view, position)
+    if (target && target.uri !== plugin.documentUri) {
+      onDefinitionRef.current?.(target.uri, target.range.start.line + 1, target.range.start.character + 1)
+    }
+    return true
+  }, [])
 
   // Rebuild editor when file changes (new language, new content).
   useEffect(() => {
@@ -253,6 +311,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
     const minimapComp = minimapCompRef.current
     const lspComp     = lspCompRef.current
     const editComp    = editCompRef.current
+    const syntaxComp  = syntaxCompRef.current
 
     const minimapEnabled = settings.minimap ?? false
 
@@ -278,7 +337,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
       doc: collabOn ? yt.toString() : (content || ''),
       extensions: [
         ...collabExt,
-        lineNumComp.of(numberingGutter((settings.numbering as NumberingMode | undefined) ?? 'smart')),
+        lineNumComp.of(numberingGutter(settings.numbering ?? 'smart')),
         highlightActiveLineGutter(),
         highlightActiveLine(),
         highlightSpecialChars(),
@@ -298,11 +357,35 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
         tabComp.of(EditorState.tabSize.of(settings.tabWidth || 2)),
         // Minimap compartment — reconfigured live when settings.minimap changes.
         minimapComp.of(showMinimap.of(makeMinimapConfig(minimapEnabled))),
+        // Intercept F12 / Ctrl-Cmd+Click before codemirror-languageserver's
+        // built-in handler so cross-file targets can be opened by IDE.
+        keymap.of([
+          { key: 'F12', run: (view) => {
+            if (!view.plugin(languageServerPlugin)) return false
+            void goToDefinitionAt(view, view.state.selection.main.head, false)
+            return true
+          } },
+          { key: 'Mod-F12', run: (view) => {
+            if (!view.plugin(languageServerPlugin)) return false
+            void goToDefinitionAt(view, view.state.selection.main.head, true)
+            return true
+          } },
+        ]),
+        EditorView.domEventHandlers({
+          mousedown: (event, view) => {
+            if (!(event.ctrlKey || event.metaKey) || event.button !== 0) return false
+            if (!view.plugin(languageServerPlugin)) return false
+            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+            if (pos == null) return false
+            void goToDefinitionAt(view, pos, event.shiftKey)
+            return true
+          },
+        }),
         // LSP compartment — reconfigured when the file or lsp setting changes.
         lspComp.of(lspExtension ? lspExtension : []),
         // Read-only compartment — viewer role gets EditorState.readOnly + EditorView.editable(false).
         editComp.of(editable ? [] : [EditorState.readOnly.of(true), EditorView.editable.of(false)]),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        syntaxComp.of(syntaxHighlighting(isDark ? defaultHighlightStyle : lightHighlight)),
         syntaxHighlighting(wedeHeadingHighlight),
         breakpointSupport(),
         getLang(file?.name || ''),
@@ -372,11 +455,17 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
     view.dispatch({ effects })
   }, [stopLine])
 
-  // Live theme switch (dark ↔ light).
+  // Live theme switch (dark ↔ light) — swap both the chrome theme and the
+  // syntax highlight colours so light mode gets distinct token colours.
   useEffect(() => {
     if (!viewRef.current) return
     viewRef.current.dispatch({
-      effects: themeCompRef.current.reconfigure([isDark ? oneDark : [], makeEditorTheme(settings, isDark)]),
+      effects: [
+        themeCompRef.current.reconfigure([isDark ? oneDark : [], makeEditorTheme(settings, isDark)]),
+        syntaxCompRef.current.reconfigure(
+          syntaxHighlighting(isDark ? defaultHighlightStyle : lightHighlight),
+        ),
+      ],
     })
   }, [isDark]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -407,7 +496,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
   // Live settings: line-number mode.
   useEffect(() => {
     if (!viewRef.current) return
-    const mode = (settings.numbering as NumberingMode | undefined) ?? 'smart'
+    const mode = settings.numbering ?? 'smart'
     viewRef.current.dispatch({
       effects: lineNumCompRef.current.reconfigure(numberingGutter(mode)),
     })

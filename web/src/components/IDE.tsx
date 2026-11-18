@@ -291,7 +291,26 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     } catch { /* ignore */ }
     return []
   })
-  const [activeShell, setActiveShell] = useState<string>(() => localStorage.getItem('wede_active_shell') || 'view:files')
+  const [fileIds, setFileIds] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem('wede_file_ids')
+      if (saved) {
+        const ids = JSON.parse(saved) as number[]
+        if (Array.isArray(ids) && ids.length) return ids
+      }
+    } catch { /* ignore */ }
+    return [1]
+  })
+  const [activeFileId, setActiveFileId] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('wede_active_file_id'))
+    return Number.isFinite(saved) && saved > 0 ? saved : 1
+  })
+  const nextFileId = useRef((fileIds[fileIds.length - 1] || 0) + 1)
+  const [activeShell, setActiveShell] = useState<string>(() => {
+    const saved = localStorage.getItem('wede_active_shell')
+    if (!saved || saved === 'view:files') return 'files:1'
+    return saved
+  })
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPlacement, setMenuPlacement] = useState<MenuPlacement>(() => {
     const saved = localStorage.getItem('wede_menu_placement') as MenuPlacement | null
@@ -385,6 +404,15 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     return id
   }, [])
 
+  const addFiles = useCallback(() => {
+    const id = nextFileId.current++
+    setFileIds((prev) => [...prev, id])
+    setActiveFileId(id)
+    setVisible((v) => ({ ...v, files: true }))
+    setActiveShell(`files:${id}`)
+    return id
+  }, [])
+
   const addApi = useCallback(() => {
     const id = nextApiId.current++
     setApiIds((prev) => [...prev, id])
@@ -421,6 +449,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
 
   const toggleVisible = useCallback((kind: ViewKind) => {
     const noInstances =
+      (kind === 'files' && fileIds.length === 0) ||
       (kind === 'web' && !tabs.some((t) => t.type === 'browser')) ||
       (kind === 'api' && apiIds.length === 0) ||
       (kind === 'terminals' && terminalsApi.terminals.length === 0) ||
@@ -428,7 +457,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       (kind === 'log' && logIds.length === 0)
     const turningOn = !visible[kind] || noInstances
     if (turningOn) {
-      if (kind === 'web') {
+      if (kind === 'files') {
+        if (fileIds.length === 0) { addFiles(); return }
+        setActiveShell(`files:${activeFileId}`)
+      } else if (kind === 'web') {
         const existing = tabs.find((t) => t.type === 'browser')
         if (!existing) { addWeb(); return }
         setActiveTab(existing.path)
@@ -452,11 +484,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       }
     }
     setVisible((v) => ({ ...v, [kind]: turningOn }))
-  }, [visible, tabs, apiIds, activeApiId, terminalsApi, searchIds, activeSearchId, logIds, activeLogId, addWeb, addApi, addTerminalTab, addSearch, addLog])
+  }, [visible, tabs, fileIds, activeFileId, apiIds, activeApiId, terminalsApi, searchIds, activeSearchId, logIds, activeLogId, addFiles, addWeb, addApi, addTerminalTab, addSearch, addLog])
 
   const showView = useCallback((kind: ViewKind) => {
     setVisible((v) => ({ ...v, [kind]: true }))
-    if (kind === 'search') {
+    if (kind === 'files') {
+      if (fileIds.length === 0) { addFiles(); return }
+      setActiveShell(`files:${activeFileId}`)
+    } else if (kind === 'search') {
       if (searchIds.length === 0) { addSearch(); return }
       setActiveShell(`search:${activeSearchId}`)
     } else if (kind === 'log') {
@@ -478,7 +513,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     } else {
       setActiveShell(`view:${kind}`)
     }
-  }, [searchIds, activeSearchId, logIds, activeLogId, tabs, apiIds, activeApiId, terminalsApi, addSearch, addLog, addWeb, addApi, addTerminalTab])
+  }, [fileIds, activeFileId, searchIds, activeSearchId, logIds, activeLogId, tabs, apiIds, activeApiId, terminalsApi, addFiles, addSearch, addLog, addWeb, addApi, addTerminalTab])
 
   interface ShellEntry {
     id: string
@@ -487,6 +522,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     icon: ViewTab['icon']
     filePath?: string
     webPath?: string
+    fileId?: number
     apiId?: number
     termId?: number
     searchId?: number
@@ -498,7 +534,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     const list: ShellEntry[] = []
     const pushView = (kind: ViewKind, title: string, icon: ViewTab['icon']) =>
       list.push({ id: `view:${kind}`, kind, title, icon })
-    if (visible.files) pushView('files', 'Files', Files)
+    if (visible.files) for (const id of fileIds) list.push({ id: `files:${id}`, kind: 'files', title: id === 1 ? 'Files' : `Files ${id}`, icon: Files, fileId: id })
     if (visible.search) for (const id of searchIds) list.push({ id: `search:${id}`, kind: 'search', title: `Search ${id}`, icon: SearchIcon, searchId: id })
     if (visible.code) {
       const fileTabs = tabs.filter((t) => !t.type || t.type === 'gitgraph')
@@ -526,7 +562,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       return i < 0 ? Number.MAX_SAFE_INTEGER : i
     }
     return list.sort((a, b) => order(a.id) - order(b.id))
-  }, [visible, tabs, apiIds, searchIds, logIds, containers, terminalsApi.terminals, tabOrder])
+  }, [visible, tabs, fileIds, apiIds, searchIds, logIds, containers, terminalsApi.terminals, tabOrder])
 
   const shellMode = (id: string): ViewMode => viewModes[id] || 'center'
   const rootAncestorId = (id: string): string => {
@@ -572,6 +608,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     setActiveShell(e.id)
     if (e.filePath) setActiveTab(e.filePath)
     else if (e.webPath) setActiveTab(e.webPath)
+    else if (e.fileId != null) setActiveFileId(e.fileId)
     else if (e.apiId != null) setActiveApiId(e.apiId)
     else if (e.termId != null) terminalsApi.setActiveId(e.termId)
     else setActiveTab(null)
@@ -579,6 +616,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   useEffect(() => { try { localStorage.setItem('wede_visible', JSON.stringify(visible)) } catch { /* ignore */ } }, [visible])
   useEffect(() => { try { localStorage.setItem('wede_tab_order', JSON.stringify(tabOrder)) } catch { /* ignore */ } }, [tabOrder])
   useEffect(() => { try { localStorage.setItem('wede_active_shell', activeShell) } catch { /* ignore */ } }, [activeShell])
+  useEffect(() => { try { localStorage.setItem('wede_file_ids', JSON.stringify(fileIds)) } catch { /* ignore */ } }, [fileIds])
+  useEffect(() => { try { localStorage.setItem('wede_active_file_id', String(activeFileId)) } catch { /* ignore */ } }, [activeFileId])
   useEffect(() => { try { localStorage.setItem('wede_menu_placement', menuPlacement) } catch { /* ignore */ } }, [menuPlacement])
   useEffect(() => { try { localStorage.setItem('wede_containers', JSON.stringify(containers)) } catch { /* ignore */ } }, [containers])
   useEffect(() => { try { localStorage.setItem('wede_container_of', JSON.stringify(containerOf)) } catch { /* ignore */ } }, [containerOf])
@@ -796,7 +835,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   // section is available even when the server sends no config.
   const mergedVisibleTabTypes = useMemo(() => {
     const merged: Record<string, boolean> = {}
-    for (const kind of VIEW_TABS.map(v => v.kind)) merged[kind] = true
+    const hiddenByDefault = new Set(['api', 'log', 'chat'])
+    for (const kind of VIEW_TABS.map(v => v.kind)) merged[kind] = !hiddenByDefault.has(kind)
     // Apply server config
     if (visibleTabTypes) {
       for (const [k, v] of Object.entries(visibleTabTypes)) {
@@ -1063,6 +1103,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     if (!e) return
     if (e.filePath) setActiveTab(e.filePath)
     else if (e.webPath) setActiveTab(e.webPath)
+    else if (e.fileId != null) setActiveFileId(e.fileId)
     else if (e.apiId != null) setActiveApiId(e.apiId)
     else if (e.searchId != null) setActiveSearchId(e.searchId)
     else if (e.logId != null) setActiveLogId(e.logId)
@@ -1368,7 +1409,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     setFloatGeom({})
     setLockedShells([])
     setTabOrder([])
-    setActiveShell('view:files')
+    setFileIds([1])
+    setActiveFileId(1)
+    nextFileId.current = 2
+    setActiveShell('files:1')
     setApiIds([1])
     setActiveApiId(1)
     nextApiId.current = 2
@@ -1412,6 +1456,12 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     if (e.kind !== 'container') forgetShellMapping(id)
     if (e.filePath) { closeTab(e.filePath); return }
     if (e.webPath) { closeTab(e.webPath); return }
+    if (e.fileId != null) {
+      const next = fileIds.filter((x) => x !== e.fileId)
+      setFileIds(next)
+      if (next.length === 0) setVisible((v) => ({ ...v, files: false }))
+      return
+    }
     if (e.apiId != null) { setApiIds((prev) => prev.filter((x) => x !== e.apiId)); return }
     if (e.searchId != null) { setSearchIds((prev) => prev.filter((x) => x !== e.searchId)); return }
     if (e.logId != null) { setLogIds((prev) => prev.filter((x) => x !== e.logId)); return }
@@ -1421,9 +1471,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     }
     if (e.termId != null) { terminalsApi.closeTerminal(e.termId); return }
     setVisible((v) => ({ ...v, [e.kind]: false }))
-  }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping])
+  }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping, fileIds])
 
   const closeSelectedShells = useCallback((ids: string[], includeLocked = false) => {
+    const closeFileIds = new Set<number>()
     for (const id of ids) {
       if (!includeLocked && lockedShells.includes(id)) continue
       const e = entries.find((x) => x.id === id)
@@ -1431,6 +1482,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       if (e.kind !== 'container') forgetShellMapping(id)
       if (e.filePath) closeTab(e.filePath)
       else if (e.webPath) closeTab(e.webPath)
+      else if (e.fileId != null) closeFileIds.add(e.fileId)
       else if (e.apiId != null) setApiIds((prev) => prev.filter((x) => x !== e.apiId))
       else if (e.searchId != null) setSearchIds((prev) => prev.filter((x) => x !== e.searchId))
       else if (e.logId != null) setLogIds((prev) => prev.filter((x) => x !== e.logId))
@@ -1438,7 +1490,12 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       else if (e.termId != null) terminalsApi.closeTerminal(e.termId)
       else setVisible((v) => ({ ...v, [e.kind]: false }))
     }
-  }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping])
+    if (closeFileIds.size > 0) {
+      const next = fileIds.filter((x) => !closeFileIds.has(x))
+      setFileIds(next)
+      if (next.length === 0) setVisible((v) => ({ ...v, files: false }))
+    }
+  }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping, fileIds])
 
   const reorderShell = useCallback((from: string, to: string) => {
     setTabOrder((prev) => {
@@ -1700,6 +1757,27 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     } catch { /* ignore */ }
     return false
   }, [tabs, authFetch, workspaceId])
+
+  // LSP go-to-definition can point at another file. Map the file:// URI back to
+  // one of the open workspace roots, then open/focus that tab at the target.
+  const openDefinition = useCallback((uri: string, line: number, col: number) => {
+    if (!uri.startsWith('file://')) return
+    const abs = decodeURIComponent(uri.slice('file://'.length))
+    const roots = (workspacesApi?.workspaces || [])
+      .map((w) => ({ id: w.id, root: (w.root || '').replace(/\/+$/, '') }))
+      .filter((w) => w.root)
+      .sort((a, b) => b.root.length - a.root.length)
+    const match = roots.find((w) => abs === w.root || abs.startsWith(w.root + '/'))
+    const wsId = match?.id || workspaceId
+    const root = match?.root || (workspace || '').replace(/\/+$/, '')
+    if (!wsId || !root || !abs.startsWith(root + '/')) return
+    const rel = abs.slice(root.length + 1)
+    if (!rel) return
+    void openFile(
+      { path: rel, rel, workspaceId: wsId, name: rel.split('/').pop(), isDir: false },
+      { targetSelection: { anchorLine: line, anchorCol: col, headLine: line, headCol: col } },
+    )
+  }, [workspacesApi?.workspaces, workspace, workspaceId, openFile])
 
   const lastFollowKeyRef = useRef('')
   const followOpenedRef = useRef<Map<string, Set<string>>>(new Map())
@@ -2014,6 +2092,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
         settings={editorSettings}
         lspExtension={isActive ? lspExtension : null}
         onRegisterActions={isActive ? handleRegisterEditorActions : undefined}
+        onDefinition={openDefinition}
         collab={isActive ? collab : null}
         editable={editable}
         breakpoints={breakpoints[tabAbs] || []}
@@ -2102,7 +2181,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   const renderEntry = (e: ShellEntry): ReactNode => {
     switch (e.kind) {
       case 'files':
-        return <FileExplorer authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={handleRegisterExplorerActions} onAddFolder={openAddFolder} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
+        return <FileExplorer key={e.fileId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={e.id === activeShell ? handleRegisterExplorerActions : undefined} onAddFolder={openAddFolder} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
       case 'search':
         return <SearchPanel key={e.searchId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} readOnly={role === 'viewer'} onOpenFile={(entry, line) => {
           const key = fileKey(entry.workspaceId || workspaceId, entry.rel ?? entry.path)
@@ -2248,6 +2327,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
             visible
             onOpenFolder={() => setShowFolderPicker(true)}
             workspace={workspace}
+            workspacesApi={workspacesApi}
             editorSettings={editorSettings}
             onEditorSettingsChange={handleEditorSettingsChange}
             lspAvailable={lspAvailable}
@@ -2368,7 +2448,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
        visible={visible}
        onToggle={(kind) => toggleVisible(kind as ViewKind)}
       onAdd={(kind) => {
-        if (kind === 'web') addWeb()
+        if (kind === 'files') addFiles()
+        else if (kind === 'web') addWeb()
         else if (kind === 'api') addApi()
         else if (kind === 'terminals') addTerminalTab()
         else if (kind === 'search') addSearch()
@@ -2534,13 +2615,20 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
                 ) : modeDrag ? dropSlot(null, 'docked-left') : null}
 
                 <div className="flex-1 min-w-0 min-h-0 relative bg-bg-primary">
-                  {centerEntry ? (
+                  {/* Keep SearchPanel mounted while another center tab is active so
+                      results and scroll position survive tab switches. */}
+                  {mainTabs.filter((e) => e.kind === 'search').map((e) => (
+                    <div key={e.id} className={centerEntry?.id === e.id ? 'absolute inset-0 flex flex-col' : 'hidden'}>
+                      {renderEntry(e)}
+                    </div>
+                  ))}
+                  {centerEntry && centerEntry.kind !== 'search' ? (
                     <div className="absolute inset-0 flex flex-col">{renderEntry(centerEntry)}</div>
-                  ) : (
+                  ) : !centerEntry ? (
                     <div className="h-full flex items-center justify-center px-6 text-center text-text-muted">
                       <span className="text-[12px]">select a tab to show it in the center</span>
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 {dockedRight.length > 0 ? (
