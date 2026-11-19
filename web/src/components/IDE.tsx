@@ -233,7 +233,7 @@ interface FileReadResponse {
 export default function IDE({ token, authFetch, onLogout, workspace, home, recents, onWorkspaceChange, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
-  const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, updateScale: updateUiScale } = useUiScale()
+  const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, isSet: uiScaleIsSet, enabled: uiScaleEnabled, setEnabled: setUiScaleEnabled, updateScale: updateUiScale } = useUiScale()
   const { isDark, toggle: toggleTheme } = useTheme()
 
   const [tabs, setTabs] = useState<Tab[]>(() => {
@@ -2479,6 +2479,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       folderName={folderName}
       workspaceSwitcher={<WorkspaceSwitcher workspacesApi={workspacesApi} menuUp />}
       onToggleDesktop={() => setDesktopMode(!desktopMode)}
+      uiScaleIsSet={uiScaleIsSet}
+      uiScaleEnabled={uiScaleEnabled}
+      onToggleUiScale={() => setUiScaleEnabled(!uiScaleEnabled)}
       placement={menuPlacement}
       onPlacement={setMenuPlacement}
       onResetView={resetView}

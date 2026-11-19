@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import {
   X, LogOut, FolderOpen, Moon, Sun, Monitor, Users,
   LayoutPanelLeft, ChevronDown, ChevronRight, RotateCcw,
-  Eye, Radio,
+  Eye, Radio, Scaling,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useRowMenu } from './Selectable'
@@ -147,6 +147,9 @@ export interface ViewMenuProps {
   folderName: string
   workspaceSwitcher?: ReactNode
   onToggleDesktop: () => void
+  uiScaleIsSet: boolean
+  uiScaleEnabled: boolean
+  onToggleUiScale: () => void
   placement: MenuPlacement
   onPlacement: (p: MenuPlacement) => void
   onResetView: () => void
@@ -168,7 +171,7 @@ export interface ViewMenuProps {
 export default function ViewMenu({
   views, visible, onToggle, onAdd, onOpenFolder,
   onLogout, onClose, desktop, folderName, workspaceSwitcher,
-  onToggleDesktop, placement, onPlacement,
+  onToggleDesktop, uiScaleIsSet, uiScaleEnabled, onToggleUiScale, placement, onPlacement,
   onResetView, username, users,
   selfId, teacher = false, presenter = null,
   followTargetId = null, followMode = null,
@@ -212,6 +215,15 @@ export default function ViewMenu({
         <div className="my-1 border-t border-border" />
 
         {!slim && <ThemeLevelRow slim={false} />}
+        {uiScaleIsSet && (
+          <MenuRow
+            icon={Scaling}
+            label="UI scale active"
+            checked={uiScaleEnabled}
+            onToggle={onToggleUiScale}
+            slim={slim}
+          />
+        )}
         <MenuRow
           icon={Monitor}
           label="Desktop mode"

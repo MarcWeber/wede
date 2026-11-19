@@ -16,6 +16,7 @@ export const DEFAULT_UI_SCALE: UiScale = {
 }
 
 const UI_SCALE_KEY = 'wede_ui_scale'
+const UI_SCALE_ENABLED_KEY = 'wede_ui_scale_enabled'
 
 export function clampUiScale(value: number): number {
   if (!Number.isFinite(value)) return 1
@@ -50,6 +51,14 @@ export function readUiScale(): UiScale {
 
 export function writeUiScale(scale: UiScale): void {
   try { localStorage.setItem(UI_SCALE_KEY, JSON.stringify(scale)) } catch { /* ignore */ }
+}
+
+export function readUiScaleEnabled(): boolean {
+  try { return localStorage.getItem(UI_SCALE_ENABLED_KEY) !== '0' } catch { return true }
+}
+
+export function writeUiScaleEnabled(enabled: boolean): void {
+  try { localStorage.setItem(UI_SCALE_ENABLED_KEY, enabled ? '1' : '0') } catch { /* ignore */ }
 }
 
 export function elementScale(el: HTMLElement | null | undefined, axis: 'x' | 'y'): number {

@@ -22,6 +22,24 @@ export default function HelpView() {
         </div>
 
         <div className="mt-8">
+          <h2 className="text-sm font-semibold text-text-primary mb-3">Mobile optimization</h2>
+          <div className="space-y-1.5 text-xs">
+            {[
+              ['Tabs', 'Swipe up to hide/show all tabs. Swipe a tab up-right to close it (locked tabs stay).'],
+              ['Tab strip', 'Swipe down to expand the strip; swipe up to return to one line.'],
+              ['Keyboard layout', 'Terminal > settings > eye: Off, Follow cursor, Shrink & maximize, or Zoom (distort) when the keyboard opens.'],
+              ['Terminal buttons', 'Terminal > settings > configure behavior: assign tap, swipe and long-press actions to each grid cell.'],
+              ['1/2-finger swipe', 'Terminal > settings > single/two-finger swipe: cursor movement, PgUp/PgDn, Vim/Emacs paging, scroll events or native scrollback.'],
+            ].map(([topic, text]) => (
+              <div key={topic} className="py-1.5 px-3 bg-bg-secondary rounded-lg border border-border">
+                <span className="text-text-primary font-medium">{topic}</span>
+                <span className="text-text-secondary"> — {text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-8">
           <h2 className="text-sm font-semibold text-text-primary mb-3">Shortcuts</h2>
           <div className="space-y-1.5 text-xs">
             {[

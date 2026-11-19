@@ -60,6 +60,7 @@ right click to see menu
 
 TABS:
 swipe down to expand see all, swipe up return to one line
+swipe a tab up-right to close it (locked tabs stay)
 
 
 desktop mode:

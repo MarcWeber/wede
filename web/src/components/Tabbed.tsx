@@ -89,11 +89,19 @@ export default function Tabbed({
     const start = swipeStart.current
     const t = e.changedTouches[0]
     const end = t ? { x: t.clientX, y: t.clientY } : swipeLast.current
+    const tabId = swipeTabId.current
     swipeStart.current = null
     swipeLast.current = null
+    swipeTabId.current = null
     if (!multilineSwipe || !start || !end) return
     const dx = end.x - start.x
     const dy = end.y - start.y
+    // Flick a tab up and to the right to close it. Check this before the
+    // horizontal/vertical filters so the diagonal gesture is not swallowed.
+    if (tabId && dx >= 40 && dy <= -24) {
+      if (!lockedIds.includes(tabId)) onClose(tabId)
+      return
+    }
     if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 32) return
     if (Math.abs(dy) < 40) return
     // Up toggles wrapped mode; a short down swipe expands it. A long down
@@ -102,8 +110,6 @@ export default function Tabbed({
       setMultiline((v) => !v)
     } else {
       // Down swipe on a tab in normal mode copies the file path with cursor.
-      const tabId = swipeTabId.current
-      swipeTabId.current = null
       if (selected.size === 0 && tabId && onCopyLocation) {
         onCopyLocation([tabId])
         return

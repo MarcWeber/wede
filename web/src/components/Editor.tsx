@@ -9,14 +9,13 @@ import { numberingGutter } from '../lib/lineNumbering'
 import { EditorState, Compartment, type Extension, type StateField, type StateEffect } from '@codemirror/state'
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands'
 import {
-  syntaxHighlighting, defaultHighlightStyle, bracketMatching,
+  syntaxHighlighting, bracketMatching,
   indentOnInput, HighlightStyle,
 } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { languageServerPlugin } from 'codemirror-languageserver'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
-import { oneDark } from '@codemirror/theme-one-dark'
 import { showMinimap, type MinimapConfig } from '@replit/codemirror-minimap'
 import * as Y from 'yjs'
 import { yCollab } from 'y-codemirror.next'
@@ -86,40 +85,45 @@ const wedeHeadingHighlight = HighlightStyle.define([
   { tag: [tags.heading2, tags.heading3, tags.heading4, tags.heading5, tags.heading6], class: 'cm-wede-heading2' },
 ])
 
-// Light-mode syntax highlighting — oneDark covers dark mode, but light mode
-// needs its own token colours.  These match the VS Code light palette so
-// keywords, strings, numbers, comments, etc. are distinct.
-const lightHighlight = HighlightStyle.define([
-  { tag: tags.keyword, color: '#795E26' },
-  { tag: tags.string, color: '#A31515' },
-  { tag: tags.number, color: '#098658' },
-  { tag: tags.comment, color: '#008000' },
-  { tag: tags.variableName, color: '#001080' },
-  { tag: tags.propertyName, color: '#795E26' },
-  { tag: tags.function(tags.variableName), color: '#795E26' },
-  { tag: tags.definition(tags.variableName), color: '#795E26' },
-  { tag: tags.typeName, color: '#267F99' },
-  { tag: tags.typeOperator, color: '#000000' },
-  { tag: tags.operator, color: '#000000' },
-  { tag: tags.className, color: '#267F99' },
-  { tag: tags.tagName, color: '#800000' },
-  { tag: tags.attributeName, color: '#EE0000' },
-  { tag: tags.meta, color: '#565656' },
-  { tag: tags.regexp, color: '#008000' },
-  { tag: tags.literal, color: '#098658' },
-  { tag: tags.bool, color: '#098658' },
-  { tag: tags.null, color: '#098658' },
-  { tag: tags.self, color: '#795E26' },
-  { tag: tags.separator, color: '#000000' },
-  { tag: tags.punctuation, color: '#393A34' },
-  { tag: tags.bracket, color: '#0431FA' },
+// Syntax colours come from the same CSS variables as the UI chrome, so the
+// brightness/contrast slider applies to code tokens as well as the editor
+// background and text. Light/dark values live in index.css.
+const wedeHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: 'var(--c-mauve)' },
+  { tag: tags.string, color: 'var(--c-green)' },
+  { tag: tags.number, color: 'var(--c-yellow)' },
+  { tag: tags.comment, color: 'var(--c-text-muted)' },
+  { tag: tags.variableName, color: 'var(--c-text-primary)' },
+  { tag: tags.propertyName, color: 'var(--c-cyan)' },
+  { tag: tags.function(tags.variableName), color: 'var(--c-accent)' },
+  { tag: tags.definition(tags.variableName), color: 'var(--c-accent)' },
+  { tag: tags.typeName, color: 'var(--c-cyan)' },
+  { tag: tags.typeOperator, color: 'var(--c-text-secondary)' },
+  { tag: tags.operator, color: 'var(--c-text-secondary)' },
+  { tag: tags.className, color: 'var(--c-cyan)' },
+  { tag: tags.tagName, color: 'var(--c-red)' },
+  { tag: tags.attributeName, color: 'var(--c-peach)' },
+  { tag: tags.meta, color: 'var(--c-text-muted)' },
+  { tag: tags.regexp, color: 'var(--c-green)' },
+  { tag: tags.literal, color: 'var(--c-yellow)' },
+  { tag: tags.bool, color: 'var(--c-yellow)' },
+  { tag: tags.null, color: 'var(--c-yellow)' },
+  { tag: tags.atom, color: 'var(--c-yellow)' },
+  { tag: tags.self, color: 'var(--c-mauve)' },
+  { tag: tags.separator, color: 'var(--c-text-secondary)' },
+  { tag: tags.punctuation, color: 'var(--c-text-secondary)' },
+  { tag: tags.bracket, color: 'var(--c-accent)' },
+  { tag: tags.deleted, color: 'var(--c-red)' },
+  { tag: tags.inserted, color: 'var(--c-green)' },
+  { tag: tags.changed, color: 'var(--c-yellow)' },
+  { tag: tags.invalid, color: 'var(--c-red)' },
   { tag: tags.strong, fontWeight: '700' },
   { tag: tags.emphasis, fontStyle: 'italic' },
-  { tag: tags.link, color: '#0B66C3', textDecoration: 'underline' },
-  { tag: tags.url, color: '#0B66C3' },
-  { tag: tags.monospace, color: '#A31515' },
-  { tag: tags.quote, color: '#008000' },
-  { tag: tags.list, color: '#795E26' },
+  { tag: tags.link, color: 'var(--c-accent)', textDecoration: 'underline' },
+  { tag: tags.url, color: 'var(--c-accent)' },
+  { tag: tags.monospace, color: 'var(--c-green)' },
+  { tag: tags.quote, color: 'var(--c-green)' },
+  { tag: tags.list, color: 'var(--c-mauve)' },
 ])
 
 // Build a theme extension from editor settings.
@@ -144,8 +148,13 @@ function makeEditorTheme(settings: EditorSettings, isDark: boolean): Extension {
     '.cm-activeLine': { backgroundColor: 'var(--c-accent-glow)' },
     '.cm-cursor': { borderLeftColor: 'var(--c-accent)' },
     '.cm-content': { fontFamily, fontSize, color: 'var(--c-text-primary)' },
-    '.cm-wede-heading1': { color: `${isDark ? 'var(--c-text-primary)' : '#795E26'} !important`, fontWeight: '700' },
-    '.cm-wede-heading2': { color: `${isDark ? 'var(--c-text-primary)' : '#267F99'} !important`, fontWeight: '600' },
+    '.cm-panels': { backgroundColor: 'var(--c-bg-secondary)', color: 'var(--c-text-primary)' },
+    '.cm-searchMatch': { backgroundColor: 'var(--c-accent-dim)', outline: '1px solid var(--c-accent)' },
+    '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'var(--c-accent-glow)' },
+    '.cm-selectionMatch': { backgroundColor: 'var(--c-accent-dim)' },
+    '.cm-tooltip': { backgroundColor: 'var(--c-bg-elevated)', color: 'var(--c-text-primary)', border: '1px solid var(--c-border)' },
+    '.cm-wede-heading1': { color: 'var(--c-text-primary) !important', fontWeight: '700' },
+    '.cm-wede-heading2': { color: 'var(--c-text-secondary) !important', fontWeight: '600' },
     // Multi-cursor: secondary cursors are slightly dimmer.
     '.cm-cursor-secondary': { borderLeftColor: 'var(--c-accent)', opacity: '0.6' },
   }, { dark: isDark })
@@ -264,7 +273,6 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
   const lineNumCompRef = useRef(new Compartment())
   const lspCompRef     = useRef(new Compartment())
   const editCompRef    = useRef(new Compartment())
-  const syntaxCompRef  = useRef(new Compartment())
 
   const { isDark } = useTheme()
 
@@ -311,7 +319,6 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
     const minimapComp = minimapCompRef.current
     const lspComp     = lspCompRef.current
     const editComp    = editCompRef.current
-    const syntaxComp  = syntaxCompRef.current
 
     const minimapEnabled = settings.minimap ?? false
 
@@ -352,7 +359,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
         // is held, giving users a visual cue that multi-cursor is active.
         rectangularSelection(),
         crosshairCursor(),
-        themeComp.of([isDark ? oneDark : [], makeEditorTheme(settings, isDark)]),
+        themeComp.of(makeEditorTheme(settings, isDark)),
         wrapComp.of(settings.wordWrap ? EditorView.lineWrapping : []),
         tabComp.of(EditorState.tabSize.of(settings.tabWidth || 2)),
         // Minimap compartment — reconfigured live when settings.minimap changes.
@@ -385,7 +392,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
         lspComp.of(lspExtension ? lspExtension : []),
         // Read-only compartment — viewer role gets EditorState.readOnly + EditorView.editable(false).
         editComp.of(editable ? [] : [EditorState.readOnly.of(true), EditorView.editable.of(false)]),
-        syntaxComp.of(syntaxHighlighting(isDark ? defaultHighlightStyle : lightHighlight)),
+        syntaxHighlighting(wedeHighlight),
         syntaxHighlighting(wedeHeadingHighlight),
         breakpointSupport(),
         getLang(file?.name || ''),
@@ -455,17 +462,12 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
     view.dispatch({ effects })
   }, [stopLine])
 
-  // Live theme switch (dark ↔ light) — swap both the chrome theme and the
-  // syntax highlight colours so light mode gets distinct token colours.
+  // Live theme switch (dark ↔ light). Syntax colours are CSS variables, so
+  // only the editor's dark/light flag needs reconfiguring here.
   useEffect(() => {
     if (!viewRef.current) return
     viewRef.current.dispatch({
-      effects: [
-        themeCompRef.current.reconfigure([isDark ? oneDark : [], makeEditorTheme(settings, isDark)]),
-        syntaxCompRef.current.reconfigure(
-          syntaxHighlighting(isDark ? defaultHighlightStyle : lightHighlight),
-        ),
-      ],
+      effects: themeCompRef.current.reconfigure(makeEditorTheme(settings, isDark)),
     })
   }, [isDark]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -489,7 +491,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
   useEffect(() => {
     if (!viewRef.current) return
     viewRef.current.dispatch({
-      effects: themeCompRef.current.reconfigure([isDark ? oneDark : [], makeEditorTheme(settings, isDark)]),
+      effects: themeCompRef.current.reconfigure(makeEditorTheme(settings, isDark)),
     })
   }, [settings.fontSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
