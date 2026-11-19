@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Eye, EyeOff, FolderOpen, Lock, LogOut, User } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Lock, LogOut, User } from 'lucide-react'
 import Logo from './Logo'
 import type { WorkspaceSummary, WorkspaceTemplate } from '../types'
 import { useBranding } from '../hooks/useBranding'
@@ -7,8 +7,7 @@ import { useBranding } from '../hooks/useBranding'
 interface LoginProps {
   onLogin: (password: string, name?: string) => Promise<boolean>
   error: string | null
-  locked: boolean
-  remaining: number
+  remaining?: number
   authenticated?: boolean
   username?: string
   sessions?: WorkspaceSummary[]
@@ -35,7 +34,7 @@ function sessionLabel(s: WorkspaceSummary): string {
 }
 
 export default function Login({
-  onLogin, error, locked, remaining, authenticated = false, username = '',
+  onLogin, error, remaining, authenticated = false, username = '',
   sessions = [], templates = [], sessionsLoading = false,
   onJoinSession, onCreateSession, onLogout,
 }: LoginProps) {
@@ -67,7 +66,7 @@ export default function Login({
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (locked || !password) return
+    if (!password) return
     setLoading(true)
     await onLogin(password, name.trim())
     setLoading(false)
@@ -108,17 +107,7 @@ export default function Login({
           onSubmit={(e) => { if (authenticated) { e.preventDefault(); void handleJoin() } else void handleLogin(e) }}
           className="bg-bg-elevated border border-border rounded-xl p-6 shadow-xl shadow-shadow"
         >
-          {locked ? (
-            <div className="flex flex-col items-center py-4 text-center">
-              <div className="w-12 h-12 rounded-xl bg-red/10 border border-red/20 flex items-center justify-center mb-3">
-                <AlertTriangle className="w-6 h-6 text-red" />
-              </div>
-              <h2 className="text-[15px] font-semibold text-red mb-2">Locked Out</h2>
-              <p className="text-text-muted text-[13px]">
-                Too many failed attempts.<br />Restart the server to unlock.
-              </p>
-            </div>
-          ) : authenticated ? (
+          {authenticated ? (
             <>
               <div className="mb-4">
                 <div className="text-[12px] font-semibold text-text-secondary uppercase tracking-widest mb-1.5">

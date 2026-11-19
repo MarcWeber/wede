@@ -6,6 +6,7 @@ import WorkspaceSwitcher from './WorkspaceSwitcher'
 import type { useWorkspaces } from '../hooks/useWorkspaces'
 import type { AuthFetch, EditorSettings } from '../types'
 import type { UiOrientation, UiScale } from '../lib/uiScale'
+import { useMediaSettings, type ImageViewMode, type PdfViewMode } from '../lib/mediaSettings'
 import { Eye, EyeOff } from 'lucide-react'
 
 interface TrustState {
@@ -41,6 +42,7 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, wo
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
   const [showWorkspaces, setShowWorkspaces] = useState(true)
+  const [media, setMedia] = useMediaSettings()
   const saveName = () => {
     const v = name.trim()
     if (v && v !== username) { onUsernameChange?.(v); setSavedName(true); setTimeout(() => setSavedName(false), 1500) }
@@ -191,6 +193,39 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, wo
               Scales the whole app. Portrait and landscape keep separate X/Y values. 100% is normal; below 100% fits more content. Above 100% is intentionally unavailable.
             </p>
           </div>
+        </div>
+
+        {/* Viewing */}
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Viewing</h3>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5">
+              <span className="text-xs text-text-secondary">View image</span>
+              <ModePicker<ImageViewMode>
+                value={media.image}
+                options={[
+                  { value: 'tab-viewer', label: 'tab-viewer' },
+                  { value: 'external', label: 'external' },
+                ]}
+                onChange={(image) => setMedia({ image })}
+              />
+            </div>
+            <div className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5">
+              <span className="text-xs text-text-secondary">View pdf</span>
+              <ModePicker<PdfViewMode>
+                value={media.pdf}
+                options={[
+                  { value: 'tab-pdf-js', label: 'tab-pdf-js' },
+                  { value: 'tab-choose', label: 'tab-choose' },
+                  { value: 'external', label: 'external' },
+                ]}
+                onChange={(pdf) => setMedia({ pdf })}
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-text-muted mt-1.5 leading-relaxed">
+            Defaults come from <code className="text-text-secondary">wede.config.json</code> (<code className="text-text-secondary">view_image</code>, <code className="text-text-secondary">view_pdf</code>). Changes here apply to this browser.
+          </p>
         </div>
 
         {/* Tab visibility */}
@@ -425,5 +460,32 @@ function Toggle({ checked, onChange }: ToggleProps) {
       onChange={(e) => onChange(e.target.checked)}
       className="w-4 h-4 shrink-0 cursor-pointer"
     />
+  )
+}
+
+interface ModePickerProps<T extends string> {
+  value: T
+  options: { value: T; label: string }[]
+  onChange: (value: T) => void
+}
+
+function ModePicker<T extends string>({ value, options, onChange }: ModePickerProps<T>) {
+  return (
+    <div className="flex items-center gap-1">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
+            value === option.value
+              ? 'bg-accent/15 text-accent border border-accent/30'
+              : 'text-text-muted hover:text-text-primary hover:bg-bg-hover border border-transparent'
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
   )
 }

@@ -3,8 +3,10 @@ package files
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,6 +30,30 @@ func New(ws WorkspaceProvider) *Handler {
 var treeSkipDirs = map[string]bool{
 	".git": true, "node_modules": true, "dist": true, "build": true,
 	".next": true, "vendor": true, ".cache": true, "target": true,
+}
+
+// imageMimes maps extensions to the MIME type used for inline image previews.
+var imageMimes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".jfif": "image/jpeg",
+	".gif":  "image/gif",
+	".svg":  "image/svg+xml",
+	".webp": "image/webp",
+	".avif": "image/avif",
+	".bmp":  "image/bmp",
+	".ico":  "image/x-icon",
+}
+
+// videoMimes maps extensions to the MIME type used for inline playback.
+var videoMimes = map[string]string{
+	".mp4":  "video/mp4",
+	".m4v":  "video/mp4",
+	".webm": "video/webm",
+	".ogv":  "video/ogg",
+	".ogg":  "video/ogg",
+	".mov":  "video/quicktime",
 }
 
 // isNoiseFile reports whether name is OS/tooling noise that should never appear
@@ -255,21 +281,32 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine file type by extension. PDFs are served as metadata only and
+	// streamed through Raw, so they are not subject to the JSON/base64 10 MB cap.
+	ext := strings.ToLower(filepath.Ext(info.Name()))
+	if ext == ".pdf" {
+		json.NewEncoder(w).Encode(map[string]any{
+			"path":     reqPath,
+			"content":  "",
+			"fileType": "pdf",
+			"size":     info.Size(),
+		})
+		return
+	}
+	if _, isVideo := videoMimes[ext]; isVideo {
+		json.NewEncoder(w).Encode(map[string]any{
+			"path":     reqPath,
+			"content":  "",
+			"fileType": "video",
+			"size":     info.Size(),
+		})
+		return
+	}
+
 	if info.Size() > 10*1024*1024 {
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
 		json.NewEncoder(w).Encode(map[string]string{"error": "file too large (>10MB)"})
 		return
-	}
-
-	// Determine file type by extension.
-	ext := strings.ToLower(filepath.Ext(info.Name()))
-	imageMimes := map[string]string{
-		".png":  "image/png",
-		".jpg":  "image/jpeg",
-		".jpeg": "image/jpeg",
-		".gif":  "image/gif",
-		".svg":  "image/svg+xml",
-		".webp": "image/webp",
 	}
 
 	if mime, isImage := imageMimes[ext]; isImage {
@@ -322,6 +359,63 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 		"path":    reqPath,
 		"content": string(data),
 	})
+}
+
+// Raw streams a workspace file to the browser. It is workspace-scoped: the
+// route already selects the workspace root, so a path is allowed only when it
+// resolves inside that root (including symlink checks). PDFs and images can be
+// opened inline with ?inline=1; everything else is sent as a download.
+func (h *Handler) Raw(w http.ResponseWriter, r *http.Request) {
+	if !h.checkWorkspace(w) {
+		return
+	}
+
+	reqPath := r.URL.Query().Get("path")
+	full, ok := h.safePath(reqPath)
+	if !ok {
+		http.Error(w, "path outside workspace", http.StatusForbidden)
+		return
+	}
+
+	info, err := os.Stat(full)
+	if err != nil || info.IsDir() {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	f, err := os.Open(full)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	ext := strings.ToLower(filepath.Ext(info.Name()))
+	contentType := "application/octet-stream"
+	inlineOK := false
+	if ext == ".pdf" {
+		contentType = "application/pdf"
+		inlineOK = true
+	} else if m, isImage := imageMimes[ext]; isImage {
+		contentType = m
+		inlineOK = true
+	} else if m, isVideo := videoMimes[ext]; isVideo {
+		contentType = m
+		inlineOK = true
+	}
+	w.Header().Set("Content-Type", contentType)
+
+	disposition := "attachment"
+	if r.URL.Query().Get("inline") == "1" && inlineOK {
+		disposition = "inline"
+	}
+	if cd := mime.FormatMediaType(disposition, map[string]string{"filename": info.Name()}); cd != "" {
+		w.Header().Set("Content-Disposition", cd)
+	}
+
+	w.Header().Set("ETag", fmt.Sprintf("\"%x-%x\"", info.Size(), info.ModTime().UnixNano()))
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
 func (h *Handler) Write(w http.ResponseWriter, r *http.Request) {

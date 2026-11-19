@@ -12,25 +12,25 @@ version before assuming a bug.
 **Symptom:** Login returns "Too many failed attempts" (HTTP 403, `{"error":
 "locked", ...}`) even with the correct password.
 
-**Cause:** wede locks the login endpoint after **3** failed password attempts
-(`maxAttempts` in `backend/internal/auth/auth.go`) and persists that state to
-`~/.wede/lockout.json` so a server restart alone does **not** clear it.
+**Cause:** wede limits failed owner-password logins **per client address**:
+20 failures within 10 minutes lock that address for the remainder of the
+10-minute window (`maxAttempts` / `defaultLockoutWindow` in
+`backend/internal/auth/auth.go`). The state is persisted to
+`~/.wede/lockout.json`. Other addresses are unaffected, and the lock expires on
+its own — a bot on one address cannot permanently lock out the owner everywhere.
 
 **Fix:**
 
-1. Stop wede.
-2. Delete (or reset) the lockout file:
+1. Wait for the window to expire and try again, or
+2. Delete (or reset) the lockout file to clear every client's counter immediately:
    ```bash
    rm ~/.wede/lockout.json
    ```
    (`~` here is the home directory of the OS user running wede — see
    [DEPLOYMENT.md § State & backup](DEPLOYMENT.md#5-state--backup) if you're
    running it as a dedicated service user, not your own login user.)
-3. **Restart wede.** This step is not optional: `lockout.json` is only ever
-   *read* once, at `Handler` construction (`loadLockout`, called from
-   `auth.NewWithDataDir`). Deleting the file while wede keeps running has no
-   effect — the in-memory `locked` flag stays `true` until the process
-   restarts and re-reads (or fails to find) the file.
+3. No restart is required: `Login` and `Check` re-read the file on every
+   request (`loadLockout`), so deleting it unlocks a running server too.
 
 There is no API endpoint to reset the lockout remotely — it's a deliberate
 owner-only, filesystem-level control.

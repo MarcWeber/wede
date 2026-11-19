@@ -196,7 +196,7 @@ The role is stored server-side in the session entry and injected into the reques
 - `securityHeaders` (wraps the whole mux) sets `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, and either `X-Frame-Options: DENY` + `frame-ancestors 'self'` (default, standalone) or `frame-ancestors <configured origins>` only (when `cfg.FrameAncestors` is set, e.g. to allow embedding inside the Vulos OS shell).
 - Session tokens and share tokens are stored **hashed** (`sha256`) in `~/.wede/sessions.json` / `tokens.json` — the raw token exists only in the client's possession and the momentary login/redeem response.
 - WebSocket auth uses an `auth.<token>` **subprotocol**, never a URL query parameter, so tokens don't end up in server logs or browser history.
-- Brute-force login lockout (3 attempts) persists to `~/.wede/lockout.json` so a restart doesn't reset the counter.
+- Brute-force login lockout is per client address (20 failures / 10 minutes), persisted to `~/.wede/lockout.json`; the lock expires automatically.
 - File/path operations are confined to the workspace via `safePath()`, which checks `strings.HasPrefix(full, ws+separator)` — the separator-aware form, so `…/workspace-evil` can't be mistaken for a path inside `…/workspace`.
 - Runtime folder-open / workspace-create requests are confined to `cfg.WorkspaceRoot` (default: `$HOME`) and reject the base itself, the filesystem root, or dotfile path components — an authenticated editor can't adopt `~/.ssh` or `/` as a workspace root. The CLI boot path is exempt (it's the owner's explicit launch choice).
 - Git argument validation rejects branch names starting with `-`, requires hex-only commit hashes, and uses `--` separators before paths, to prevent flag-injection into the `git` subprocess.
@@ -233,7 +233,7 @@ The role is stored server-side in the session entry and injected into the reques
 | Workspace-root escape | `cfg.WorkspaceRoot` allowlist + dotfile/root/base rejection on folder-open and workspace-create |
 | Git arg injection | Allowlist validation on branch names, hashes, `--` separators |
 | XSS / framing | `X-Frame-Options: DENY` + `Content-Security-Policy: frame-ancestors` (default `'self'`) |
-| Brute force | 3-attempt lockout persisted to disk |
+| Brute force | Per-address lockout: 20 failures / 10 minutes, persisted to disk, auto-expires |
 | Token leakage | WS token in subprotocol, never in URL or logs; tokens stored hashed at rest |
 | Credential logging | Password redacted from all log output |
 | Viewer → shell escalation | Terminal, LSP, DAP, CRDT-doc, and workspace-mutation routes wrapped in `RequireEditor`; viewer sessions get 403 |

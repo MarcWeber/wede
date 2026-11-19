@@ -41,17 +41,7 @@ build_dev() {
   (
     rm -rf web/dist && mkdir -p web/dist
 
-    npx --yes esbuild@0.28.2 web/src/main.tsx \
-      --bundle \
-      --minify \
-      --format=esm \
-      --target=es2020 \
-      --outfile=web/dist/index.js \
-      --loader:.tsx=tsx \
-      --loader:.ts=ts \
-      --loader:.css=text \
-      --external:../site \
-      2>&1
+    node web/scripts/build-dev.mjs
 
     npx @tailwindcss/cli -i web/src/index.css -o web/dist/styles.css --minify 2>/dev/null || \
       cp web/src/index.css web/dist/styles.css

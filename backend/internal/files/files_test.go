@@ -1,8 +1,11 @@
 package files
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -119,5 +122,84 @@ func TestSafePathHTTPDeny(t *testing.T) {
 	full, ok := h.safePath(rel)
 	if ok {
 		t.Errorf("safePath(%q) returned ok=true, full=%q — path traversal NOT blocked!", rel, full)
+	}
+}
+
+func TestRawPDFInlineAndETag(t *testing.T) {
+	tmp := t.TempDir()
+	pdf := []byte("%PDF-1.4\n%%EOF\n")
+	if err := os.WriteFile(filepath.Join(tmp, "doc.pdf"), pdf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := New(&staticWS{root: tmp})
+
+	rec := httptest.NewRecorder()
+	h.Raw(rec, httptest.NewRequest(http.MethodGet, "/files/raw?path=doc.pdf&inline=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Fatalf("content-type=%q", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "inline") {
+		t.Fatalf("content-disposition=%q", got)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("missing ETag")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/files/raw?path=doc.pdf&inline=1", nil)
+	req.Header.Set("If-None-Match", etag)
+	rec2 := httptest.NewRecorder()
+	h.Raw(rec2, req)
+	if rec2.Code != http.StatusNotModified {
+		t.Fatalf("conditional status=%d, want 304", rec2.Code)
+	}
+}
+
+func TestRawDefaultsToAttachment(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "doc.pdf"), []byte("%PDF-1.4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := New(&staticWS{root: tmp})
+	rec := httptest.NewRecorder()
+	h.Raw(rec, httptest.NewRequest(http.MethodGet, "/files/raw?path=doc.pdf", nil))
+	if got := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "attachment") {
+		t.Fatalf("content-disposition=%q", got)
+	}
+}
+
+func TestRawRejectsOutsideWorkspace(t *testing.T) {
+	tmp := t.TempDir()
+	h := New(&staticWS{root: tmp})
+	rec := httptest.NewRecorder()
+	h.Raw(rec, httptest.NewRequest(http.MethodGet, "/files/raw?path=../secret", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403", rec.Code)
+	}
+}
+
+func TestReadPDFMetadataAndAVIF(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "doc.pdf"), []byte("%PDF-1.4\n%%EOF\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "pic.avif"), []byte("not-a-real-avif"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := New(&staticWS{root: tmp})
+
+	rec := httptest.NewRecorder()
+	h.Read(rec, httptest.NewRequest(http.MethodGet, "/files/read?path=doc.pdf", nil))
+	if !strings.Contains(rec.Body.String(), `"fileType":"pdf"`) {
+		t.Fatalf("pdf read body=%s", rec.Body.String())
+	}
+
+	rec2 := httptest.NewRecorder()
+	h.Read(rec2, httptest.NewRequest(http.MethodGet, "/files/read?path=pic.avif", nil))
+	if !strings.Contains(rec2.Body.String(), `"fileType":"image"`) || !strings.Contains(rec2.Body.String(), "data:image/avif;base64,") {
+		t.Fatalf("avif read body=%s", rec2.Body.String())
 	}
 }

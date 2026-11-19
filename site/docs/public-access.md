@@ -100,9 +100,11 @@ An alternate `Provider` implementation (wrapping any of the tools in (b), for
 example) could be swapped in via `tunnel.NewWithProvider` without touching
 `main.go` or the HTTP handlers.
 
-See [GETTING-STARTED.md § Public internet — a sovereign Ephor](#getting-started:3-public-internet--a-sovereign-ephor)
-for the walkthrough (owner-only **Settings → Public access** panel, config
-persisted to `~/.wede/tunnel.json`).
+The tunnel is disabled by default. Set `"tunnel_enabled": true` in
+`wede.config.json` and restart wede to mount the owner-only routes and the
+**Settings → Public access** panel. See
+[GETTING-STARTED.md § Public internet — a sovereign Ephor](#getting-started:3-public-internet--a-sovereign-ephor)
+for the walkthrough (config persisted to `~/.wede/tunnel.json`).
 
 ---
 

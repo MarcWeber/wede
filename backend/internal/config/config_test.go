@@ -298,3 +298,31 @@ func TestPasswordPolicy(t *testing.T) {
 		t.Errorf("sha256 user entry should be skipped: %v", err)
 	}
 }
+
+func TestViewModeDefaultsAndValidation(t *testing.T) {
+	cfg, err := parse([]byte(`{"password":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ViewImage != "tab-viewer" {
+		t.Errorf("default view_image = %q, want tab-viewer", cfg.ViewImage)
+	}
+	if cfg.ViewPdf != "tab-pdf-js" {
+		t.Errorf("default view_pdf = %q, want tab-pdf-js", cfg.ViewPdf)
+	}
+
+	cfg, err = parse([]byte(`{"password":"x","view_image":"external","view_pdf":"tab-choose"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ViewImage != "external" || cfg.ViewPdf != "tab-choose" {
+		t.Errorf("view modes = %q/%q, want external/tab-choose", cfg.ViewImage, cfg.ViewPdf)
+	}
+
+	if _, err := parse([]byte(`{"password":"x","view_image":"bogus"}`)); err == nil {
+		t.Error("expected invalid view_image to be rejected")
+	}
+	if _, err := parse([]byte(`{"password":"x","view_pdf":"bogus"}`)); err == nil {
+		t.Error("expected invalid view_pdf to be rejected")
+	}
+}

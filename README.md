@@ -126,7 +126,7 @@ wede turns one machine into a shared workspace for your whole team — no accoun
 | **Editor Settings** | Font size, tab width, word wrap, minimap, auto-save — all live-applied without reopening files, persisted to `localStorage`. |
 | **Dark & Light Themes** | Midnight (dark) and Daylight (light) colour schemes with Space Grotesk / Inter / JetBrains Mono font stack. |
 | **Mobile Friendly** | Fully responsive UI for tablets and phones. |
-| **Secure Access** | Owner password with 3-attempt lockout (persisted across restarts). Per-user share tokens with viewer/editor roles, hashed at rest + constant-time compare. Session TTL, server-side logout, WebSocket token via `auth.<token>` subprotocol (recommended, so it stays out of URLs/logs) — a `?token=` query param is also accepted as a fallback, WS origin checks. |
+| **Secure Access** | Owner password with 60-attempt lockout (persisted across restarts). Per-user share tokens with viewer/editor roles, hashed at rest + constant-time compare. Session TTL, server-side logout, WebSocket token via `auth.<token>` subprotocol (recommended, so it stays out of URLs/logs) — a `?token=` query param is also accepted as a fallback, WS origin checks. |
 | **Single binary** | Go embeds the entire frontend — one ~19 MB file (stripped release build) to deploy anywhere. |
 
 ---
@@ -219,7 +219,7 @@ directory and its parents, `~/.config/wede/`, then next to the binary. A
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `password` | *(required)* | Login password. Brute-force lockout after 3 failed attempts, persisted across restarts. |
+| `password` | *(required)* | Login password. Brute-force lockout after 60 failed attempts, persisted across restarts. |
 | `port` | `9090` | HTTP port. Override at runtime with `--port` / `-p`. |
 | `host` | `127.0.0.1` | Bind address. Loopback only by default; set to `0.0.0.0` to expose on the network. |
 | `frame_ancestors` | `""` | CSP `frame-ancestors` allow-list for iframe embedding. Empty denies all cross-origin framing; set to e.g. `https://vulos.org` to embed in the Vulos OS shell. |

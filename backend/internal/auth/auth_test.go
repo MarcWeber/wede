@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestHandler builds a Handler whose state writes to an isolated temp dir, so
@@ -16,8 +19,7 @@ func newTestHandler(t *testing.T) *Handler {
 	h.dataDir = t.TempDir()
 	h.sessions = make(map[string]sessionEntry) // discard anything loaded from home
 	h.tokens = make(map[string]shareToken)     // isolate from real ~/.wede/tokens.json
-	h.attempts = 0
-	h.locked = false
+	h.attempts = make(map[string]clientAttempt)
 	return h
 }
 
@@ -169,5 +171,72 @@ func TestSetUsersRevokesRemovedUserSessions(t *testing.T) {
 	}
 	if h.Username(alice) != "alice" {
 		t.Error("alice's session should survive")
+	}
+}
+
+// An old global lockout file must not keep the owner locked out after upgrading
+// to per-client lockouts.
+func TestLegacyGlobalLockoutIsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	stale := `{"attempts":3,"locked":true}`
+	if err := os.WriteFile(filepath.Join(dir, lockoutFile), []byte(stale), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewWithDataDir("wede-test-passphrase", dir)
+	if out := login(t, h, "wede-test-passphrase", ""); out["token"] == nil {
+		t.Fatalf("login after legacy lockout failed: %+v", out)
+	}
+}
+
+func TestLockoutIsPerClientAndExpires(t *testing.T) {
+	dir := t.TempDir()
+	h := NewWithDataDir("wede-test-passphrase", dir)
+	h.lockoutWindow = 20 * time.Millisecond
+
+	for i := 1; i <= defaultMaxAttempts; i++ {
+		out := login(t, h, "wrong", "")
+		if i < defaultMaxAttempts {
+			if out["error"] != "wrong_password" {
+				t.Fatalf("attempt %d: error = %v, want wrong_password", i, out["error"])
+			}
+			continue
+		}
+		if out["error"] != "locked" {
+			t.Fatalf("attempt %d: error = %v, want locked", i, out["error"])
+		}
+	}
+
+	// A different client address is not affected by this client's failures.
+	other := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"password":"wede-test-passphrase"}`))
+	other.RemoteAddr = "198.51.100.7:1234"
+	rec := httptest.NewRecorder()
+	h.Login(rec, other)
+	var out map[string]any
+	json.NewDecoder(rec.Result().Body).Decode(&out)
+	if out["token"] == nil {
+		t.Fatalf("different client was locked out: %+v", out)
+	}
+
+	// The lock expires on its own; deleting the file also unlocks immediately.
+	time.Sleep(30 * time.Millisecond)
+	if out := login(t, h, "wede-test-passphrase", ""); out["token"] == nil {
+		t.Fatalf("login after lockout expired failed: %+v", out)
+	}
+}
+
+func TestDeletingLockoutFileUnlocks(t *testing.T) {
+	dir := t.TempDir()
+	h := NewWithDataDir("wede-test-passphrase", dir)
+
+	for i := 1; i <= defaultMaxAttempts; i++ {
+		login(t, h, "wrong", "")
+	}
+
+	if err := os.Remove(filepath.Join(dir, lockoutFile)); err != nil {
+		t.Fatal(err)
+	}
+	if out := login(t, h, "wede-test-passphrase", ""); out["token"] == nil {
+		t.Fatalf("login after deleting lockout file failed: %+v", out)
 	}
 }

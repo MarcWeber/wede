@@ -7,6 +7,8 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,26 +71,45 @@ func sanitizeUsername(s string) string {
 // SessionTTL is the idle lifetime of a session token (24 hours).
 const SessionTTL = 24 * time.Hour
 
+// defaultMaxAttempts is the number of wrong owner-password attempts allowed per
+// client address inside defaultLockoutWindow. The lockout is per-IP and
+// time-based: one noisy client (or a bot) cannot permanently lock the owner out
+// from every other address, and it expires on its own.
+const defaultMaxAttempts = 20
+
+// defaultLockoutWindow is how long a client address stays locked after reaching
+// defaultMaxAttempts. It is also the window in which failures are counted.
+const defaultLockoutWindow = 10 * time.Minute
+
 // lockoutFile is the basename of the file used to persist lockout state.
 const lockoutFile = "lockout.json"
 
+// clientAttempt is the persisted failure state for one client address.
+type clientAttempt struct {
+	Count   int       `json:"count"`
+	ResetAt time.Time `json:"reset_at"`
+}
+
 // lockoutState is persisted so brute-force lockout survives server restarts.
+// The legacy Attempts/Locked fields are accepted so an old global lockout file
+// does not keep the owner locked out after upgrading; loadLockout ignores them.
 type lockoutState struct {
-	Attempts int  `json:"attempts"`
-	Locked   bool `json:"locked"`
+	Clients  map[string]clientAttempt `json:"clients,omitempty"`
+	Attempts int                      `json:"attempts,omitempty"`
+	Locked   bool                     `json:"locked,omitempty"`
 }
 
 type Handler struct {
-	password    string
-	users       map[string]string // username -> password (plain or "sha256:hex")
-	teachers    map[string]bool   // set of teacher usernames
-	mu          sync.Mutex
-	attempts    int
-	locked      bool
-	maxAttempts int
-	sessions    map[string]sessionEntry
-	tokens      map[string]shareToken
-	dataDir     string
+	password      string
+	users         map[string]string // username -> password (plain or "sha256:hex")
+	teachers      map[string]bool   // set of teacher usernames
+	mu            sync.Mutex
+	attempts      map[string]clientAttempt // client address -> failures
+	maxAttempts   int
+	lockoutWindow time.Duration
+	sessions      map[string]sessionEntry
+	tokens        map[string]shareToken
+	dataDir       string
 
 	redeemMu   sync.Mutex
 	redeemHits map[string]*redeemBucket // per-IP rate limiting for invite redemption
@@ -106,12 +127,14 @@ func New(password string) *Handler {
 func NewWithDataDir(password, dir string) *Handler {
 	os.MkdirAll(dir, 0700)
 	h := &Handler{
-		password:    password,
-		maxAttempts: 3,
-		sessions:    make(map[string]sessionEntry),
-		tokens:      make(map[string]shareToken),
-		dataDir:     dir,
-		redeemHits:  make(map[string]*redeemBucket),
+		password:      password,
+		maxAttempts:   defaultMaxAttempts,
+		lockoutWindow: defaultLockoutWindow,
+		attempts:      make(map[string]clientAttempt),
+		sessions:      make(map[string]sessionEntry),
+		tokens:        make(map[string]shareToken),
+		dataDir:       dir,
+		redeemHits:    make(map[string]*redeemBucket),
 	}
 	h.loadSessions()
 	h.loadLockout()
@@ -155,24 +178,87 @@ func (h *Handler) saveSessions() {
 	os.WriteFile(h.sessionsFile(), data, 0600)
 }
 
-// loadLockout restores attempt count and locked state from disk.
+// loadLockout restores per-client attempt state from disk, dropping expired
+// entries. A missing file means no client is locked. Legacy global state is
+// ignored deliberately: it used to lock every address at once.
 func (h *Handler) loadLockout() {
+	h.attempts = make(map[string]clientAttempt)
 	data, err := os.ReadFile(h.lockoutFilePath())
 	if err != nil {
 		return
 	}
 	var s lockoutState
-	if json.Unmarshal(data, &s) == nil {
-		h.attempts = s.Attempts
-		h.locked = s.Locked
+	if json.Unmarshal(data, &s) != nil {
+		return
+	}
+	now := time.Now()
+	for ip, a := range s.Clients {
+		if a.Count > 0 && now.Before(a.ResetAt) {
+			h.attempts[ip] = a
+		}
 	}
 }
 
-// saveLockout persists the current lockout state (must be called with mu held or
-// immediately after the critical section that changed the state).
+// saveLockout persists the current per-client state (must be called with mu held
+// or immediately after the critical section that changed it).
 func (h *Handler) saveLockout() {
-	data, _ := json.Marshal(lockoutState{Attempts: h.attempts, Locked: h.locked})
+	data, _ := json.Marshal(lockoutState{Clients: h.attempts})
 	os.WriteFile(h.lockoutFilePath(), data, 0600)
+}
+
+// clientKey identifies the caller for lockout purposes. Behind a loopback
+// reverse proxy/tunnel, use the forwarded address when present; otherwise every
+// tunneled visitor would share 127.0.0.1 and one bot could lock them all.
+func clientKey(r *http.Request) string {
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+				return first
+			}
+		}
+		if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
+			return xr
+		}
+	}
+	return host
+}
+
+// lockedFor returns how long the client must wait before another attempt, or 0
+// when it is not locked. mu must be held.
+func (h *Handler) lockedFor(ip string, now time.Time) time.Duration {
+	a, ok := h.attempts[ip]
+	if !ok || a.Count < h.maxAttempts || !now.Before(a.ResetAt) {
+		return 0
+	}
+	return a.ResetAt.Sub(now)
+}
+
+// recordFailure increments the client's failure count, starting a new window
+// when the previous one expired. It returns the remaining attempts (0 when the
+// client just became locked) and the lock duration. mu must be held.
+func (h *Handler) recordFailure(ip string, now time.Time) (int, time.Duration) {
+	a := h.attempts[ip]
+	if !now.Before(a.ResetAt) {
+		a = clientAttempt{ResetAt: now.Add(h.lockoutWindow)}
+	}
+	a.Count++
+	h.attempts[ip] = a
+	if a.Count >= h.maxAttempts {
+		return 0, a.ResetAt.Sub(now)
+	}
+	return h.maxAttempts - a.Count, 0
+}
+
+func lockoutMessage(wait time.Duration) string {
+	secs := int(wait.Round(time.Second) / time.Second)
+	if secs < 60 {
+		return fmt.Sprintf("Too many failed attempts from this address. Try again in %ds.", secs)
+	}
+	return fmt.Sprintf("Too many failed attempts from this address. Try again in %dm.", (secs+59)/60)
 }
 
 // pruneExpired removes sessions whose idle TTL has elapsed. mu must be held.
@@ -204,18 +290,6 @@ func (h *Handler) validSession(token string) bool {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	h.mu.Lock()
-	if h.locked {
-		h.mu.Unlock()
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]any{
-			"error":   "locked",
-			"message": "Too many failed attempts. Delete ~/.wede/lockout.json to unlock.",
-		})
-		return
-	}
-	h.mu.Unlock()
-
 	var body struct {
 		Password string `json:"password"`
 		Username string `json:"username"`
@@ -228,6 +302,20 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	// Re-read lockout state so deleting ~/.wede/lockout.json unlocks a running
+	// server (the in-memory map otherwise survives the file removal).
+	h.loadLockout()
+	ip := clientKey(r)
+	now := time.Now()
+	if wait := h.lockedFor(ip, now); wait > 0 {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":   "locked",
+			"message": lockoutMessage(wait),
+		})
+		return
+	}
 
 	// When per-user passwords are configured, authenticate against the users map.
 	username := sanitizeUsername(body.Username)
@@ -266,19 +354,16 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Fallback: owner-password login.
 	if subtle.ConstantTimeCompare([]byte(body.Password), []byte(h.password)) != 1 {
-		h.attempts++
-		remaining := h.maxAttempts - h.attempts
-		if remaining <= 0 {
-			h.locked = true
-			h.saveLockout()
+		remaining, wait := h.recordFailure(ip, now)
+		h.saveLockout()
+		if wait > 0 {
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]any{
 				"error":   "locked",
-				"message": "Too many failed attempts. Delete ~/.wede/lockout.json to unlock.",
+				"message": lockoutMessage(wait),
 			})
 			return
 		}
-		h.saveLockout()
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]any{
 			"error":     "wrong_password",
@@ -287,7 +372,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.attempts = 0
+	delete(h.attempts, ip)
 	h.saveLockout()
 
 	// Owner-password login → owner role.
@@ -472,8 +557,11 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 
 	key := hashToken(token)
 	h.mu.Lock()
+	// Re-read from disk so deleting ~/.wede/lockout.json (or a config change)
+	// is reflected without restarting the server.
+	h.loadLockout()
 	valid := h.validSession(token)
-	locked := h.locked
+	locked := h.lockedFor(clientKey(r), time.Now()) > 0
 	username := ""
 	role := Role("")
 	if valid {

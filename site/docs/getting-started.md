@@ -133,15 +133,41 @@ Open [http://localhost:9090](http://localhost:9090) in your browser and log in w
 
 ## Terminal on mobile
 
-The terminal's `[=]` button replaces hardware shortcuts on touch devices:
+The terminal has a floating action grid instead of a fixed key row. Its layout
+is stored per browser in `localStorage["wede_terminal_grid"]`.
 
-| Gesture | Sends |
-| --- | --- |
-| Tap `[=]` | Opens the terminal menu (font size, min columns/rows, scrollback) |
-| Swipe up | `fg` + Enter (return a background job to the foreground) |
-| Swipe down | `Ctrl+Z` (suspend the foreground job) |
-| Swipe left | `Ctrl+C` (interrupt) |
-| Swipe right | Tab (completion) |
+- **Tap** a cell to run its tap action.
+- **Swipe** a cell in one of eight directions to run the action assigned to
+  that direction.
+- **Long-press / long-click** a cell to show its assigned directions, including
+  the extra `Bl` / `B` / `BR` row. Tap one to run it.
+- Only assigned cells inside the smallest required `A/B/C × 1..5` rectangle
+  are rendered, so the default grid is a compact 2×3.
+- Tap the `⚙` cell to open settings: follow cursor, follow margin (0–50%, default
+  20% of the terminal height), dock top/bottom, font size, min columns/rows,
+  one-/two-finger swipe behavior, special keys, configure behavior, JSON
+  config, reset, and help. The `←→` preset sends arrows/word/line movements; the `⌫` preset sends Backspace, Del, Ctrl-U, and Ctrl-K.
+- Configure behavior shows the full 15-location grid (`A5..A1`, `B5..B1`,
+  `C5..C1`). Empty locations are dimmed. Select a location, then **clear all**,
+  the 3×4 direction grid, and finally the fast assignments. At least one cell
+  must keep `T = open-settings`; assign settings to a second button before
+  overwriting the last one.
+- Follow modes: **Follow cursor** scrolls after the cursor has been still for
+  ~250 ms (max ~500 ms during continuous output); the follow margin controls
+  the safe top/bottom band. **Shrink & maximize** fills the remaining space and
+  reflows rows above the keyboard. **Zoom (distort)** keeps rows, columns, and
+  font size, and y-scales the rendered terminal to fit the remaining space.
+- **text** assigns any literal text, including escapes: `\n` Enter, `\r` CR,
+  `\t` Tab, `\e` Esc. Example: `ZQ` to quit vim.
+- **menu config (JSON)** shows the grid as JSON: paste and apply, copy,
+  download, or load a file.
+- Defaults: swipe-behavior, `Fx` (F1–F12), special characters, and the `⚙`
+  menu with the old swipe/diagonal actions. `fg` is sent literally; in a TUI
+  it types the text instead of returning to the shell.
+- One-finger and two-finger swipes use the selected behavior, in order:
+  cursor movement (follows the finger on both axes), terminal mouse scroll,
+  PgUp/PgDn, vim, emacs, and native scroll (bottom, for apps that show the
+  terminal scrollbar).
 
 **Min columns / min rows** keep the terminal from squeezing itself into an
 unusable grid on a narrow screen. Set, for example, 80 columns on a phone: the
@@ -333,8 +359,16 @@ mint a bearer token authorizing your chosen public name (`wede`). Point a DNS
 record for the relay (and the name's subdomain, if your relay uses vhost routing)
 at the VPS.
 
-**In wede** — no config files. Open **Settings → Public access (Ephor)** as
-the owner and fill in:
+**In wede** — enable the feature in `wede.config.json` first (it is off by
+default), then restart wede:
+
+```json
+{
+  "tunnel_enabled": true
+}
+```
+
+Open **Settings → Public access (Ephor)** as the owner and fill in:
 
 | Field | Example | Notes |
 |-------|---------|-------|

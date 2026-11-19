@@ -54,9 +54,39 @@ sudo useradd --system --create-home --home-dir /srv/wede --shell /usr/sbin/nolog
   state and its own `$HOME` for the workspace-root default (see below).
 - `--shell /usr/sbin/nologin` stops *you* from `su -`-ing into it casually, but
   has **no effect** on wede's own terminal feature — that spawns `$SHELL -l`
-  from the process's own `$SHELL` environment variable (or `/bin/bash` if
+  from the process's own `$SHELL` environment variablehild of the wede process, with
+the same filesystem and network access as the wede user. This is by design —
+wede is a developer tool, not a sandboxed IDE-as-a-service — but it means
+**the OS user you run wede as is the actual blast radius of every editor
+share link you hand out.**
+
+### Pick a dedicated, unprivileged user
+
+Don't run wede as your own login user or as `root`. Create a user that owns
+nothing you'd mind an editor-role collaborator touching:
+
+```bash
+sudo useradd --system --create-home --home-dir /srv/wede --shell /usr/sbin/nologin wede
+```
+
+- `--create-home` gives it its own `~/. (or `/bin/bash` if
   unset — see [terminal.go](https://github.com/vul-os/wede/blob/main/backend/internal/terminal/terminal.go)), not
-  via the user's login shell field in `/etc/passwd`. Set `Environment=SHELL=
+  via the user's login shell field in `/etc/passwd`. Shild of the wede process, with
+the same filesystem and network access as the wede user. This is by design —
+wede is a developer tool, not a sandboxed IDE-as-a-service — but it means
+**the OS user you run wede as is the actual blast radius of every editor
+share link you hand out.**
+
+### Pick a dedicated, unprivileged user
+
+Don't run wede as your own login user or as `root`. Create a user that owns
+nothing you'd mind an editor-role collaborator touching:
+
+```bash
+sudo useradd --system --create-home --home-dir /srv/wede --shell /usr/sbin/nologin wede
+```
+
+- `--create-home` gives it its own `~/.et `Environment=SHELL=
   /bin/bash` (or whatever you want editors to get) in the systemd unit below
   if you want to control this explicitly.
 - Never run wede as a user that has passwordless `sudo`, is in the `docker`
@@ -335,7 +365,7 @@ Created by `auth.New` at startup with mode `0700`. All files inside are
 |---|---|---|---|---|
 | `sessions.json` | Active session tokens, keyed by **SHA-256 hash** of the token (`auth.go`) — created-at timestamp, chosen username, role. | No usable secret (hash, not the raw token) — but metadata. | Not important. | Everyone currently logged in is signed out; they log in / redeem their invite link again. |
 | `tokens.json` | Minted share tokens: SHA-256 hash of the raw token, role, optional username/expiry (`tokens.go`). | No usable secret (hash) — but reveals how many links exist and their roles. | Optional. | Every outstanding share link stops working. Mint new ones from **Settings → Share links**. |
-| `lockout.json` | Failed-login attempt counter + locked flag (`auth.go`). | No. | No. | Resets the brute-force lockout — see [TROUBLESHOOTING.md](#troubleshooting:locked-out-after-failed-logins) for the exact recovery steps (a file delete alone is not enough; the process must restart). |
+| `lockout.json` | Per-client failed-login counters and lock expiry (`auth.go`). | No. | No. | Clears the brute-force lockout immediately — see [TROUBLESHOOTING.md](#troubleshooting:locked-out-after-failed-logins). No restart is needed; the file is re-read on each login/check. |
 | `trusted.json` | Absolute paths of workspace roots the owner has trusted to run their committed `.wede/` tooling config (`trust/trust.go`). | No secret, but leaks workspace path names. | Optional. | You'll be prompted to re-trust any workspace that ships `.wede/tasks.json`, `formatters.json`, or `debug.json` before those run again. |
 | `tunnel.json` | Ephor public-tunnel config: relay `serverUrl`, public `name`, and the relay **bearer token** (`tunnel/tunnel.go`). | **Yes — the `token` field is a real credential**, stored in plaintext. | **Yes, if you use the tunnel.** Losing it means re-entering the relay token in **Settings → Public access**. | The tunnel stops on next start; nothing else is affected. |
 | `wede-hosts.json` | Map of workspace root → the workspace-relative folder that physically hosts that workspace's `.wede/` directory, for workspaces where you've relocated it (`workspace/wedehost.go`). | No. | Only if you've used "relocate `.wede`". | wede falls back to assuming `.wede` lives at the workspace root — if you'd actually moved it elsewhere, wede won't find the moved directory until you re-set the location from **Settings**. |

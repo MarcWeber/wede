@@ -43,6 +43,19 @@ export function workspaceUrl(workspaceId: string, suffix = ''): string {
   return `${apiBase()}/workspaces/${workspaceId}${suffix}`
 }
 
+/**
+ * Raw file URL for native browser viewers/downloads. `inline` asks the server
+ * for Content-Disposition: inline (PDF/images/video); omit it for downloads.
+ * The token query is only needed for top-level tabs/iframes that cannot send an
+ * Authorization header; same-origin cookies also work.
+ */
+export function rawFileUrl(workspaceId: string, rel: string, token?: string | null, inline = true): string {
+  const params = new URLSearchParams({ path: rel })
+  if (inline) params.set('inline', '1')
+  if (token) params.set('token', token)
+  return `${workspaceUrl(workspaceId, '/files/raw')}?${params.toString()}`
+}
+
 // workspacesUrl is the workspace collection endpoint.
 export const workspacesUrl = `${apiBase()}/workspaces`
 

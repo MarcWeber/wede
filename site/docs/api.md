@@ -53,9 +53,10 @@ tokens the owner has minted. There are no user accounts.
   24 h `Max-Age`) **and** returns `{"token":"...", "username":"...",
   "role":"owner", "teacher":false}` in the body — a browser client typically relies on the
   cookie; a CLI/API client uses the returned token directly. Wrong password:
-  `401 {"error":"wrong_password","remaining":N}`. After 3 wrong attempts:
-  `403 {"error":"locked","message":"..."}`, persisted to
-  `~/.wede/lockout.json` until that file is deleted.
+  `401 {"error":"wrong_password","remaining":N}`. After 20 wrong attempts from
+  the same client address within 10 minutes: `403 {"error":"locked","message":
+  "..."}`. The per-client state is persisted to `~/.wede/lockout.json` and
+  expires automatically; deleting that file clears it immediately.
 - **Share-link redemption** — `POST /api/auth/redeem` (public, no auth
   required) with `{"token":"<raw invite token from the share link>"}`.
   Success (`200`): `{"token":"<new session token>", "role":"viewer"|"editor",
@@ -324,6 +325,9 @@ for the SSRF guard on `/send`.
 | `DELETE /api/workspaces/{id}/apiclient/environment` | editor+ | Query `?name=`. |
 
 ## Tunnel (public exposure, owner-only)
+
+These routes are mounted only when `"tunnel_enabled": true` is set in
+`wede.config.json` (the default is `false`); otherwise they return 404.
 
 | Method & path | Role | Description |
 |---|---|---|

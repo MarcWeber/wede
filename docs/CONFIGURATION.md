@@ -40,6 +40,8 @@ and run `wede` from any subdirectory of it, and it will still be found.
 | `port` | `string` | `"9090"` | — | TCP port to listen on. Overridable at the CLI with `--port`/`-p`. |
 | `host` | `string` | `"127.0.0.1"` | — | Interface to bind to. |
 | `frame_ancestors` | `string` | `""` | — | Space-separated origins allowed to embed wede in an `<iframe>`. |
+| `view_image` | `string` | `"tab-viewer"` | — | Default image view: `tab-viewer` (embedded viewer) or `external` (link). Users can override it in Settings. |
+| `view_pdf` | `string` | `"tab-pdf-js"` | — | Default PDF view: `tab-pdf-js` (embedded pdf.js), `tab-choose` (show open-here / external buttons), or `external` (link). Users can override it in Settings. |
 | `workspace_root` | `string` | `$HOME` | `WEDE_WORKSPACE_ROOT` | Base directory that confines which paths can be opened as a workspace. |
 | `serve_landing` | `bool` | `false` | — | Whether the marketing landing page and `/site/*` docs viewer are mounted at all. |
 | `tunnel_enabled` | `bool` | `false` | — | Mount the owner-only public tunnel (`/api/tunnel/*`) and its Settings panel. Disabled by default. |
@@ -55,9 +57,9 @@ connected user never expires.
 
 Required when `users` is empty. There is no default — a config with neither
 `password` nor `users` fails to start with `password or users required in
-config`. Used for the legacy single owner login; 3 failed attempts trigger a
-lockout that persists across restarts (see [ARCHITECTURE.md](ARCHITECTURE.md)
-for the auth model). Choose a strong, unique value — see
+config`. Used for the legacy single owner login; failed attempts are limited per
+client address (20 failures / 10 minutes) and persist across restarts (see
+[ARCHITECTURE.md](ARCHITECTURE.md) for the auth model). Choose a strong, unique value — see
 [Security: change the default password](#security-change-the-default-password)
 below.
 
@@ -234,6 +236,21 @@ Default `""`. Controls which origins may embed wede in an iframe, emitted as
 
 The standalone experience (direct browser access, not embedded) is unaffected
 either way. See [Embedding in an iframe](#embedding-in-an-iframe) below.
+
+## `view_image` and `view_pdf`
+
+Default viewers for image and PDF tabs. These are only defaults: each browser
+can override them under **Settings → Viewing**, and that override is stored in
+`localStorage` (`wede_media_view`).
+
+- `view_image`: `"tab-viewer"` (default) embeds the image viewer in the tab;
+  `"external"` shows an “open in external tab” link instead.
+- `view_pdf`: `"tab-pdf-js"` (default) embeds the pdf.js viewer;
+  `"tab-choose"` shows **[Open here]** / **[Open in external tab]** buttons so
+  the user decides per PDF; `"external"` shows only the external-tab link.
+
+The PDF viewer (pdf.js) and its worker are code-split: they are only downloaded
+when a PDF is actually displayed in `tab-pdf-js` mode.
 
 ## `workspace_root`
 

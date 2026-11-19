@@ -26,6 +26,7 @@ import QuickOpen from './QuickOpen'
 import Breadcrumbs from './Breadcrumbs'
 import MarkdownPreview from './MarkdownPreview'
 import { ImagePreview, BinaryNotice } from './ImagePreview'
+import { PdfPreview, VideoPreview } from './MediaPreview'
 import { useLSP } from '../hooks/useLSP'
 import { useCollab } from '../hooks/useCollab'
 import { useBranding } from '../hooks/useBranding'
@@ -44,7 +45,7 @@ import { formatTabLocation } from '../lib/tabPath'
 import ViewMenu from './ViewMenu'
 import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
-import { workspaceUrl } from '../api'
+import { workspaceUrl, rawFileUrl } from '../api'
 import { fileKey, parseFileKey, normalizeTabIdentity } from '../lib/fileKey'
 import { followTargetFromPeer, targetSelectionKey } from '../lib/followSelection'
 import { elementScale } from '../lib/uiScale'
@@ -224,7 +225,7 @@ function FloatWindow({ geom, onChange, onRaise, children }: FloatWindowProps) {
 
 interface FileReadResponse {
   content?: string
-  fileType?: 'image' | 'binary'
+  fileType?: 'image' | 'binary' | 'pdf' | 'video'
   dataUrl?: string
   size?: number
 }
@@ -941,6 +942,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
         const data: FileReadResponse = await res.json()
         if (data.fileType === 'image') return { path: t.path, content: '', fileType: 'image' as const, dataUrl: data.dataUrl }
         if (data.fileType === 'binary') return { path: t.path, content: '', fileType: 'binary' as const, size: data.size }
+        if (data.fileType === 'pdf') return { path: t.path, content: '', fileType: 'pdf' as const, size: data.size }
+        if (data.fileType === 'video') return { path: t.path, content: '', fileType: 'video' as const, size: data.size }
         return { path: t.path, content: data.content }
       } catch { return { path: t.path, content: '' } }
     })).then(results => {
@@ -1746,6 +1749,12 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       } else if (data.fileType === 'binary') {
         tab.fileType = 'binary'
         tab.size = data.size
+      } else if (data.fileType === 'pdf') {
+        tab.fileType = 'pdf'
+        tab.size = data.size
+      } else if (data.fileType === 'video') {
+        tab.fileType = 'video'
+        tab.size = data.size
       }
       setTabs((prev) => [...prev, tab])
       setVisible((v) => ({ ...v, code: true }))
@@ -2076,8 +2085,16 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     if (tab.type === 'gitgraph') {
       return <GitGraphView authFetch={authFetch} readOnly={role === 'viewer'} />
     }
+    const tabWsId = tab.workspaceId || workspaceId
+    const mediaHref = tabRel && tabWsId ? rawFileUrl(tabWsId, tabRel, token) : undefined
     if (tab.fileType === 'image') {
-      return <ImagePreview dataUrl={tab.dataUrl} filename={tab.name} />
+      return <ImagePreview key={tab.path} dataUrl={tab.dataUrl} filename={tab.name} size={tab.size} href={mediaHref} />
+    }
+    if (tab.fileType === 'pdf') {
+      return <PdfPreview href={mediaHref} filename={tab.name} size={tab.size} />
+    }
+    if (tab.fileType === 'video') {
+      return <VideoPreview href={mediaHref} filename={tab.name} size={tab.size} />
     }
     if (tab.fileType === 'binary') {
       return <BinaryNotice filename={tab.name} size={tab.size} />
@@ -2615,14 +2632,15 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
                 ) : modeDrag ? dropSlot(null, 'docked-left') : null}
 
                 <div className="flex-1 min-w-0 min-h-0 relative bg-bg-primary">
-                  {/* Keep SearchPanel mounted while another center tab is active so
-                      results and scroll position survive tab switches. */}
-                  {mainTabs.filter((e) => e.kind === 'search').map((e) => (
+                  {/* Keep panels with local UI state mounted while another center
+                      tab is active. Search keeps results/scroll; Files keeps the
+                      expanded-folder set and scroll position. */}
+                  {mainTabs.filter((e) => e.kind === 'search' || e.kind === 'files').map((e) => (
                     <div key={e.id} className={centerEntry?.id === e.id ? 'absolute inset-0 flex flex-col' : 'hidden'}>
                       {renderEntry(e)}
                     </div>
                   ))}
-                  {centerEntry && centerEntry.kind !== 'search' ? (
+                  {centerEntry && centerEntry.kind !== 'search' && centerEntry.kind !== 'files' ? (
                     <div className="absolute inset-0 flex flex-col">{renderEntry(centerEntry)}</div>
                   ) : !centerEntry ? (
                     <div className="h-full flex items-center justify-center px-6 text-center text-text-muted">

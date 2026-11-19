@@ -67,6 +67,19 @@ type Config struct {
 	// log, help, chat, settings). Values are booleans. Only tabs listed as true
 	// are usable. If omitted, all tabs default to true.
 	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
+
+	// ViewImage controls how image files are opened by default:
+	//   "tab-viewer" — embed the image viewer in a tab (default)
+	//   "external"   — offer an external-tab link instead
+	// Users can override this in Settings; the config value is only the default.
+	ViewImage string `json:"view_image,omitempty"`
+
+	// ViewPdf controls how PDF files are opened by default:
+	//   "tab-pdf-js"  — embed the pdf.js viewer in a tab (default)
+	//   "tab-choose"  — show [open here] / [open in external tab] buttons
+	//   "external"    — offer an external-tab link instead
+	// Users can override this in Settings; the config value is only the default.
+	ViewPdf string `json:"view_pdf,omitempty"`
 }
 
 // WorkspaceConfig is one workspace template. A template is not a running
@@ -431,6 +444,8 @@ func (s *Store) build() (*Config, error) {
 		Host:             "127.0.0.1",
 		Defaults:         Defaults{WorkspaceTimeoutSecs: 600},
 		MinPasswordChars: 12,
+		ViewImage:        "tab-viewer",
+		ViewPdf:          "tab-pdf-js",
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -452,6 +467,9 @@ func (s *Store) build() (*Config, error) {
 	}
 	if cfg.Defaults.Timeout() < 0 {
 		return nil, fmt.Errorf("defaults.workspace_timeout_secs must be >= 0")
+	}
+	if err := normalizeViewModes(cfg); err != nil {
+		return nil, err
 	}
 	resolveWorkspaceRoot(cfg)
 	return cfg, nil
@@ -612,10 +630,12 @@ func parse(data []byte) (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{
-		Branding: "wede",
-		Port:     "9090",
-		Host:     "127.0.0.1",
-		Defaults: Defaults{WorkspaceTimeoutSecs: 600},
+		Branding:  "wede",
+		Port:      "9090",
+		Host:      "127.0.0.1",
+		Defaults:  Defaults{WorkspaceTimeoutSecs: 600},
+		ViewImage: "tab-viewer",
+		ViewPdf:   "tab-pdf-js",
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -625,7 +645,33 @@ func parse(data []byte) (*Config, error) {
 	if len(cfg.Users) == 0 && cfg.Password == "" {
 		return nil, fmt.Errorf("password is required in wede.config.json")
 	}
+	if err := normalizeViewModes(cfg); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// normalizeViewModes applies defaults and validates the media view preferences.
+// These are defaults only: the UI lets each user override them locally.
+func normalizeViewModes(cfg *Config) error {
+	if cfg.ViewImage == "" {
+		cfg.ViewImage = "tab-viewer"
+	}
+	switch cfg.ViewImage {
+	case "tab-viewer", "external":
+	default:
+		return fmt.Errorf("view_image must be one of: tab-viewer, external")
+	}
+
+	if cfg.ViewPdf == "" {
+		cfg.ViewPdf = "tab-pdf-js"
+	}
+	switch cfg.ViewPdf {
+	case "tab-pdf-js", "tab-choose", "external":
+	default:
+		return fmt.Errorf("view_pdf must be one of: tab-pdf-js, tab-choose, external")
+	}
+	return nil
 }
 
 // validatePasswords enforces the password policy on plaintext passwords and

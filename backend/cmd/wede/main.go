@@ -173,6 +173,17 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]string{"branding": cfgStore.Current().Branding})
 	})
 
+	// Public UI defaults (media view preferences). Users may override these
+	// locally; the config supplies the initial/default choice.
+	mux.HandleFunc("GET /api/ui-config", func(w http.ResponseWriter, r *http.Request) {
+		c := cfgStore.Current()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"view_image": c.ViewImage,
+			"view_pdf":   c.ViewPdf,
+		})
+	})
+
 	// Public auth routes
 	mux.HandleFunc("POST /api/auth/login", authHandler.Login)
 	mux.HandleFunc("GET /api/auth/check", authHandler.Check)
@@ -242,6 +253,7 @@ func main() {
 	protected.HandleFunc("GET /api/workspaces/{id}/files", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().List }))
 	protected.HandleFunc("GET /api/workspaces/{id}/files/tree", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Tree }))
 	protected.HandleFunc("GET /api/workspaces/{id}/files/read", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Read }))
+	protected.HandleFunc("GET /api/workspaces/{id}/files/raw", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Raw }))
 	// Tail a log file (workspace-relative or absolute inside the workspace) for
 	// the UI log_view tab. Read-only, same path guards as files/read.
 	protected.HandleFunc("GET /api/workspaces/{id}/log", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Files().Tail }))

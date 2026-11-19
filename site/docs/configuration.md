@@ -42,8 +42,11 @@ and run `wede` from any subdirectory of it, and it will still be found.
 | `port` | `string` | `"9090"` | — | TCP port to listen on. Overridable at the CLI with `--port`/`-p`. |
 | `host` | `string` | `"127.0.0.1"` | — | Interface to bind to. |
 | `frame_ancestors` | `string` | `""` | — | Space-separated origins allowed to embed wede in an `<iframe>`. |
+| `view_image` | `string` | `"tab-viewer"` | — | Default image view: `tab-viewer` (embedded viewer) or `external` (link). Users can override it in Settings. |
+| `view_pdf` | `string` | `"tab-pdf-js"` | — | Default PDF view: `tab-pdf-js` (embedded pdf.js), `tab-choose` (show open-here / external buttons), or `external` (link). Users can override it in Settings. |
 | `workspace_root` | `string` | `$HOME` | `WEDE_WORKSPACE_ROOT` | Base directory that confines which paths can be opened as a workspace. |
 | `serve_landing` | `bool` | `false` | — | Whether the marketing landing page and `/site/*` docs viewer are mounted at all. |
+| `tunnel_enabled` | `bool` | `false` | — | Mount the owner-only public tunnel (`/api/tunnel/*`) and its Settings panel. Disabled by default. |
 
 `port` has a CLI override and `workspace_root` has an environment override.
 Layered `--configs` files can additionally override users, teachers, templates,
@@ -56,9 +59,9 @@ connected user never expires.
 
 Required when `users` is empty. There is no default — a config with neither
 `password` nor `users` fails to start with `password or users required in
-config`. Used for the legacy single owner login; 3 failed attempts trigger a
-lockout that persists across restarts (see [ARCHITECTURE.md](#architecture)
-for the auth model). Choose a strong, unique value — see
+config`. Used for the legacy single owner login; failed attempts are limited per
+client address (20 failures / 10 minutes) and persist across restarts (see
+[ARCHITECTURE.md](#architecture) for the auth model). Choose a strong, unique value — see
 [Security: change the default password](#security-change-the-default-password)
 below.
 
@@ -236,6 +239,21 @@ Default `""`. Controls which origins may embed wede in an iframe, emitted as
 The standalone experience (direct browser access, not embedded) is unaffected
 either way. See [Embedding in an iframe](#embedding-in-an-iframe) below.
 
+## `view_image` and `view_pdf`
+
+Default viewers for image and PDF tabs. These are only defaults: each browser
+can override them under **Settings → Viewing**, and that override is stored in
+`localStorage` (`wede_media_view`).
+
+- `view_image`: `"tab-viewer"` (default) embeds the image viewer in the tab;
+  `"external"` shows an “open in external tab” link instead.
+- `view_pdf`: `"tab-pdf-js"` (default) embeds the pdf.js viewer;
+  `"tab-choose"` shows **[Open here]** / **[Open in external tab]** buttons so
+  the user decides per PDF; `"external"` shows only the external-tab link.
+
+The PDF viewer (pdf.js) and its worker are code-split: they are only downloaded
+when a PDF is actually displayed in `tab-pdf-js` mode.
+
 ## `workspace_root`
 
 Default (when omitted): the user's home directory (`$HOME`), resolved to an
@@ -308,12 +326,30 @@ self-host does not need it.
 > `serve_landing` — it is mounted unconditionally whenever the binary was
 > built with notices embedded, on every deployment, self-hosted or not.
 
+## `tunnel_enabled`
+
+Default `false`. Enables the owner-only **Settings → Public access** panel and
+the `/api/tunnel/*` routes that expose a loopback-bound wede through the
+owner's own Ephor relay. This is inbound public access, so it is off unless the
+operator explicitly opts in.
+
+When `false` (the default):
+- `/api/tunnel` and `/api/tunnel/*` are **not mounted** (404).
+- The **Public access** panel is hidden.
+- wede does not construct or start the tunnel manager.
+
+When `true`, the owner can configure the relay URL, bearer token, and public
+name, then start the tunnel. The agent still dials outbound only and proxies
+exclusively to wede's own loopback port. See
+[PUBLIC-ACCESS.md](#public-access) and
+[SECURITY-HARDENING.md § 11](#security-hardening:11-understand-what-the-tunnel-does-and-doesnt-expose).
+
 ---
 
 ## Strict parsing: unknown keys are rejected
 
 wede decodes `wede.config.json` with `json.Decoder.DisallowUnknownFields()`.
-Any key not in the six above causes an immediate startup error of the form
+Any key not in the table above causes an immediate startup error of the form
 `invalid wede.config.json: json: unknown field "..."`, rather than silently
 ignoring it. A typo like `"frame_ancestor"` (missing `s`) is caught at
 launch, not swallowed.
@@ -422,8 +458,8 @@ From highest to lowest priority:
    and used as the base when no layers are given.
 5. **Built-in defaults** — `port: "9090"`, `host: "127.0.0.1"`,
    `frame_ancestors: ""`, `workspace_root: $HOME`, `serve_landing: false`,
-   workspace timeout `600`; `password` has no default and is required only
-   when `users` is empty.
+   `tunnel_enabled: false`, workspace timeout `600`; `password` has no default
+   and is required only when `users` is empty.
 
 Only `port` and `workspace_root` have an override layer above the config
 files. Cached layers/`wede.config.json` require a restart; hot layers reload

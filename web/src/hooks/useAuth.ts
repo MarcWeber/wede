@@ -7,6 +7,7 @@ interface AuthCheckResponse {
   authenticated?: boolean
   role?: string
   teacher?: boolean
+  locked?: boolean
 }
 
 interface LoginResponse {
@@ -52,7 +53,9 @@ export function useAuth() {
   const [teacher, setTeacher] = useState<boolean>(() => localStorage.getItem('wede_teacher') === '1')
   const [error, setError] = useState<string | null>(null)
   const [locked, setLocked] = useState(false)
-  const [remaining, setRemaining] = useState(3)
+  // Undefined until the server reports a count, so the login form does not
+  // claim a made-up number of attempts remaining before the first try.
+  const [remaining, setRemaining] = useState<number | undefined>(undefined)
 
   // On mount: confirm role from /api/auth/check so a persisted viewer/editor
   // session gets the correct role even after a page reload.
@@ -63,6 +66,7 @@ export function useAuth() {
     fetch(`${apiBase()}/auth/check`, { headers: { Authorization: t } })
       .then(r => r.json())
       .then((data: AuthCheckResponse) => {
+        setLocked(!!data.locked)
         if (data.authenticated && data.role) {
           setRole(data.role)
           localStorage.setItem('wede_role', data.role)
@@ -95,7 +99,8 @@ export function useAuth() {
       const data: LoginResponse = await res.json()
       if (data.error === 'locked') {
         setLocked(true)
-        setError(data.message ?? null)
+        setRemaining(undefined)
+        setError(data.message ?? 'Too many failed attempts from this address. Try again later.')
         return false
       }
       if (data.error === 'wrong_password') {
@@ -116,6 +121,8 @@ export function useAuth() {
         const resolvedTeacher = !!data.teacher
         localStorage.setItem('wede_teacher', resolvedTeacher ? '1' : '0')
         setTeacher(resolvedTeacher)
+        setLocked(false)
+        setRemaining(undefined)
         return true
       }
       setError('Unknown error')

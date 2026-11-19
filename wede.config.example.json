@@ -4,6 +4,8 @@
   "port": "9090",
   "host": "127.0.0.1",
   "frame_ancestors": "",
+  "view_image": "tab-viewer",
+  "view_pdf": "tab-pdf-js",
   "tunnel_enabled": false,
   "visible_tab_types": {
     "files": true,

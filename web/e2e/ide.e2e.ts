@@ -42,7 +42,7 @@ bare('a wrong password is rejected with the attempts-remaining warning', async (
   // The server's rejection must reach the user, with the lockout countdown.
   // (The count is deliberately rendered twice — in the error banner and as a
   // hint under the form — so scope to the banner rather than matching both.)
-  await expect(page.getByText('Wrong password. 2 attempts remaining.')).toBeVisible()
+  await expect(page.getByText('Wrong password. 59 attempts remaining.')).toBeVisible()
 
   // Still on the login screen — no session was granted.
   await expect(page.getByPlaceholder('Enter password')).toBeVisible()

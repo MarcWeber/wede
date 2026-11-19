@@ -23,6 +23,7 @@
  *    runs is how we do that without re-testing login in every spec.
  */
 
+/// <reference types="node" />
 import { test as base, expect, type Page, type Route } from '@playwright/test'
 
 export const WORKSPACE_ID = 'ws_default'
@@ -30,13 +31,40 @@ export const ROOT = '/home/dev/demo'
 export const PASSWORD = 'correct-horse'
 export const TOKEN = 'wede_session_token_abc'
 
+// A real, minimal one-page PDF (Helvetica "Hello wede") so the embedded pdf.js
+// viewer can actually render in tests instead of hitting a parse error.
+const PDF_B64 =
+  'JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwg' +
+  'L1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVu' +
+  'dCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29u' +
+  'dGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0MSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDIwIDEwMCBU' +
+  'ZCAoSGVsbG8gd2VkZSkgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBl' +
+  'MSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDE1IDAw' +
+  'MDAwIG4gCjAwMDAwMDAwNjQgMDAwMDAgbiAKMDAwMDAwMDEyMSAwMDAwMCBuIAowMDAwMDAwMjQ3IDAwMDAwIG4gCjAwMDAwMDAz' +
+  'MzggMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MDgKJSVFT0YK'
+const PDF_BODY = Buffer.from(PDF_B64, 'base64')
+
 export const FILE_TREE = [
   { name: 'src', path: 'src', isDir: true },
   { name: 'README.md', path: 'README.md', isDir: false },
   { name: 'main.go', path: 'main.go', isDir: false },
+  { name: 'doc.pdf', path: 'doc.pdf', isDir: false },
+  { name: 'pic.png', path: 'pic.png', isDir: false },
 ]
 
-export const SRC_CHILDREN = [{ name: 'app.js', path: 'src/app.js', isDir: false }]
+export const SRC_CHILDREN = [
+  { name: 'app.js', path: 'src/app.js', isDir: false },
+  { name: 'components', path: 'src/components', isDir: true },
+]
+
+export const COMPONENTS_CHILDREN = [
+  { name: 'Button.tsx', path: 'src/components/Button.tsx', isDir: false },
+  { name: 'deep', path: 'src/components/deep', isDir: true },
+]
+
+export const DEEP_CHILDREN = [
+  { name: 'Icon.tsx', path: 'src/components/deep/Icon.tsx', isDir: false },
+]
 
 export const FILE_CONTENT: Record<string, string> = {
   'README.md': '# demo\n\nHello from the wede E2E backend.\n',
@@ -75,7 +103,7 @@ export async function installBackend(
 ): Promise<InstallBackendHandles> {
   const wrote: WriteBody[] = []
   const loginAttempts: LoginAttempt[] = []
-  let attemptsLeft = 3
+  let attemptsLeft = 60
 
   const json = (route: Route, body: unknown, status = 200) =>
     route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
@@ -128,13 +156,39 @@ export async function installBackend(
       const dir = q.get('path') || ''
       if (dir === '') return json(route, FILE_TREE)
       if (dir === 'src') return json(route, SRC_CHILDREN)
+      if (dir === 'src/components') return json(route, COMPONENTS_CHILDREN)
+      if (dir === 'src/components/deep') return json(route, DEEP_CHILDREN)
       return json(route, [])
     }
     if (p === '/api/files/read') {
       const rel = q.get('path') || ''
+      if (rel === 'doc.pdf') return json(route, { content: '', fileType: 'pdf', size: 14, path: rel })
+      if (rel === 'pic.png') {
+        return json(route, {
+          content: '',
+          fileType: 'image',
+          size: 68,
+          dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0ZkAAAAASUVORK5CYII=',
+          path: rel,
+        })
+      }
       const content = FILE_CONTENT[rel]
       if (content === undefined) return json(route, { error: 'not found' }, 404)
       return json(route, { content, path: rel })
+    }
+    if (p === '/api/files/raw') {
+      const rel = q.get('path') || ''
+      if (rel !== 'doc.pdf') return route.fulfill({ status: 404, body: 'not found' })
+      return route.fulfill({
+        status: 200,
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': 'inline; filename="doc.pdf"',
+          etag: '"14-test"',
+          'cache-control': 'private, max-age=0, must-revalidate',
+        },
+        body: PDF_BODY,
+      })
     }
     if (p === '/api/files/write') {
       wrote.push(req.postDataJSON())
@@ -142,8 +196,8 @@ export async function installBackend(
     }
     if (p === '/api/files/tree') {
       return json(route, {
-        files: ['README.md', 'main.go', 'src/app.js'],
-        dirs: ['src'],
+        files: ['README.md', 'main.go', 'src/app.js', 'src/components/Button.tsx', 'src/components/deep/Icon.tsx', 'doc.pdf', 'pic.png'],
+        dirs: ['src', 'src/components', 'src/components/deep'],
         truncated: false,
       })
     }

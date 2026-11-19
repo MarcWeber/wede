@@ -265,7 +265,17 @@ function TreeNode({
         {/* Arrow + folder icon */}
         {entry.isDir ? (
           <>
-            <span className="w-4 h-4 flex items-center justify-center shrink-0">
+            <span
+              role="button"
+              title={isOpen ? 'Collapse' : 'Expand'}
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggle(entry.path)
+                if (!isOpen) void loadChildren()
+                onFocusDir(entry.path)
+              }}
+              className="w-4 h-4 flex items-center justify-center shrink-0 cursor-pointer"
+            >
               {isOpen
                 ? <ChevronDown className="w-3 h-3 text-text-muted" />
                 : <ChevronRight className="w-3 h-3 text-text-muted" />
@@ -452,9 +462,10 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
     })
   }
 
-  // Expand one level: selected directories (plus the ancestors needed to reveal
-  // them) when there is a selection, otherwise every top-level directory.
-  const expandAll = useCallback(() => {
+  // Expand one level of the currently visible tree. Repeated clicks walk
+  // deeper: top-level dirs first, then level 2, level 3, … Selected paths are
+  // revealed in the same pass (their ancestors/selected dirs are expanded).
+  const expandOneLevel = useCallback(() => {
     void allEntries().then((list) => {
       const dirs = list.filter((e) => e.isDir).map((e) => e.rel)
       const dirSet = new Set(dirs)
@@ -465,17 +476,20 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
       }
       setExpanded((prev) => {
         const next = new Set(prev)
-        if (selectedRel.size === 0) {
-          for (const d of dirs) if (!d.includes('/')) next.add(d)
-        } else {
-          for (const rel of selectedRel) {
-            const parts = rel.split('/')
-            for (let i = 1; i < parts.length; i++) {
-              const ancestor = parts.slice(0, i).join('/')
-              if (dirSet.has(ancestor)) next.add(ancestor)
-            }
-            if (dirSet.has(rel)) next.add(rel)
+        // Reveal selected paths without expanding their children this pass.
+        for (const rel of selectedRel) {
+          const parts = rel.split('/')
+          for (let i = 1; i < parts.length; i++) {
+            const ancestor = parts.slice(0, i).join('/')
+            if (dirSet.has(ancestor)) next.add(ancestor)
           }
+          if (dirSet.has(rel)) next.add(rel)
+        }
+        // Only expand dirs that were visible before this click. Using `prev`
+        // (not `next`) is what keeps this to exactly one level per click.
+        for (const d of dirs) {
+          const parent = d.includes('/') ? d.slice(0, d.lastIndexOf('/')) : ''
+          if (parent === '' || prev.has(parent)) next.add(d)
         }
         return next
       })
@@ -493,11 +507,11 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
       refresh: () => { void loadRoot(); void loadGitStatus() },
       newFile: () => { onFocus(); setShowNew('file') },
       newFolder: () => { onFocus(); setShowNew('folder') },
-      expandAll,
+      expandAll: expandOneLevel,
       collapseAll,
     })
     return () => register(ws.id, null)
-  }, [register, ws.id, loadRoot, loadGitStatus, onFocus, expandAll, collapseAll])
+  }, [register, ws.id, loadRoot, loadGitStatus, onFocus, expandOneLevel, collapseAll])
 
   // handleCreate/confirmAndDelete/submitRename previously had no try/catch,
   // unlike every read (loadRoot/loadGitStatus) and handlePaste in this file —

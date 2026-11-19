@@ -38,7 +38,7 @@ interface WorkspaceFolderState {
 }
 
 function App() {
-  const { token, username, role, teacher, login, logout, redeem, error, locked, remaining, authFetch, updateUsername } = useAuth()
+  const { token, username, role, teacher, login, logout, redeem, error, remaining, authFetch, updateUsername } = useAuth()
   const { theme, setTheme } = useTheme()
   const workspacesApi = useWorkspaces(token, authFetch)
   const { createWorkspace, setActiveWorkspaceId, workspaces } = workspacesApi
@@ -122,7 +122,7 @@ function App() {
   }
 
   if (!token) {
-    return <Login onLogin={login} error={error} locked={locked} remaining={remaining} />
+    return <Login onLogin={login} error={error} remaining={remaining} />
   }
 
   // Wait for the workspace list before deciding what to show.
@@ -156,7 +156,6 @@ function App() {
       <Login
         onLogin={login}
         error={error}
-        locked={locked}
         remaining={remaining}
         authenticated
         username={username}

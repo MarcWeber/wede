@@ -72,12 +72,12 @@ empty password, but it does **not** refuse the example placeholder — if you
 copy the example file into place without editing it, wede will run with a
 password anyone can find in the public repo. Set a long, random password.
 
-Login is also brute-force-limited: `auth.Handler` allows 3 wrong attempts
-(`maxAttempts: 3`) before locking out further login attempts with `403
-{"error":"locked"}`, and the lockout state is persisted to
-`~/.wede/lockout.json` so restarting wede does not reset the counter. The only
-way to unlock is to delete that file (the error message tells you this
-directly) or wait for the owner to do so — there's no time-based auto-unlock.
+Login is also brute-force-limited: `auth.Handler` allows 20 wrong attempts per
+client address within a 10-minute window before locking that address out with
+`403 {"error":"locked"}`. The per-client counters are persisted to
+`~/.wede/lockout.json` so restarting wede does not reset them, and they expire
+automatically. Deleting the file clears every counter immediately. Because the
+lockout is per address, one noisy client cannot lock the owner out everywhere.
 
 ### 2. Keep the default loopback bind unless you have a reason not to
 
@@ -274,9 +274,8 @@ they're inherent to wede's single-owner, no-accounts design, not bugs:
   you won't find it in wede.
 - **No multi-factor authentication.** Login is a single password (or a
   bearer share token) — there is no second factor of any kind.
-- **No rate limiting on password login beyond the 3-attempt lockout.** There
-  is no per-IP throttling on `POST /api/auth/login` distinct from the global
-  lockout counter — three wrong passwords lock out login for everyone until
-  the owner deletes `~/.wede/lockout.json`, which is itself a workable
-  denial-of-service against your own login if wede is reachable by anyone
-  who wants to lock you out.
+- **Password login is throttled per client address, not per account.** 20
+  failures in 10 minutes lock that address for the rest of the window. Behind a
+  loopback reverse proxy/tunnel, `X-Forwarded-For` / `X-Real-IP` is used when
+  present. If those headers are absent, all tunneled clients share the proxy's
+  address and can lock each other out for up to 10 minutes (not permanently).
