@@ -10,6 +10,7 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, MousePointer2 } from 'lucide
 import type { PresenceMember, CollabPointer } from '../types'
 import { pointerLabel } from '../lib/collabPointer'
 import { decodeCollabPointer, type PointerDirection } from '../lib/collabPointerDom'
+import { useMobile } from '../hooks/useMobile'
 
 export interface RemoteCursorsProps {
   pointers: Record<string, CollabPointer> | null | undefined
@@ -24,20 +25,21 @@ const DIRECTION_ICON = {
   right: ArrowRight,
 } as const
 
-function EdgeArrow({ direction, color }: { direction: PointerDirection; color: string }) {
+function EdgeArrow({ direction, color, small }: { direction: PointerDirection; color: string; small?: boolean }) {
   const Icon = DIRECTION_ICON[direction]
   return (
     <span
-      className="flex items-center justify-center w-5 h-5 rounded-full shadow-md"
+      className={`flex items-center justify-center rounded-full shadow-md ${small ? 'w-4 h-4' : 'w-5 h-5'}`}
       style={{ backgroundColor: color }}
     >
-      <Icon className="w-3 h-3 text-white" strokeWidth={3} />
+      <Icon className={`text-white ${small ? 'w-2.5 h-2.5' : 'w-3 h-3'}`} strokeWidth={3} />
     </span>
   )
 }
 
 export default function RemoteCursors({ pointers, roster, onJump }: RemoteCursorsProps) {
   const [, setTick] = useState(0)
+  const isMobile = useMobile()
 
   useEffect(() => {
     const bump = () => setTick((n) => n + 1)
@@ -85,17 +87,10 @@ export default function RemoteCursors({ pointers, roster, onJump }: RemoteCursor
             }}
           >
             {decoded.offscreen && decoded.direction ? (
-              <EdgeArrow direction={decoded.direction} color={color} />
+              <EdgeArrow direction={decoded.direction} color={color} small={isMobile} />
             ) : (
-              <MousePointer2 className="w-4 h-4 drop-shadow-sm" style={{ color, fill: color }} />
+              <MousePointer2 className={`drop-shadow-sm ${isMobile ? 'w-3 h-3' : 'w-4 h-4'}`} style={{ color, fill: color }} />
             )}
-            <span
-              className="mt-3 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-white whitespace-nowrap shadow-md"
-              style={{ backgroundColor: color }}
-            >
-              {member.username || 'anon'}
-              {decoded.offscreen && <span className="opacity-80"> · {label}</span>}
-            </span>
           </button>
         )
       })}

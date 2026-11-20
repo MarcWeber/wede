@@ -250,9 +250,10 @@ export interface EditorProps {
   breakpoints?: number[]
   onToggleBreakpoint?: (line: number, lines: number[]) => void
   stopLine?: number | null
+  following?: boolean
 }
 
-export default function Editor({ file, content, onChange, onSave, onCursorChange, settings = {} as EditorSettings, lspExtension = null, onRegisterActions, onDefinition, collab = null, editable = true, breakpoints = [], onToggleBreakpoint, stopLine = null }: EditorProps) {
+export default function Editor({ file, content, onChange, onSave, onCursorChange, settings = {} as EditorSettings, lspExtension = null, onRegisterActions, onDefinition, collab = null, editable = true, breakpoints = [], onToggleBreakpoint, stopLine = null, following = false }: EditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -573,7 +574,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
       selection: { anchor: pos },
       effects: EditorView.scrollIntoView(pos, { y: 'center' }),
     })
-  }, [file?.targetLine, targetSelKey])
+  }, [file?.targetLine, targetSelKey, file?.targetSeq])
 
   if (!file) {
     return (
@@ -588,7 +589,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
   }
 
   return (
-    <div className="relative h-full overflow-hidden">
+    <div className={`relative h-full overflow-hidden${following ? ' cm-following' : ''}`}>
       <div ref={containerRef} className="h-full overflow-hidden" />
       {showGoToLine && (
         <GoToLineWidget

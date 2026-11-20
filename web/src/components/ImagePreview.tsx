@@ -21,6 +21,9 @@ interface ImagePreviewProps {
   filename?: string
   size?: number
   href?: string
+  // Centre this normalized image point (used when jumping to a peer's cursor).
+  focus?: { u: number; v: number }
+  focusSeq?: number
 }
 
 interface Pointer {
@@ -36,7 +39,7 @@ interface Gesture {
   startMid: Pointer
 }
 
-export function ImagePreview({ dataUrl, filename, size, href }: ImagePreviewProps) {
+export function ImagePreview({ dataUrl, filename, size, href, focus, focusSeq }: ImagePreviewProps) {
   const [{ image: imageMode }] = useMediaSettings()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [scale, setScale] = useState(1)
@@ -80,6 +83,35 @@ export function ImagePreview({ dataUrl, filename, size, href }: ImagePreviewProp
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
   }, [zoomAt])
+
+  // Centre a peer's normalized point. The image may still be loading, so retry
+  // a few frames until it has a measurable bounding box.
+  const focusU = focus?.u
+  const focusV = focus?.v
+  useEffect(() => {
+    if (focusU == null || focusV == null) return undefined
+    let raf = 0
+    let tries = 0
+    const reveal = () => {
+      const container = containerRef.current
+      const img = container?.querySelector('img')
+      if (!container || !img) return
+      const ir = img.getBoundingClientRect()
+      const cr = container.getBoundingClientRect()
+      if (ir.width === 0 || ir.height === 0) {
+        if (tries++ < 30) raf = requestAnimationFrame(reveal)
+        return
+      }
+      const px = ir.left + focusU * ir.width
+      const py = ir.top + focusV * ir.height
+      const dx = cr.left + cr.width / 2 - px
+      const dy = cr.top + cr.height / 2 - py
+      setX((prev) => prev + dx)
+      setY((prev) => prev + dy)
+    }
+    raf = requestAnimationFrame(reveal)
+    return () => cancelAnimationFrame(raf)
+  }, [focusU, focusV, focusSeq])
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return

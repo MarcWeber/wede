@@ -10,50 +10,52 @@
 
 /* ── Design System: Wede Midnight (warm-indigo) ── */
 :root {
-  /* Surface scale — slightly warm, indigo-tinted neutrals */
-  --c-bg-base:      #0c0e14;   /* deepest — behind everything */
-  --c-bg-primary:   #11131a;   /* editor background */
-  --c-bg-secondary: #161921;   /* sidebar / panels */
-  --c-bg-tertiary:  #0e1018;   /* top-bar / status bar / terminal */
-  --c-bg-hover:     #1c1f2b;   /* subtle hover */
-  --c-bg-active:    #242737;   /* selected rows / pressed */
-  --c-bg-elevated:  #1a1d28;   /* menus / dropdowns / popovers */
-  --c-bg-input:     #161921;
+  /* Surface scale — true black in every dark level (OLED / low glare) */
+  --c-bg-base:      #000000;
+  --c-bg-primary:   #000000;
+  --c-bg-secondary: #070707;
+  --c-bg-tertiary:  #000000;
+  --c-bg-hover:     #121212;
+  --c-bg-active:    #1a1a1a;
+  --c-bg-elevated:  #0b0b0b;
+  --c-bg-input:     #070707;
 
   /* Borders */
-  --c-border:        #1e2130;   /* standard divider */
-  --c-border-subtle: #191c27;   /* very faint indent guides */
-  --c-border-active: #2e3348;   /* focused border */
-  --c-border-strong: #353a52;   /* selected / active element edge */
+  --c-border:        #1b1b1b;
+  --c-border-subtle: #141414;
+  --c-border-active: #2a2a2a;
+  --c-border-strong: #383838;
 
   /* Typography */
-  --c-text-primary:   #e8eaf2;  /* high-contrast body */
-  --c-text-secondary: #aeb4ca;  /* subdued labels (brighter for dark UI) */
-  --c-text-muted:     #7c839d;  /* placeholder / disabled */
+  --c-text-primary:   #b3b9c6;
+  --c-text-secondary: #858c9d;
+  --c-text-muted:     #5e6472;
   --c-text-inverse:   #ffffff;
 
-  /* Accent — electric indigo/violet */
-  --c-accent:       #7c8cf8;    /* primary actions */
-  --c-accent-hover: #9aa4fb;
-  --c-accent-dim:   rgba(124, 140, 248, 0.12);
-  --c-accent-glow:  rgba(124, 140, 248, 0.18);
+  /* Accent — softened indigo for dark backgrounds */
+  --c-accent:       #8b96e8;
+  --c-accent-hover: #a3abec;
+  --c-accent-dim:   rgba(139, 150, 232, 0.10);
+  --c-accent-glow:  rgba(139, 150, 232, 0.14);
 
   /* Semantic colours */
-  --c-green:   #4ade80;
-  --c-red:     #f87171;
-  --c-yellow:  #fbbf24;
-  --c-peach:   #fb923c;
-  --c-mauve:   #c084fc;
-  --c-cyan:    #22d3ee;
-  --c-pink:    #f472b6;
+  --c-green:   #74c690;
+  --c-red:     #e08585;
+  --c-yellow:  #d9b968;
+  --c-peach:   #d99363;
+  --c-mauve:   #b596d9;
+  --c-cyan:    #77bfcb;
+  --c-pink:    #d68aac;
 
   /* Status bar */
-  --c-status-bar:  #1c1f2b;
-  --c-status-text: #aeb4ca;
+  --c-status-bar:  #050505;
+  --c-status-text: #858c9d;
 
   /* Misc */
-  --c-scrollbar: #252840;
-  --c-selection: rgba(124, 140, 248, 0.18);
+  --c-scrollbar: #222222;
+  --c-selection: rgba(139, 150, 232, 0.20);
+  --c-follow-selection: rgba(251, 146, 60, 0.30);
+  --c-follow-line:      rgba(251, 146, 60, 0.12);
   --c-shadow:    rgba(0, 0, 0, 0.55);
   --c-shadow-lg: rgba(0, 0, 0, 0.75);
 
@@ -103,6 +105,8 @@
 
   --c-scrollbar: #bdbdbd;
   --c-selection: rgba(79, 95, 247, 0.18);
+  --c-follow-selection: rgba(234, 88, 12, 0.28);
+  --c-follow-line:      rgba(234, 88, 12, 0.10);
   --c-shadow:    rgba(0, 0, 0, 0.08);
   --c-shadow-lg: rgba(0, 0, 0, 0.15);
 }
@@ -149,26 +153,38 @@
   --c-scrollbar:      #858585;
 }
 
-/* Dark levels: 4 = soft, 5 = default, 6 = black/hard. */
+/* Dark levels: 4 = soft, 5 = default, 6 = high contrast. All keep a black background. */
 :root[data-theme="dark"][data-level="4"] {
-  --c-bg-base:      #191919;
-  --c-bg-primary:   #1e1e1e;
-  --c-bg-secondary: #232323;
-  --c-bg-tertiary:  #181818;
-  --c-bg-hover:     #2a2a2a;
-  --c-bg-active:    #333333;
-  --c-bg-elevated:  #262626;
-  --c-bg-input:     #232323;
-  --c-border:        #303030;
-  --c-border-subtle: #282828;
-  --c-border-active: #3f3f3f;
-  --c-border-strong: #505050;
-  --c-text-primary:   #d8dbe8;
-  --c-text-secondary: #8f95ad;
-  --c-text-muted:     #626984;
-  --c-status-bar:     #232323;
-  --c-status-text:    #8f95ad;
-  --c-scrollbar:      #303030;
+  --c-bg-base:      #000000;
+  --c-bg-primary:   #000000;
+  --c-bg-secondary: #050505;
+  --c-bg-tertiary:  #000000;
+  --c-bg-hover:     #0e0e0e;
+  --c-bg-active:    #151515;
+  --c-bg-elevated:  #080808;
+  --c-bg-input:     #050505;
+  --c-border:        #171717;
+  --c-border-subtle: #101010;
+  --c-border-active: #242424;
+  --c-border-strong: #303030;
+  --c-text-primary:   #a2a8b6;
+  --c-text-secondary: #797f90;
+  --c-text-muted:     #535966;
+  --c-accent:         #7f89c9;
+  --c-accent-hover:   #929bd4;
+  --c-accent-dim:     rgba(127, 137, 201, 0.10);
+  --c-accent-glow:    rgba(127, 137, 201, 0.12);
+  --c-green:   #67ad80;
+  --c-red:     #c97979;
+  --c-yellow:  #bfa25e;
+  --c-peach:   #c0845b;
+  --c-mauve:   #a184c4;
+  --c-cyan:    #6ba8b3;
+  --c-pink:    #c07b99;
+  --c-status-bar:     #040404;
+  --c-status-text:    #797f90;
+  --c-scrollbar:      #1e1e1e;
+  --c-selection:      rgba(127, 137, 201, 0.18);
 }
 :root[data-theme="dark"][data-level="6"] {
   --c-bg-base:      #000000;
@@ -186,9 +202,21 @@
   --c-text-primary:   #f7f8fc;
   --c-text-secondary: #c2c7da;
   --c-text-muted:     #9ea5bd;
+  --c-accent:         #7c8cf8;
+  --c-accent-hover:   #9aa4fb;
+  --c-accent-dim:     rgba(124, 140, 248, 0.12);
+  --c-accent-glow:    rgba(124, 140, 248, 0.18);
+  --c-green:   #4ade80;
+  --c-red:     #f87171;
+  --c-yellow:  #fbbf24;
+  --c-peach:   #fb923c;
+  --c-mauve:   #c084fc;
+  --c-cyan:    #22d3ee;
+  --c-pink:    #f472b6;
   --c-status-bar:     #0a0a0a;
   --c-status-text:    #c2c7da;
   --c-scrollbar:      #1c1c1c;
+  --c-selection:      rgba(124, 140, 248, 0.22);
 }
 
 /* ── Tailwind @theme tokens ── */
@@ -308,6 +336,16 @@ body {
 
 .cm-editor .cm-selectionBackground {
   background: var(--c-selection) !important;
+}
+
+/* Live-follow mode: make the peer's selection and active line stand out with a
+   warm (orange/red) tint instead of the regular indigo selection colour. */
+.cm-following .cm-editor .cm-selectionBackground {
+  background: var(--c-follow-selection) !important;
+}
+
+.cm-following .cm-editor .cm-activeLine {
+  background: var(--c-follow-line);
 }
 
 .cm-editor .cm-cursor {

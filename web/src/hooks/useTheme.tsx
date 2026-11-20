@@ -28,8 +28,8 @@ const LEVEL_TEXT: Record<ThemeLevel, { primary: string; secondary: string; muted
   1: { primary: '#0b1020', secondary: '#374151', muted: '#5b6478' },
   2: { primary: '#111827', secondary: '#4b5577', muted: '#8b91ab' },
   3: { primary: '#1f2937', secondary: '#6b7280', muted: '#9ca3af' },
-  4: { primary: '#d8dbe8', secondary: '#8f95ad', muted: '#626984' },
-  5: { primary: '#e8eaf2', secondary: '#aeb4ca', muted: '#7c839d' },
+  4: { primary: '#a2a8b6', secondary: '#797f90', muted: '#535966' },
+  5: { primary: '#b3b9c6', secondary: '#858c9d', muted: '#5e6472' },
   6: { primary: '#f7f8fc', secondary: '#c2c7da', muted: '#9ea5bd' },
 }
 
@@ -79,28 +79,48 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const isDark = theme === 'dark' || theme === null
   const text = LEVEL_TEXT[level]
 
-  // Terminal theme — matched to new warm-indigo palette
+  const darkColors = level === 4
+    ? {
+        accent: '#7f89c9', accentHover: '#929bd4',
+        green: '#67ad80', red: '#c97979', yellow: '#bfa25e',
+        peach: '#c0845b', mauve: '#a184c4', cyan: '#6ba8b3', pink: '#c07b99',
+        selection: 'rgba(127, 137, 201, 0.20)',
+      }
+    : level === 6
+      ? {
+          accent: '#7c8cf8', accentHover: '#9aa4fb',
+          green: '#4ade80', red: '#f87171', yellow: '#fbbf24',
+          peach: '#fb923c', mauve: '#c084fc', cyan: '#22d3ee', pink: '#f472b6',
+          selection: 'rgba(124, 140, 248, 0.25)',
+        }
+      : {
+          accent: '#8b96e8', accentHover: '#a3abec',
+          green: '#74c690', red: '#e08585', yellow: '#d9b968',
+          peach: '#d99363', mauve: '#b596d9', cyan: '#77bfcb', pink: '#d68aac',
+          selection: 'rgba(139, 150, 232, 0.22)',
+        }
+
   const terminalTheme: ITheme = isDark ? {
-    background:          '#0e1018',  // --c-bg-tertiary
-    foreground:          text.primary,  // --c-text-primary
-    cursor:              '#7c8cf8',  // --c-accent
-    cursorAccent:        '#0e1018',
-    selectionBackground: 'rgba(124, 140, 248, 0.25)',
-    black:               '#1e2130',
-    red:                 '#f87171',
-    green:               '#4ade80',
-    yellow:              '#fbbf24',
-    blue:                '#7c8cf8',
-    magenta:             '#c084fc',
-    cyan:                '#22d3ee',
+    background:          '#000000',
+    foreground:          text.primary,
+    cursor:              darkColors.accent,
+    cursorAccent:        '#000000',
+    selectionBackground: darkColors.selection,
+    black:               '#1b1b1b',
+    red:                 darkColors.red,
+    green:               darkColors.green,
+    yellow:              darkColors.yellow,
+    blue:                darkColors.accent,
+    magenta:             darkColors.mauve,
+    cyan:                darkColors.cyan,
     white:               text.secondary,
     brightBlack:         text.muted,
-    brightRed:           '#f87171',
-    brightGreen:         '#4ade80',
-    brightYellow:        '#fbbf24',
-    brightBlue:          '#9aa4fb',
-    brightMagenta:       '#c084fc',
-    brightCyan:          '#22d3ee',
+    brightRed:           darkColors.red,
+    brightGreen:         darkColors.green,
+    brightYellow:        darkColors.yellow,
+    brightBlue:          darkColors.accentHover,
+    brightMagenta:       darkColors.mauve,
+    brightCyan:          darkColors.cyan,
     brightWhite:         text.primary,
   } : {
     background:          '#ffffff',

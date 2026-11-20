@@ -27,6 +27,13 @@ export interface Tab {
   targetLine?: number
   // Selection to apply when following a peer (1-based; anchor/head in any order).
   targetSelection?: { anchorLine: number; anchorCol: number; headLine: number; headCol: number }
+  // PDF page (+ normalized point) to reveal when jumping to a peer's cursor.
+  targetPdf?: { page: number; u?: number; v?: number }
+  // Normalized image point to centre when jumping to a peer's cursor.
+  targetImage?: { u: number; v: number }
+  // Bumped on every follow/jump request so repeat clicks re-scroll even when
+  // the target values are unchanged.
+  targetSeq?: number
   [key: string]: unknown
 }
 

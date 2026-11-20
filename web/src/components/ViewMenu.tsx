@@ -158,7 +158,7 @@ export interface ViewMenuProps {
   onPlacement: (p: MenuPlacement) => void
   onResetView: () => void
   username: string
-  users: { id: string; username?: string; line?: number }[]
+  users: { id: string; username?: string; color?: string; line?: number }[]
   selfId?: string | null
   teacher?: boolean
   presenter?: { id: string; username: string } | null
@@ -268,7 +268,7 @@ export default function ViewMenu({
             </div>
             <div className="pl-6 space-y-1">
               <div className="text-[11px] text-text-secondary truncate flex items-center gap-1">
-                <span className={isLeading ? 'font-semibold text-text-primary' : ''}>{selfName}</span>
+                <span className={isLeading ? 'font-semibold text-text-primary' : ''} style={{ color: selfMember?.color || undefined }}>{selfName}</span>
                 <span className="text-text-muted">(you)</span>
                 {isLeading && <Radio className="w-3 h-3 text-accent shrink-0" aria-label="Leading" />}
               </div>
@@ -284,7 +284,7 @@ export default function ViewMenu({
                       title="Follow this user"
                       className="w-full flex items-center gap-1.5 text-left text-[11px] text-text-secondary hover:text-text-primary transition-colors"
                     >
-                      <span className={`truncate ${mode ? 'font-semibold text-text-primary' : ''}`}>
+                      <span className={`truncate ${mode ? 'font-semibold text-text-primary' : ''}`} style={{ color: u.color || undefined }}>
                         {u.username || u.id}
                       </span>
                       {pointers?.[u.id] && (
@@ -387,13 +387,14 @@ export default function ViewMenu({
         <div className="mt-1 border-t border-border py-1">
           {!slim && (
             <div className="px-2 pb-1">
-              <button onClick={onOpenFolder}
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-                title="Open Folder (change workspace)">
-                <FolderOpen className="w-3.5 h-3.5 text-yellow shrink-0" />
-                <span className="truncate font-medium">{folderName}</span>
-              </button>
-              {workspaceSwitcher && <div className="mt-1">{workspaceSwitcher}</div>}
+              {workspaceSwitcher ?? (
+                <button onClick={onOpenFolder}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                  title="Open Folder (change workspace)">
+                  <FolderOpen className="w-3.5 h-3.5 text-yellow shrink-0" />
+                  <span className="truncate font-medium">{folderName}</span>
+                </button>
+              )}
             </div>
           )}
           <button onClick={onLogout}

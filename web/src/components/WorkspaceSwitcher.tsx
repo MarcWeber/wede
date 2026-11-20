@@ -65,7 +65,7 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inlin
         className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors ${inline ? 'w-full justify-center border border-border' : ''}`}
         title="Switch workspace">
         <Boxes className="w-3.5 h-3.5 text-accent" />
-        <span className="max-w-32 truncate font-medium">{label || active?.name || 'default'}</span>
+        <span className="max-w-32 truncate font-medium">{label || `workspace: ${active?.name || 'default'}`}</span>
         <ChevronDown className="w-3 h-3 opacity-60" />
       </button>
 

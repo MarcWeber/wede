@@ -16,7 +16,6 @@ import Editor, { type CursorPos } from './Editor'
 import TerminalPanel from './TerminalPanel'
 import GitPanels from './GitPanels'
 import FolderPicker from './FolderPicker'
-import WorkspaceSwitcher from './WorkspaceSwitcher'
 import Browser from './Browser'
 import Settings from './Settings'
 import HelpView from './HelpView'
@@ -43,6 +42,7 @@ import ViewTabs, { type ViewTab } from './ViewTabs'
 import Tabbed from './Tabbed'
 import { formatTabLocation } from '../lib/tabPath'
 import ViewMenu from './ViewMenu'
+import WorkspaceSwitcher from './WorkspaceSwitcher'
 import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
 import { workspaceUrl, rawFileUrl } from '../api'
@@ -1697,7 +1697,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   // `targetSelection: null` explicitly clears a previously-applied follow
   // selection (the followed peer collapsed their selection); `undefined` means
   // "leave whatever is there", which is what ordinary navigation passes.
-  const openFile = useCallback(async (entry: FileEntry, { preview = false, activate = true, targetLine, targetSelection }: { preview?: boolean; activate?: boolean; targetLine?: number; targetSelection?: Tab['targetSelection'] | null } = {}) => {
+  const openFile = useCallback(async (entry: FileEntry, { preview = false, activate = true, targetLine, targetSelection, targetPdf, targetImage }: {
+    preview?: boolean
+    activate?: boolean
+    targetLine?: number
+    targetSelection?: Tab['targetSelection'] | null
+    targetPdf?: Tab['targetPdf']
+    targetImage?: Tab['targetImage']
+  } = {}) => {
     if (entry.isDir) return false
     // Entries from the file tree carry {workspaceId, rel}; entries from search /
     // quick-open (which target the active workspace) carry only {path} — default
@@ -1709,15 +1716,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     const shouldActivate = activate
     const existing = tabs.find((t) => t.path === key)
     if (existing) {
-      const clearsSel = targetSelection === null && existing.targetSelection != null
-      const selChanged = targetSelection != null && (
-        !existing.targetSelection ||
-        existing.targetSelection.anchorLine !== targetSelection.anchorLine ||
-        existing.targetSelection.anchorCol !== targetSelection.anchorCol ||
-        existing.targetSelection.headLine !== targetSelection.headLine ||
-        existing.targetSelection.headCol !== targetSelection.headCol
-      )
-      if ((!preview && existing.preview) || (targetLine != null && targetLine !== existing.targetLine) || selChanged || clearsSel) {
+      const hasTarget = targetLine != null || targetSelection !== undefined || targetPdf != null || targetImage != null
+      if ((!preview && existing.preview) || hasTarget) {
         setTabs((prev) => prev.map((t) => {
           if (t.path !== key) return t
           const next = { ...t }
@@ -1725,6 +1725,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
           if (targetLine != null) next.targetLine = targetLine
           if (targetSelection === null) next.targetSelection = undefined
           else if (targetSelection != null) next.targetSelection = targetSelection
+          if (targetPdf != null) next.targetPdf = targetPdf
+          if (targetImage != null) next.targetImage = targetImage
+          // Re-clicking the same location must still reveal it.
+          if (hasTarget) next.targetSeq = (t.targetSeq || 0) + 1
           return next
         }))
       }
@@ -1744,6 +1748,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       }
       if (targetLine != null) tab.targetLine = targetLine
       if (targetSelection != null) tab.targetSelection = targetSelection
+      if (targetPdf != null) tab.targetPdf = targetPdf
+      if (targetImage != null) tab.targetImage = targetImage
+      if (targetLine != null || targetSelection != null || targetPdf != null || targetImage != null) tab.targetSeq = 1
       if (data.fileType === 'image') {
         tab.fileType = 'image'
         tab.dataUrl = data.dataUrl
@@ -1784,6 +1791,20 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
             headLine: pointer.line, headCol: pointer.col,
           },
         },
+      )
+      return
+    }
+    if (pointer.kind === 'pdf') {
+      void openFile(
+        { path: parsed.rel, rel: parsed.rel, workspaceId: targetWorkspaceId },
+        { targetPdf: { page: pointer.page, u: pointer.u, v: pointer.v } },
+      )
+      return
+    }
+    if (pointer.kind === 'image') {
+      void openFile(
+        { path: parsed.rel, rel: parsed.rel, workspaceId: targetWorkspaceId },
+        { targetImage: { u: pointer.u, v: pointer.v } },
       )
       return
     }
@@ -1854,16 +1875,32 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     if (!target.file) return
     const { line, selection: sel } = followTargetFromPeer(target)
     const selKey = targetSelectionKey(sel)
-    const key = `${effectiveFollowId}:live:${target.file}:${line}:${selKey}`
+    // Live pointers carry page/point detail for PDFs and images; use it so the
+    // follower reveals the same location instead of just the page top.
+    const peerPointer = collabPointers[effectiveFollowId]
+    const pointerKey = peerPointer && peerPointer.kind !== 'code' && peerPointer.tab === target.file
+      ? `${peerPointer.kind}:${JSON.stringify(peerPointer)}`
+      : ''
+    const key = `${effectiveFollowId}:live:${target.file}:${line}:${selKey}:${pointerKey}`
     if (lastFollowKeyRef.current === key) return
     lastFollowKeyRef.current = key
     // `sel ?? null` is deliberate: when the followed peer collapses their
     // selection we must CLEAR ours, not leave the previous range highlighted.
     void openFile(
       { path: target.file, rel: target.file, workspaceId },
-      { activate: true, targetLine: line, targetSelection: sel ?? null },
+      {
+        activate: true,
+        targetLine: line,
+        targetSelection: sel ?? null,
+        targetPdf: peerPointer?.kind === 'pdf' && peerPointer.tab === target.file
+          ? { page: peerPointer.page, u: peerPointer.u, v: peerPointer.v }
+          : undefined,
+        targetImage: peerPointer?.kind === 'image' && peerPointer.tab === target.file
+          ? { u: peerPointer.u, v: peerPointer.v }
+          : undefined,
+      },
     )
-  }, [effectiveFollowId, effectiveFollowMode, collabRoster, openFile, workspaceId, tabs, closeTab])
+  }, [effectiveFollowId, effectiveFollowMode, collabRoster, collabPointers, openFile, workspaceId, tabs, closeTab])
 
   useEffect(() => {
     if (!followTargetId) return
@@ -2070,6 +2107,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   // image point, PDF page point) so peers can place it correctly on any layout.
   const shareCursors = (editorSettings.shareCursors ?? true)
   const lastPointerKeyRef = useRef('')
+  const heldTouchRef = useRef(false)
   useEffect(() => {
     if (!shareCursors) { sendPointer(null); return undefined }
     let clearTimer: ReturnType<typeof setTimeout> | null = null
@@ -2097,35 +2135,42 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       const key = JSON.stringify(pointer)
       if (key === lastPointerKeyRef.current) return
       lastPointerKeyRef.current = key
+      heldTouchRef.current = e.pointerType === 'touch' || e.pointerType === 'pen'
       sendPointer(pointer)
+    }
+    const clearTouch = () => {
+      if (!heldTouchRef.current) return
+      heldTouchRef.current = false
+      lastPointerKeyRef.current = ''
+      sendPointer(null)
     }
     const onMove = (e: PointerEvent) => publish(e)
     const onDown = (e: PointerEvent) => {
       if (e.pointerType === 'touch' || e.pointerType === 'pen') publish(e)
     }
-    const onUp = (e: PointerEvent) => {
-      if (e.pointerType === 'touch' || e.pointerType === 'pen') clearSoon(1600)
-    }
+    // Touch/pen pointers persist after lift so the peer can still see where the
+    // finger was; they clear on the next tab switch or scroll instead.
+    const onScroll = () => clearTouch()
     const onOut = (e: PointerEvent) => {
       if (e.relatedTarget) return
+      heldTouchRef.current = false
       lastPointerKeyRef.current = ''
       sendPointer(null)
     }
     window.addEventListener('pointermove', onMove, true)
     window.addEventListener('pointerdown', onDown, true)
-    window.addEventListener('pointerup', onUp, true)
-    window.addEventListener('pointercancel', onUp, true)
     window.addEventListener('pointerout', onOut, true)
+    window.addEventListener('scroll', onScroll, true)
     return () => {
       window.removeEventListener('pointermove', onMove, true)
       window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('pointerup', onUp, true)
-      window.removeEventListener('pointercancel', onUp, true)
       window.removeEventListener('pointerout', onOut, true)
+      window.removeEventListener('scroll', onScroll, true)
       if (clearTimer) clearTimeout(clearTimer)
+      heldTouchRef.current = false
       sendPointer(null)
     }
-  }, [shareCursors, sendPointer])
+  }, [shareCursors, sendPointer, activeTab])
 
   // Render one tab's editor/content. Defaults to the active tab; a floating
   // window passes its own tab so several floats can show different files.
@@ -2162,10 +2207,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     const tabWsId = tab.workspaceId || workspaceId
     const mediaHref = tabRel && tabWsId ? rawFileUrl(tabWsId, tabRel, token) : undefined
     if (tab.fileType === 'image') {
-      return <ImagePreview key={tab.path} dataUrl={tab.dataUrl} filename={tab.name} size={tab.size} href={mediaHref} />
+      return <ImagePreview key={tab.path} dataUrl={tab.dataUrl} filename={tab.name} size={tab.size} href={mediaHref} focus={tab.targetImage} focusSeq={tab.targetSeq} />
     }
     if (tab.fileType === 'pdf') {
-      return <PdfPreview href={mediaHref} filename={tab.name} size={tab.size} />
+      return <PdfPreview href={mediaHref} filename={tab.name} size={tab.size} forceEmbed={!!presenter || effectiveFollowMode === 'live'} target={tab.targetPdf ? { ...tab.targetPdf, seq: tab.targetSeq } : undefined} />
     }
     if (tab.fileType === 'video') {
       return <VideoPreview href={mediaHref} filename={tab.name} size={tab.size} />
@@ -2189,6 +2234,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
         breakpoints={breakpoints[tabAbs] || []}
         onToggleBreakpoint={(ln, lines) => toggleBreakpoint(tabRel, lines)}
         stopLine={tabStopLine}
+        following={effectiveFollowMode === 'live'}
       />
     )
 
@@ -2418,7 +2464,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
             visible
             onOpenFolder={() => setShowFolderPicker(true)}
             workspace={workspace}
-            workspacesApi={workspacesApi}
             editorSettings={editorSettings}
             onEditorSettingsChange={handleEditorSettingsChange}
             lspAvailable={lspAvailable}

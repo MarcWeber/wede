@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Lock, Unlock } from 'lucide-react'
 import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
@@ -54,6 +54,20 @@ export default function Tabbed({
   const swipeStart = useRef<{ x: number; y: number } | null>(null)
   const swipeLast = useRef<{ x: number; y: number } | null>(null)
   const swipeTabId = useRef<string | null>(null)
+
+  // Keep the active tab visible. Followers open tabs programmatically and the
+  // leader may click a tab that is scrolled out of the strip; both should scroll
+  // the strip horizontally to reveal it (without scrolling the page).
+  useEffect(() => {
+    if (multiline) return
+    const el = tabRefs.current[active]
+    const strip = el?.parentElement
+    if (!el || !strip) return
+    const er = el.getBoundingClientRect()
+    const sr = strip.getBoundingClientRect()
+    if (er.left < sr.left) strip.scrollLeft -= sr.left - er.left
+    else if (er.right > sr.right) strip.scrollLeft += er.right - sr.right
+  }, [active, tabs, multiline])
 
   if (tabs.length === 0) return null
 

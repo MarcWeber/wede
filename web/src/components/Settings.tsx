@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react'
 import { FolderOpen, Info, Minus, Plus, Check, User, ShieldCheck, Monitor } from 'lucide-react'
 import TunnelSettings from './TunnelSettings'
 import WedeLocation from './WedeLocation'
-import WorkspaceSwitcher from './WorkspaceSwitcher'
-import type { useWorkspaces } from '../hooks/useWorkspaces'
 import type { AuthFetch, EditorSettings } from '../types'
 import type { UiOrientation, UiScale } from '../lib/uiScale'
 import { useMediaSettings, type ImageViewMode, type PdfViewMode } from '../lib/mediaSettings'
@@ -19,7 +17,6 @@ interface SettingsProps {
   onClose: () => void
   onOpenFolder: () => void
   workspace: string | null
-  workspacesApi: ReturnType<typeof useWorkspaces>
   editorSettings: EditorSettings
   onEditorSettingsChange: (s: EditorSettings) => void
   lspAvailable: Record<string, boolean> | null
@@ -38,10 +35,9 @@ interface SettingsProps {
   uiOrientation: UiOrientation
 }
 
-export default function Settings({ visible, onClose, onOpenFolder, workspace, workspacesApi, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation }: SettingsProps) {
+export default function Settings({ visible, onClose, onOpenFolder, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation }: SettingsProps) {
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
-  const [showWorkspaces, setShowWorkspaces] = useState(true)
   const [media, setMedia] = useMediaSettings()
   const saveName = () => {
     const v = name.trim()
@@ -388,21 +384,12 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, wo
                 {workspace || 'No folder open'}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={onOpenFolder}
-                className="text-xs py-2 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-              >
-                Open Folder
-              </button>
-              <WorkspaceSwitcher
-                workspacesApi={workspacesApi}
-                label="Open Workspace"
-                inline
-                open={showWorkspaces}
-                onOpenChange={setShowWorkspaces}
-              />
-            </div>
+            <button
+              onClick={onOpenFolder}
+              className="w-full text-xs py-2 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            >
+              Open Folder
+            </button>
           </div>
         </div>
 
