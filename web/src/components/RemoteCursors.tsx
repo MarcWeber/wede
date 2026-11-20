@@ -1,42 +1,105 @@
-// RemoteCursors — renders other collaborators' live mouse pointers across the
-// whole viewport. Positions arrive as viewport fractions (0..1) over the collab
-// socket, so they line up regardless of each person's window size.
+// RemoteCursors — renders collaborators' semantic cursor locations across the
+// app. Targets arrive as line/column, image/page points, or panel fractions and
+// are decoded against the local DOM, so they survive desktop/mobile layouts and
+// UI scaling. Off-screen targets are clamped to the pane edge with a direction
+// arrow, which also tells the viewer which way to scroll to keep following.
 
-import { MousePointer2 } from 'lucide-react'
-import type { PresenceMember, MousePosition } from '../types'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, MousePointer2 } from 'lucide-react'
+import type { PresenceMember, CollabPointer } from '../types'
+import { pointerLabel } from '../lib/collabPointer'
+import { decodeCollabPointer, type PointerDirection } from '../lib/collabPointerDom'
 
 export interface RemoteCursorsProps {
-  mice: Record<string, MousePosition> | null | undefined
+  pointers: Record<string, CollabPointer> | null | undefined
   roster: PresenceMember[]
+  onJump?: (pointer: CollabPointer) => void
 }
 
-export default function RemoteCursors({ mice, roster }: RemoteCursorsProps) {
+const DIRECTION_ICON = {
+  up: ArrowUp,
+  down: ArrowDown,
+  left: ArrowLeft,
+  right: ArrowRight,
+} as const
+
+function EdgeArrow({ direction, color }: { direction: PointerDirection; color: string }) {
+  const Icon = DIRECTION_ICON[direction]
+  return (
+    <span
+      className="flex items-center justify-center w-5 h-5 rounded-full shadow-md"
+      style={{ backgroundColor: color }}
+    >
+      <Icon className="w-3 h-3 text-white" strokeWidth={3} />
+    </span>
+  )
+}
+
+export default function RemoteCursors({ pointers, roster, onJump }: RemoteCursorsProps) {
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    const bump = () => setTick((n) => n + 1)
+    window.addEventListener('resize', bump)
+    window.addEventListener('scroll', bump, true)
+    return () => {
+      window.removeEventListener('resize', bump)
+      window.removeEventListener('scroll', bump, true)
+    }
+  }, [])
+
   const byId: Record<string, PresenceMember> = {}
   for (const m of roster) byId[m.id] = m
-  const entries = Object.entries(mice || {}).filter(([id]) => byId[id])
+  const entries = Object.entries(pointers || {}).flatMap(([id, pointer]) => {
+    const member = byId[id]
+    if (!member) return []
+    const decoded = decodeCollabPointer(pointer)
+    if (!decoded) return []
+    return [{ id, member, pointer, decoded }]
+  })
   if (entries.length === 0) return null
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 pointer-events-none z-[100] overflow-hidden">
-      {entries.map(([id, pos]) => {
-        const m = byId[id]
-        const color = m.color || '#888888'
+      {entries.map(({ id, member, pointer, decoded }) => {
+        const color = member.color || '#888888'
+        const label = pointerLabel(pointer)
+        const title = `${member.username || 'anon'} — ${label}`
         return (
-          <div
+          <button
             key={id}
-            className="absolute top-0 left-0 transition-transform duration-75 ease-linear will-change-transform"
-            style={{ transform: `translate(${pos.x * 100}vw, ${pos.y * 100}vh)` }}
+            type="button"
+            data-testid="remote-cursor"
+            data-user={member.username || member.id}
+            data-x={decoded.x}
+            data-y={decoded.y}
+            data-offscreen={decoded.offscreen ? (decoded.direction || 'true') : 'false'}
+            title={title}
+            onClick={() => onJump?.(pointer)}
+            className="absolute pointer-events-auto flex items-start gap-1 bg-transparent border-0 p-0 text-left"
+            style={{
+              left: decoded.x,
+              top: decoded.y,
+              transform: decoded.offscreen ? 'translate(-50%, -50%)' : 'translate(-2px, -2px)',
+            }}
           >
-            <MousePointer2 className="w-4 h-4 drop-shadow-sm" style={{ color, fill: color }} />
+            {decoded.offscreen && decoded.direction ? (
+              <EdgeArrow direction={decoded.direction} color={color} />
+            ) : (
+              <MousePointer2 className="w-4 h-4 drop-shadow-sm" style={{ color, fill: color }} />
+            )}
             <span
-              className="absolute left-3.5 top-3 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-white whitespace-nowrap shadow-md"
+              className="mt-3 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-white whitespace-nowrap shadow-md"
               style={{ backgroundColor: color }}
             >
-              {m.username || 'anon'}
+              {member.username || 'anon'}
+              {decoded.offscreen && <span className="opacity-80"> · {label}</span>}
             </span>
-          </div>
+          </button>
         )
       })}
-    </div>
+    </div>,
+    document.body,
   )
 }

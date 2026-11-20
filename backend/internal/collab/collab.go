@@ -8,8 +8,10 @@
 package collab
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -62,8 +64,8 @@ type Handler struct {
 func New(frameAncestors string, hub *presence.Hub, canLead func(username string) bool, visibleTabTypes map[string]bool) *Handler {
 	allowed := parseOrigins(frameAncestors)
 	return &Handler{
-		hub:             hub,
-		canLead:         canLead,
+		hub:     hub,
+		canLead: canLead,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return checkOrigin(r, allowed) },
 		},
@@ -122,7 +124,7 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
- 	if file, line, anchorLine, anchorCol, headLine, headCol, ok := parseCursor(msg); ok {
+		if file, line, anchorLine, anchorCol, headLine, headCol, ok := parseCursor(msg); ok {
 			h.hub.Update(id, file, line, anchorLine, anchorCol, headLine, headCol)
 			if isDebug() {
 				log.Printf("[collab-debug] cursor from %s (%s): file=%q line=%d anchorLine=%d anchorCol=%d headLine=%d headCol=%d",
@@ -231,8 +233,9 @@ func parseTabs(msg []byte) ([]string, bool) {
 	return in.List, true
 }
 
-// tagRelay re-tags an ephemeral message (mouse/window) with the sender id so it
-// can be fanned out to peers. Returns ok=false for any other message type.
+// tagRelay re-tags an ephemeral message (pointer/mouse/window/terminals) with
+// the sender id so it can be fanned out to peers. Returns ok=false for any
+// other message type.
 func tagRelay(senderID string, msg []byte) ([]byte, bool) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(msg, &m); err != nil {
@@ -246,7 +249,10 @@ func tagRelay(senderID string, msg []byte) ([]byte, bool) {
 	if err := json.Unmarshal(raw, &t); err != nil {
 		return nil, false
 	}
-	if t != "mouse" && t != "window" && t != "terminals" {
+	if t != "pointer" && t != "mouse" && t != "window" && t != "terminals" {
+		return nil, false
+	}
+	if t == "pointer" && !validPointerRelay(m) {
 		return nil, false
 	}
 	idBytes, err := json.Marshal(senderID)
@@ -259,4 +265,56 @@ func tagRelay(senderID string, msg []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return out, true
+}
+
+// pointerTarget mirrors the client-side CollabPointer union. Only the fields
+// relevant to a kind are used, but they share one struct so validation is simple.
+type pointerTarget struct {
+	Kind string  `json:"kind"`
+	Tab  string  `json:"tab"`
+	Line int     `json:"line"`
+	Col  int     `json:"col"`
+	Page int     `json:"page"`
+	Row  int     `json:"row"`
+	U    float64 `json:"u"`
+	V    float64 `json:"v"`
+	URL  string  `json:"url"`
+}
+
+func unitFloat(n float64) bool {
+	return !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 && n <= 1
+}
+
+// validPointerRelay rejects malformed semantic cursor frames before they are
+// fanned out. The payload is small and peer-generated, so a strict whitelist is
+// cheaper than letting every client defend against arbitrary shapes.
+func validPointerRelay(m map[string]json.RawMessage) bool {
+	raw, ok := m["target"]
+	if !ok {
+		return false
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return true
+	}
+	var p pointerTarget
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return false
+	}
+	if p.Tab == "" || len(p.Tab) > 1024 {
+		return false
+	}
+	switch p.Kind {
+	case "code":
+		return p.Line > 0 && p.Col > 0
+	case "image", "panel":
+		return unitFloat(p.U) && unitFloat(p.V)
+	case "pdf":
+		return p.Page > 0 && unitFloat(p.U) && unitFloat(p.V)
+	case "terminal":
+		return p.Row > 0 && p.Col > 0
+	case "browser":
+		return len(p.URL) <= 2048 && unitFloat(p.U) && unitFloat(p.V)
+	default:
+		return false
+	}
 }

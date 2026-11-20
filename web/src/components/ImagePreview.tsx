@@ -188,6 +188,7 @@ export function ImagePreview({ dataUrl, filename, size, href }: ImagePreviewProp
           className="max-w-full max-h-full object-contain will-change-transform"
           style={{ transform: `translate(${x}px, ${y}px) scale(${scale})` }}
           draggable={false}
+          data-collab-image
         />
 
         <div

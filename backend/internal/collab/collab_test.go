@@ -40,6 +40,12 @@ func TestTagRelay(t *testing.T) {
 		ok   bool
 	}{
 		{"mouse", `{"type":"mouse","x":0.5,"y":0.25}`, true},
+		{"pointer code", `{"type":"pointer","target":{"kind":"code","tab":"main.go","line":20,"col":14}}`, true},
+		{"pointer clear", `{"type":"pointer","target":null}`, true},
+		{"pointer image", `{"type":"pointer","target":{"kind":"image","tab":"pic.png","u":0.5,"v":0.75}}`, true},
+		{"pointer bad unit", `{"type":"pointer","target":{"kind":"image","tab":"pic.png","u":1.5,"v":0.5}}`, false},
+		{"pointer bad kind", `{"type":"pointer","target":{"kind":"hack","tab":"x"}}`, false},
+		{"pointer missing target", `{"type":"pointer"}`, false},
 		{"window", `{"type":"window","win":"term-1","geo":{"x":10,"y":20}}`, true},
 		{"cursor not relayed", `{"type":"cursor","file":"a"}`, false},
 		{"unknown type", `{"type":"chat","text":"hi"}`, false},

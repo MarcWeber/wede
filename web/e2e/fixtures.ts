@@ -24,7 +24,7 @@
  */
 
 /// <reference types="node" />
-import { test as base, expect, type Page, type Route } from '@playwright/test'
+import { test as base, expect, type Page, type Route, type WebSocketRoute } from '@playwright/test'
 
 export const WORKSPACE_ID = 'ws_default'
 export const ROOT = '/home/dev/demo'
@@ -50,6 +50,7 @@ export const FILE_TREE = [
   { name: 'main.go', path: 'main.go', isDir: false },
   { name: 'doc.pdf', path: 'doc.pdf', isDir: false },
   { name: 'pic.png', path: 'pic.png', isDir: false },
+  { name: 'long.txt', path: 'long.txt', isDir: false },
 ]
 
 export const SRC_CHILDREN = [
@@ -66,10 +67,13 @@ export const DEEP_CHILDREN = [
   { name: 'Icon.tsx', path: 'src/components/deep/Icon.tsx', isDir: false },
 ]
 
+const LONG_CONTENT = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n') + '\n'
+
 export const FILE_CONTENT: Record<string, string> = {
   'README.md': '# demo\n\nHello from the wede E2E backend.\n',
   'main.go': 'package main\n\nfunc main() {\n\tprintln("hi")\n}\n',
   'src/app.js': 'export const answer = 42\n',
+  'long.txt': LONG_CONTENT,
 }
 
 /** A login POST body as the frontend sends it. */
@@ -86,6 +90,8 @@ export interface WriteBody {
 
 export interface InstallBackendOptions {
   badPassword?: boolean
+  // Optional collab-socket handler. The default is a silent, connected socket.
+  collab?: (ws: WebSocketRoute) => void
 }
 
 export interface InstallBackendHandles {
@@ -99,7 +105,7 @@ export interface InstallBackendHandles {
  */
 export async function installBackend(
   page: Page,
-  { badPassword = false }: InstallBackendOptions = {},
+  { badPassword = false, collab }: InstallBackendOptions = {},
 ): Promise<InstallBackendHandles> {
   const wrote: WriteBody[] = []
   const loginAttempts: LoginAttempt[] = []
@@ -196,7 +202,7 @@ export async function installBackend(
     }
     if (p === '/api/files/tree') {
       return json(route, {
-        files: ['README.md', 'main.go', 'src/app.js', 'src/components/Button.tsx', 'src/components/deep/Icon.tsx', 'doc.pdf', 'pic.png'],
+        files: ['README.md', 'main.go', 'src/app.js', 'src/components/Button.tsx', 'src/components/deep/Icon.tsx', 'doc.pdf', 'pic.png', 'long.txt'],
         dirs: ['src', 'src/components', 'src/components/deep'],
         truncated: false,
       })
@@ -237,8 +243,9 @@ export async function installBackend(
   // The IDE opens WebSockets (collab, terminal, chat, DAP) as soon as it mounts.
   // Let them CONNECT and stay silent: a refused socket exercises reconnect
   // backoff, which is not what these specs are about.
-  await page.routeWebSocket(/.*/, () => {
-    /* accept the connection; send nothing */
+  await page.routeWebSocket(/.*/, (ws) => {
+    /* accept the connection; send nothing unless a spec needs collab traffic */
+    if (collab && /\/collab(?:\?|$)/.test(ws.url())) collab(ws)
   })
 
   return { wrote, loginAttempts }

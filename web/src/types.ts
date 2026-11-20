@@ -121,10 +121,18 @@ export interface CollabPresenter {
   since: string
 }
 
-export interface MousePosition {
-  x: number
-  y: number
-}
+// Semantic collaborator pointer. Coordinates are expressed in the content's
+// own space (line/column for code, page + normalized point for PDFs, image
+// space for images) so they survive desktop/mobile layout and UI-scale changes.
+export type CollabPointer =
+  | { kind: 'code'; tab: string; line: number; col: number }
+  | { kind: 'image'; tab: string; u: number; v: number }
+  | { kind: 'pdf'; tab: string; page: number; u: number; v: number }
+  | { kind: 'terminal'; tab: string; row: number; col: number }
+  | { kind: 'browser'; tab: string; url: string; u: number; v: number }
+  | { kind: 'panel'; tab: string; u: number; v: number }
+
+export type CollabPointerKind = CollabPointer['kind']
 
 // A persisted/live chat message, as broadcast by the backend's /chat websocket
 // ({type:'history', messages:[...]} on join, {type:'msg', message:{...}} live).

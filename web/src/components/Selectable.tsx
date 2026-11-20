@@ -6,6 +6,7 @@ import {
 } from 'react'
 import { Check } from 'lucide-react'
 import { TONE_RING, TONE_VAR, type Tone } from '../lib/viewTypes'
+import { detectSwipe } from '../lib/swipe'
 
 export interface MenuSegment {
   key: string
@@ -122,13 +123,9 @@ export function useRowMenu(
       if (!origin.current) return
       const dx = e.clientX - origin.current.x
       const dy = e.clientY - origin.current.y
-      const fired = opts.swipe === 'up'
-        ? dy < -28 && Math.abs(dx) < 24
-        : opts.swipe === 'left'
-          ? dx < -28 && Math.abs(dy) < 24
-          : opts.swipe === 'right'
-            ? dx > 28 && Math.abs(dy) < 24
-            : false
+      const fired = opts.swipe
+        ? detectSwipe(dx, dy, { minDistance: 28, diagonalMinDistance: 28 })?.direction === opts.swipe
+        : false
       if (fired) {
         clearTimer()
         if (!swipeFired.current) {

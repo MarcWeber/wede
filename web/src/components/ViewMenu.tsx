@@ -2,10 +2,12 @@ import { useState, type ReactNode } from 'react'
 import {
   X, LogOut, FolderOpen, Moon, Sun, Monitor, Users,
   LayoutPanelLeft, ChevronDown, ChevronRight, RotateCcw,
-  Eye, Radio, Scaling,
+  Eye, Radio, Scaling, MousePointer2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useRowMenu } from './Selectable'
+import { pointerLabel } from '../lib/collabPointer'
+import type { CollabPointer } from '../types'
 import type { ViewTab } from './ViewTabs'
 import { TONE_STRONG, TONE_TEXT, TONE_WEAK, toneForView } from '../lib/viewTypes'
 import { useTheme, type ThemeLevel } from '../hooks/useTheme'
@@ -147,6 +149,8 @@ export interface ViewMenuProps {
   folderName: string
   workspaceSwitcher?: ReactNode
   onToggleDesktop: () => void
+  pointers?: Record<string, CollabPointer>
+  onJumpToPointer?: (pointer: CollabPointer) => void
   uiScaleIsSet: boolean
   uiScaleEnabled: boolean
   onToggleUiScale: () => void
@@ -171,7 +175,7 @@ export interface ViewMenuProps {
 export default function ViewMenu({
   views, visible, onToggle, onAdd, onOpenFolder,
   onLogout, onClose, desktop, folderName, workspaceSwitcher,
-  onToggleDesktop, uiScaleIsSet, uiScaleEnabled, onToggleUiScale, placement, onPlacement,
+  onToggleDesktop, pointers, onJumpToPointer, uiScaleIsSet, uiScaleEnabled, onToggleUiScale, placement, onPlacement,
   onResetView, username, users,
   selfId, teacher = false, presenter = null,
   followTargetId = null, followMode = null,
@@ -283,6 +287,11 @@ export default function ViewMenu({
                       <span className={`truncate ${mode ? 'font-semibold text-text-primary' : ''}`}>
                         {u.username || u.id}
                       </span>
+                      {pointers?.[u.id] && (
+                        <span className="text-[9px] text-text-muted truncate shrink min-w-0" title={pointerLabel(pointers[u.id])}>
+                          {pointerLabel(pointers[u.id])}
+                        </span>
+                      )}
                       {presenting && <span className="text-[9px] uppercase tracking-wide text-accent shrink-0">leading</span>}
                       {mode === 'open' && <Eye className="w-3 h-3 text-accent shrink-0" aria-label="Following open" />}
                       {mode === 'live' && <Radio className="w-3 h-3 text-accent shrink-0" aria-label="Following live" />}
@@ -305,6 +314,16 @@ export default function ViewMenu({
                         >
                           <Radio className="w-3 h-3 shrink-0" /> Follow live
                         </button>
+                        {pointers?.[u.id] && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => { onJumpToPointer?.(pointers[u.id]); setFollowMenuId(null) }}
+                            className="w-full flex items-center gap-2 px-2 py-1 rounded text-[11px] text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                          >
+                            <MousePointer2 className="w-3 h-3 shrink-0" /> Jump to {pointerLabel(pointers[u.id])}
+                          </button>
+                        )}
                         {following && (
                           <button
                             type="button"

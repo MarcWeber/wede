@@ -1,13 +1,13 @@
 // useCollab — connects to a workspace's collaboration WebSocket for presence
-// plus ephemeral peer signals (live mouse cursors + shared window geometry).
+// plus ephemeral peer signals (semantic cursor locations + shared window geometry).
 //
 // Opens /api/workspaces/{id}/collab (auth via ?token=, matching useLSP and the auth
 // middleware which reads ?token= on WS upgrades), parses {type:'presence',
 // members:[...]} roster broadcasts, and exposes:
 //   setViewing(file, line)      publish the local text cursor    (throttled)
-//   sendMouse(fx, fy)           publish local mouse as viewport fractions (throttled)
+//   sendPointer(target)         publish a semantic cursor location (throttled)
 //   sendWindow(win, geo)        publish a shared window's geometry
-//   mice                        { id: {x, y} }  other members' mouse fractions
+//   pointers                    { id: CollabPointer }  other members' locations
 //   onWindow(cb)                subscribe to peer window-geometry updates
 //
 // Defensive by design: any failure leaves collab simply inactive (empty roster),
@@ -15,7 +15,8 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { basePath } from '../api'
-import type { PresenceMember, MousePosition, TerminalSession, CollabPresenter } from '../types'
+import type { PresenceMember, CollabPointer, TerminalSession, CollabPresenter } from '../types'
+import { isCollabPointer } from '../lib/collabPointer'
 
 function buildWsUrl(workspaceId: string, token: string, username: string | null | undefined): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -31,7 +32,7 @@ function buildWsUrl(workspaceId: string, token: string, username: string | null 
 }
 
 const THROTTLE_MS = 150
-const MOUSE_THROTTLE_MS = 45
+const POINTER_THROTTLE_MS = 45
 
 // WindowGeo is a shared window's geometry, published/received piecemeal (a
 // move sends {x,y}, a resize sends {w,h}; consumers merge onto prior state).
@@ -51,8 +52,7 @@ interface CollabMessage {
   members?: PresenceMember[]
   presenter?: CollabPresenter | null
   id?: string
-  x?: number
-  y?: number
+  target?: CollabPointer | null
   win?: string
   geo?: WindowGeo
   list?: Pick<TerminalSession, 'id' | 'name'>[]
@@ -68,8 +68,8 @@ export interface UseCollabResult {
   stopLead: () => void
   setViewing: (file: string | null | undefined, line?: number, anchorLine?: number, anchorCol?: number, headLine?: number, headCol?: number) => void
   setTabs: (tabs: string[]) => void
-  mice: Record<string, MousePosition>
-  sendMouse: (fx: number, fy: number) => void
+  pointers: Record<string, CollabPointer>
+  sendPointer: (target: CollabPointer | null) => void
   sendWindow: (win: string, geo: WindowGeo) => void
   onWindow: (cb: WindowSub) => () => void
   sendTerminals: (list: Pick<TerminalSession, 'id' | 'name'>[]) => void
@@ -85,13 +85,13 @@ export function useCollab(
   const [presenter, setPresenter] = useState<CollabPresenter | null>(null)
   const [selfId, setSelfId] = useState<string | null>(null)
   const [visibleTabTypes, setVisibleTabTypes] = useState<Record<string, boolean> | null>(null)
-  const [mice, setMice] = useState<Record<string, MousePosition>>({})
+  const [pointers, setPointers] = useState<Record<string, CollabPointer>>({})
   const wsRef = useRef<WebSocket | null>(null)
   const lastSentRef = useRef<{ file: string | null; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number }>({ file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 })
   const pendingRef = useRef<{ file: string; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const mouseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingMouseRef = useRef<MousePosition | null>(null)
+  const pointerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingPointerRef = useRef<CollabPointer | null | undefined>(undefined)
   const windowSubsRef = useRef<Set<WindowSub>>(new Set())
   const terminalsSubsRef = useRef<Set<TerminalsSub>>(new Set())
 
@@ -114,16 +114,26 @@ export function useCollab(
           } else if (msg.type === 'presence' && Array.isArray(msg.members)) {
             setRoster(msg.members)
             setPresenter(msg.presenter ?? null)
-            // Drop mouse cursors for members who have left.
+            // Drop cursors for members who have left.
             const ids = new Set(msg.members.map((m) => m.id))
-            setMice((prev) => {
-              const next: Record<string, MousePosition> = {}
+            setPointers((prev) => {
+              const next: Record<string, CollabPointer> = {}
               for (const k of Object.keys(prev)) if (ids.has(k)) next[k] = prev[k]
               return next
             })
-          } else if (msg.type === 'mouse' && msg.id) {
+          } else if (msg.type === 'pointer' && msg.id) {
             const id = msg.id
-            setMice((prev) => ({ ...prev, [id]: { x: msg.x ?? 0, y: msg.y ?? 0 } }))
+            const target = msg.target
+            setPointers((prev) => {
+              if (target == null) {
+                if (!(id in prev)) return prev
+                const next = { ...prev }
+                delete next[id]
+                return next
+              }
+              if (!isCollabPointer(target)) return prev
+              return { ...prev, [id]: target }
+            })
           } else if (msg.type === 'window' && msg.id) {
             const { win, geo, id } = msg
             windowSubsRef.current.forEach((cb) => { try { cb(win ?? '', geo ?? {}, id ?? '') } catch { /* ignore */ } })
@@ -134,17 +144,17 @@ export function useCollab(
       }
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null
-        if (!disposed) { setRoster([]); setPresenter(null); setMice({}) }
+        if (!disposed) { setRoster([]); setPresenter(null); setPointers({}) }
       }
       ws.onerror = () => { /* non-fatal; onclose handles cleanup */ }
     } catch { /* construction failed → collab inactive */ }
 
     return () => {
       disposed = true
-      setRoster([]); setPresenter(null); setMice({}); setSelfId(null); setVisibleTabTypes(null)
+      setRoster([]); setPresenter(null); setPointers({}); setSelfId(null); setVisibleTabTypes(null)
       lastSentRef.current = { file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 }
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
-      if (mouseTimerRef.current) { clearTimeout(mouseTimerRef.current); mouseTimerRef.current = null }
+      if (pointerTimerRef.current) { clearTimeout(pointerTimerRef.current); pointerTimerRef.current = null }
       try { if (ws) ws.close() } catch { /* ignore */ }
       if (wsRef.current === ws) wsRef.current = null
     }
@@ -179,17 +189,20 @@ export function useCollab(
 
   const setTabs = useCallback((list: string[]) => send({ type: 'tabs', list }), [send])
 
-  // sendMouse publishes the local mouse position as viewport fractions, throttled.
-  const sendMouse = useCallback((fx: number, fy: number) => {
-    pendingMouseRef.current = { x: fx, y: fy }
-    if (mouseTimerRef.current) return
+  // sendPointer publishes a semantic cursor location (line/col, page+point,
+  // etc.) so peers can place it correctly at any viewport size. `null` clears it.
+  const sendPointer = useCallback((target: CollabPointer | null) => {
+    pendingPointerRef.current = target
+    if (pointerTimerRef.current) return
     const flush = () => {
-      mouseTimerRef.current = null
-      const p = pendingMouseRef.current
-      if (p) send({ type: 'mouse', x: p.x, y: p.y })
+      pointerTimerRef.current = null
+      const p = pendingPointerRef.current
+      if (p === undefined) return
+      pendingPointerRef.current = undefined
+      send({ type: 'pointer', target: p })
     }
     flush()
-    mouseTimerRef.current = setTimeout(flush, MOUSE_THROTTLE_MS)
+    pointerTimerRef.current = setTimeout(flush, POINTER_THROTTLE_MS)
   }, [send])
 
   const sendWindow = useCallback((win: string, geo: WindowGeo) => send({ type: 'window', win, geo }), [send])
@@ -208,5 +221,5 @@ export function useCollab(
     return () => terminalsSubsRef.current.delete(cb)
   }, [])
 
-  return { selfId, roster, presenter, visibleTabTypes, startLead, stopLead, setViewing, setTabs, mice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals }
+  return { selfId, roster, presenter, visibleTabTypes, startLead, stopLead, setViewing, setTabs, pointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals }
 }

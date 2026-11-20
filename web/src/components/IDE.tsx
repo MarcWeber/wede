@@ -48,9 +48,10 @@ import { useDap } from '../hooks/useDap'
 import { workspaceUrl, rawFileUrl } from '../api'
 import { fileKey, parseFileKey, normalizeTabIdentity } from '../lib/fileKey'
 import { followTargetFromPeer, targetSelectionKey } from '../lib/followSelection'
+import { encodeCollabPointer } from '../lib/collabPointerDom'
 import { elementScale } from '../lib/uiScale'
 import { useWorkspaces } from '../hooks/useWorkspaces'
-import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo } from '../types'
+import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo, CollabPointer } from '../types'
 
 // colorFromName derives a stable per-user color for collaboration cursors.
 const COLLAB_PALETTE = ['#f87171', '#fb923c', '#fbbf24', '#34d399', '#22d3ee', '#60a5fa', '#a78bfa', '#f472b6']
@@ -251,7 +252,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   })
 
   // Collaboration presence: who else is in this workspace and what they're viewing.
- 	const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, mice: collabMice, sendMouse, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username)
+  const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, pointers: collabPointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username)
 
   // Built-in API client — shared between the sidebar collections and the editor tab.
   const apiClient = useApiClient(workspaceId, authFetch)
@@ -1767,6 +1768,28 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     return false
   }, [tabs, authFetch, workspaceId])
 
+  // Clicking a collaborator's semantic cursor opens the target tab and, for
+  // code, moves the local caret to the exact line/column.
+  const jumpToCollabPointer = useCallback((pointer: CollabPointer) => {
+    const parsed = parseFileKey(pointer.tab)
+    if (!parsed.rel) return
+    const targetWorkspaceId = parsed.workspaceId || workspaceId
+    if (pointer.kind === 'code') {
+      void openFile(
+        { path: parsed.rel, rel: parsed.rel, workspaceId: targetWorkspaceId },
+        {
+          targetLine: pointer.line,
+          targetSelection: {
+            anchorLine: pointer.line, anchorCol: pointer.col,
+            headLine: pointer.line, headCol: pointer.col,
+          },
+        },
+      )
+      return
+    }
+    void openFile({ path: parsed.rel, rel: parsed.rel, workspaceId: targetWorkspaceId })
+  }, [openFile, workspaceId])
+
   // LSP go-to-definition can point at another file. Map the file:// URI back to
   // one of the open workspace roots, then open/focus that tab at the target.
   const openDefinition = useCallback((uri: string, line: number, col: number) => {
@@ -2043,15 +2066,66 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     : null
   const collab = useYDoc({ workspaceId, path: collabPath, token, username, color: colorFromName(username) })
 
-  // Live multiplayer mouse cursors — broadcast my pointer (as viewport fractions)
-  // and render collaborators' pointers, when the setting is enabled.
+  // Live multiplayer cursors — publish a semantic location (code line/col,
+  // image point, PDF page point) so peers can place it correctly on any layout.
   const shareCursors = (editorSettings.shareCursors ?? true)
+  const lastPointerKeyRef = useRef('')
   useEffect(() => {
-    if (!shareCursors) return undefined
-    const onMove = (e: MouseEvent) => sendMouse(e.clientX / window.innerWidth, e.clientY / window.innerHeight)
-    window.addEventListener('mousemove', onMove)
-    return () => window.removeEventListener('mousemove', onMove)
-  }, [shareCursors, sendMouse])
+    if (!shareCursors) { sendPointer(null); return undefined }
+    let clearTimer: ReturnType<typeof setTimeout> | null = null
+    const clearSoon = (ms: number) => {
+      if (clearTimer) clearTimeout(clearTimer)
+      clearTimer = setTimeout(() => {
+        clearTimer = null
+        lastPointerKeyRef.current = ''
+        sendPointer(null)
+      }, ms)
+    }
+    const publish = (e: PointerEvent) => {
+      const target = e.target instanceof Element ? e.target : null
+      const pane = target?.closest<HTMLElement>('[data-collab-tab]')
+      if (!pane) {
+        if (e.pointerType !== 'touch') clearSoon(80)
+        return
+      }
+      const pointer = encodeCollabPointer(pane, e.clientX, e.clientY, target)
+      if (!pointer) {
+        if (e.pointerType !== 'touch') clearSoon(80)
+        return
+      }
+      if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
+      const key = JSON.stringify(pointer)
+      if (key === lastPointerKeyRef.current) return
+      lastPointerKeyRef.current = key
+      sendPointer(pointer)
+    }
+    const onMove = (e: PointerEvent) => publish(e)
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') publish(e)
+    }
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') clearSoon(1600)
+    }
+    const onOut = (e: PointerEvent) => {
+      if (e.relatedTarget) return
+      lastPointerKeyRef.current = ''
+      sendPointer(null)
+    }
+    window.addEventListener('pointermove', onMove, true)
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('pointerup', onUp, true)
+    window.addEventListener('pointercancel', onUp, true)
+    window.addEventListener('pointerout', onOut, true)
+    return () => {
+      window.removeEventListener('pointermove', onMove, true)
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('pointerup', onUp, true)
+      window.removeEventListener('pointercancel', onUp, true)
+      window.removeEventListener('pointerout', onOut, true)
+      if (clearTimer) clearTimeout(clearTimer)
+      sendPointer(null)
+    }
+  }, [shareCursors, sendPointer])
 
   // Render one tab's editor/content. Defaults to the active tab; a floating
   // window passes its own tab so several floats can show different files.
@@ -2217,7 +2291,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
             {tab && tab.type !== 'browser' && tab.type !== 'apiclient' && tab.type !== 'gitgraph' && tab.fileType == null && (
               <Breadcrumbs path={tab.rel} />
             )}
-            <div className="flex-1 min-h-0 relative">{renderTabContent(tab)}</div>
+            <div className="flex-1 min-h-0 relative" data-collab-tab={tab?.path || undefined}>{renderTabContent(tab)}</div>
           </div>
         )
       }
@@ -2479,6 +2553,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       folderName={folderName}
       workspaceSwitcher={<WorkspaceSwitcher workspacesApi={workspacesApi} menuUp />}
       onToggleDesktop={() => setDesktopMode(!desktopMode)}
+      pointers={collabPointers}
+      onJumpToPointer={jumpToCollabPointer}
       uiScaleIsSet={uiScaleIsSet}
       uiScaleEnabled={uiScaleEnabled}
       onToggleUiScale={() => setUiScaleEnabled(!uiScaleEnabled)}
@@ -2777,7 +2853,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
         hasModified={hasModified}
       />
 
-      {shareCursors && <RemoteCursors mice={collabMice} roster={collabRoster} />}
+      {shareCursors && <RemoteCursors pointers={collabPointers} roster={collabRoster} onJump={jumpToCollabPointer} />}
     </div>
   )
 }

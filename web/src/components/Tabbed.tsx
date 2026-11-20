@@ -3,6 +3,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Lock, Unlock } from 'lucide-react'
 import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
 import { TONE_WEAK, TONE_VAR, toneForView, VIEW_MODES, type ViewMode } from '../lib/viewTypes'
+import { detectSwipe } from '../lib/swipe'
 
 export interface TabbedItem {
   id: string
@@ -96,25 +97,18 @@ export default function Tabbed({
     if (!multilineSwipe || !start || !end) return
     const dx = end.x - start.x
     const dy = end.y - start.y
-    // Flick a tab up and to the right to close it. Check this before the
-    // horizontal/vertical filters so the diagonal gesture is not swallowed.
-    if (tabId && dx >= 40 && dy <= -24) {
-      if (!lockedIds.includes(tabId)) onClose(tabId)
+    const swipe = detectSwipe(dx, dy)
+    if (!swipe) return
+    if (swipe.direction === 'up-right') {
+      if (tabId && !lockedIds.includes(tabId)) onClose(tabId)
       return
     }
-    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 32) return
-    if (Math.abs(dy) < 40) return
-    // Up toggles wrapped mode; a short down swipe expands it. A long down
-    // drag is handled by Selectable as the place-window gesture.
-    if (dy < 0) {
+    if (swipe.direction === 'up') {
       setMultiline((v) => !v)
-    } else {
-      // Down swipe on a tab in normal mode copies the file path with cursor.
-      if (selected.size === 0 && tabId && onCopyLocation) {
-        onCopyLocation([tabId])
-        return
-      }
-      if (dy <= 50) setMultiline(true)
+      return
+    }
+    if (swipe.direction === 'down') {
+      setMultiline(true)
     }
   }
 
