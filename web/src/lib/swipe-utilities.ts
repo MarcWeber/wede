@@ -71,13 +71,27 @@ export const render_swipe_button_hints(targets: SwipeButtonTargetForRendering[])
     // the idx selected one 16px
 }
 
+export const mobile_translation_vector = (start) => {
+    T = 200
+    const v = T * norm(start - center-of-scroon)
+
+    if v = [0,0] 
+        portrait => y += T else  x+= T
+    return [x, y]
+}
+
 /* now the tab based drag & drop is like this:
     if is_x_scroll then its x scroll (move tabs)
     otherwise if button is selected its button
     otherwise if the drag distance is more than 3 * D
-    then switch to mode = "tab-drag"
+    then switch to mode = "tab-drag" -> thus the target buttons / scrolling is no longer active only moving the tab
     then the tab can be placed anywhere
     -> same tab list -> change position
     -> top left riht right -> add container the way it is
     -> anywhere _> create new container and place there if possible preserving window size
+
+    when on mobile the the visual feedback
+    - red cursor point
+    - render_swipe_button_hints locations
+    => they get *translated* see mobile_translation_vector
 */
