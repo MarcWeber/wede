@@ -326,3 +326,20 @@ func TestViewModeDefaultsAndValidation(t *testing.T) {
 		t.Error("expected invalid view_pdf to be rejected")
 	}
 }
+
+func TestWorkspaceAllowCustomDirectoryDefaultAndOptIn(t *testing.T) {
+	cfg, err := parse([]byte(`{"password":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WorkspaceAllowCustomDirectory {
+		t.Error("workspace_allow_custom_directory should default to false")
+	}
+	cfg, err = parse([]byte(`{"password":"x","workspace_allow_custom_directory":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.WorkspaceAllowCustomDirectory {
+		t.Error("workspace_allow_custom_directory:true was not parsed")
+	}
+}

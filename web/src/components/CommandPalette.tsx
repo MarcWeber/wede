@@ -29,7 +29,6 @@ export interface CommandPaletteProps {
   onSaveAll: () => void
   onNewFile: () => void
   onNewFolder: () => void
-  onOpenFolder: () => void
   onToggleTerminal: () => void
   onOpenSettings: () => void
   onFocusExplorer: () => void
@@ -101,7 +100,6 @@ export default function CommandPalette({
   onSaveAll,
   onNewFile,
   onNewFolder,
-  onOpenFolder,
   onToggleTerminal,
   onOpenSettings,
   onFocusExplorer,
@@ -169,13 +167,6 @@ export default function CommandPalette({
       description: 'Create a new folder in the explorer',
       icon: FolderOpen,
       action: onNewFolder,
-    },
-    {
-      id: 'open-folder',
-      label: 'Open Folder…',
-      description: 'Change the workspace directory',
-      icon: FolderOpen,
-      action: onOpenFolder,
     },
     {
       id: 'toggle-terminal',

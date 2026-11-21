@@ -15,7 +15,6 @@ interface TrustState {
 interface SettingsProps {
   visible: boolean
   onClose: () => void
-  onOpenFolder: () => void
   workspace: string | null
   editorSettings: EditorSettings
   onEditorSettingsChange: (s: EditorSettings) => void
@@ -35,7 +34,7 @@ interface SettingsProps {
   uiOrientation: UiOrientation
 }
 
-export default function Settings({ visible, onClose, onOpenFolder, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation }: SettingsProps) {
+export default function Settings({ visible, onClose, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation }: SettingsProps) {
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
   const [media, setMedia] = useMediaSettings()
@@ -131,6 +130,30 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
             </button>
           </div>
           <p className="text-[11px] text-text-muted mt-1.5">Shown to collaborators in presence, chat, and live cursors.</p>
+        </div>
+
+        {/* Collaboration */}
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Collaboration</h3>
+          <div className="space-y-2">
+            {/* Collaborative editing */}
+            <label className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5 cursor-pointer group">
+              <div>
+                <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">Collaborative editing</span>
+                <span className="block text-[10px] text-text-muted">Real-time multi-user editing for the active file (experimental)</span>
+              </div>
+              <Toggle checked={collab} onChange={(v) => update({ collab: v })} />
+            </label>
+
+            {/* Live cursors */}
+            <label className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5 cursor-pointer group">
+              <div>
+                <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">Show collaborators' cursors</span>
+                <span className="block text-[10px] text-text-muted">See other users' live mouse pointers across the app</span>
+              </div>
+              <Toggle checked={shareCursors} onChange={(v) => update({ shareCursors: v })} />
+            </label>
+          </div>
         </div>
 
         {/* Layout */}
@@ -354,23 +377,6 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
               </div>
             )}
 
-            {/* Collaborative editing */}
-            <label className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5 cursor-pointer group">
-              <div>
-                <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">Collaborative editing</span>
-                <span className="block text-[10px] text-text-muted">Real-time multi-user editing for the active file (experimental)</span>
-              </div>
-              <Toggle checked={collab} onChange={(v) => update({ collab: v })} />
-            </label>
-
-            {/* Live cursors */}
-            <label className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5 cursor-pointer group">
-              <div>
-                <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">Show collaborators' cursors</span>
-                <span className="block text-[10px] text-text-muted">See other users' live mouse pointers across the app</span>
-              </div>
-              <Toggle checked={shareCursors} onChange={(v) => update({ shareCursors: v })} />
-            </label>
           </div>
         </div>
 
@@ -384,12 +390,6 @@ export default function Settings({ visible, onClose, onOpenFolder, workspace, ed
                 {workspace || 'No folder open'}
               </span>
             </div>
-            <button
-              onClick={onOpenFolder}
-              className="w-full text-xs py-2 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-            >
-              Open Folder
-            </button>
           </div>
         </div>
 

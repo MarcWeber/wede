@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Lock, Unlock } from 'lucide-react'
 import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
 import { TONE_WEAK, TONE_VAR, toneForView, VIEW_MODES, type ViewMode } from '../lib/viewTypes'
-import { detectSwipe } from '../lib/swipe'
+import { useDragHints, type DragHintAction } from './DragHint'
 
 export interface TabbedItem {
   id: string
@@ -51,9 +51,6 @@ export default function Tabbed({
   const [multiline, setMultiline] = useState(false)
   const [floatMenu, setFloatMenu] = useState<{ x: number; y: number; id: string; target: 'current' | 'selected' } | null>(null)
   const tabRefs = useRef<Record<string, HTMLDivElement | null>>({})
-  const swipeStart = useRef<{ x: number; y: number } | null>(null)
-  const swipeLast = useRef<{ x: number; y: number } | null>(null)
-  const swipeTabId = useRef<string | null>(null)
 
   // Keep the active tab visible. Followers open tabs programmatically and the
   // leader may click a tab that is scrolled out of the strip; both should scroll
@@ -68,6 +65,41 @@ export default function Tabbed({
     if (er.left < sr.left) strip.scrollLeft -= sr.left - er.left
     else if (er.right > sr.right) strip.scrollLeft += er.right - sr.right
   }, [active, tabs, multiline])
+
+  const gestureActions: DragHintAction[] = [
+    ...(multilineSwipe ? [{ position: 'top' as const, label: multiline ? 'Collapse tabs' : 'Expand tabs' }] : []),
+    { position: 'top-right', label: 'Close tab' },
+    { position: 'bottom', label: 'Tab menu' },
+  ]
+  const { bind: gestureBind, overlay: gestureOverlay } = useDragHints({
+    actions: gestureActions,
+    disabled: tabs.length === 0,
+    onHorizontalDrag: (dx, info) => {
+      const group = info.target?.closest('[data-reorder-group]') as HTMLElement | null
+      if (group) group.scrollLeft -= dx
+    },
+    onAction: (action, info) => {
+      const tabEl = info.target?.closest('[data-reorder-id]') as HTMLElement | null
+      const tabId = tabEl?.dataset.reorderId ?? null
+      if (action.position === 'top') {
+        setMultiline((v) => !v)
+        return
+      }
+      if (action.position === 'top-right') {
+        if (tabId && !lockedIds.includes(tabId)) onClose(tabId)
+        return
+      }
+      if (action.position === 'bottom' && tabEl) {
+        tabEl.dispatchEvent(new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: info.clientX,
+          clientY: info.clientY,
+        }))
+      }
+    },
+  })
 
   if (tabs.length === 0) return null
 
@@ -85,47 +117,6 @@ export default function Tabbed({
     setFloatMenu({ x, y, id, target })
   }
 
-  const onTouchStart = (e: ReactTouchEvent<HTMLDivElement>) => {
-    const t = e.touches[0]
-    if (!t) return
-    const pt = { x: t.clientX, y: t.clientY }
-    swipeStart.current = pt
-    swipeLast.current = pt
-    // Remember which tab (if any) the swipe started on, so a down swipe can
-    // copy that tab's file path.
-    const target = e.target instanceof Element ? e.target.closest('[data-reorder-id]') : null
-    swipeTabId.current = target?.getAttribute('data-reorder-id') ?? null
-  }
-  const onTouchMove = (e: ReactTouchEvent<HTMLDivElement>) => {
-    const t = e.touches[0]
-    if (t) swipeLast.current = { x: t.clientX, y: t.clientY }
-  }
-  const finishSwipe = (e: ReactTouchEvent<HTMLDivElement>) => {
-    const start = swipeStart.current
-    const t = e.changedTouches[0]
-    const end = t ? { x: t.clientX, y: t.clientY } : swipeLast.current
-    const tabId = swipeTabId.current
-    swipeStart.current = null
-    swipeLast.current = null
-    swipeTabId.current = null
-    if (!multilineSwipe || !start || !end) return
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    const swipe = detectSwipe(dx, dy)
-    if (!swipe) return
-    if (swipe.direction === 'up-right') {
-      if (tabId && !lockedIds.includes(tabId)) onClose(tabId)
-      return
-    }
-    if (swipe.direction === 'up') {
-      setMultiline((v) => !v)
-      return
-    }
-    if (swipe.direction === 'down') {
-      setMultiline(true)
-    }
-  }
-
   const rowHeight = small ? 'h-7' : 'h-10'
   const rowPad = small ? 'px-2' : 'px-3'
   const rowMin = small ? 'min-w-0' : 'min-w-[84px]'
@@ -136,22 +127,29 @@ export default function Tabbed({
   const lineHeight = small ? 'h-[2px]' : 'h-[3px]'
 
   return (
-    <SelectableGroup
-      className={`flex w-full min-w-0 bg-bg-secondary border-b border-border compact-touch [-webkit-touch-callout:none] ${
-        multilineSwipe && multiline ? 'flex-wrap' : 'overflow-x-auto touch-pan-x'
-      } ${className}`}
-      style={{ scrollbarWidth: 'none' }}
-      selectedCount={selected.size}
-      dropMode={dropMode}
-      dropActive={dropActive}
-      onBackgroundPointerDown={onBackgroundPointerDown}
-      showMenuSelectMode
-      onCancelSelection={() => setSelected(new Set())}
-      onTouchStart={multilineSwipe ? onTouchStart : undefined}
-      onTouchMove={multilineSwipe ? onTouchMove : undefined}
-      onTouchEnd={multilineSwipe ? finishSwipe : undefined}
-      onTouchCancel={multilineSwipe ? finishSwipe : undefined}
+    <div
+      {...gestureBind}
+      className="relative flex w-full min-w-0"
+      onPointerDown={(e) => {
+        // Container strips use a background drag to move the container. Do not
+        // also treat that same press as a tab gesture.
+        if (onBackgroundPointerDown && e.target instanceof Element && e.target.hasAttribute('data-reorder-group')) return
+        gestureBind.onPointerDown(e)
+      }}
     >
+      {gestureOverlay}
+      <SelectableGroup
+        className={`flex w-full min-w-0 bg-bg-secondary border-b border-border compact-touch [-webkit-touch-callout:none] ${
+          multilineSwipe && multiline ? 'flex-wrap' : 'overflow-x-auto touch-pan-x'
+        } ${className}`}
+        style={{ scrollbarWidth: 'none' }}
+        selectedCount={selected.size}
+        dropMode={dropMode}
+        dropActive={dropActive}
+        onBackgroundPointerDown={onBackgroundPointerDown}
+        showMenuSelectMode
+        onCancelSelection={() => setSelected(new Set())}
+      >
       {tabs.map((tab) => {
         const isActive = active === tab.id
         const isChecked = selected.has(tab.id)
@@ -227,7 +225,6 @@ export default function Tabbed({
             detachAbove={detachAbove}
             dragAnyDirection={dragAnyDirection}
             verticalDownDrag
-            onDragStateChange={(id) => { if (id) { swipeStart.current = null; swipeTabId.current = null } }}
             className={`flex items-center ${rowGap} ${rowPad} ${rowHeight} ${rowMin} border-r border-border shrink-0 select-none cursor-pointer transition-colors ${TONE_WEAK[tone]} ${
               isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
             }`}
@@ -268,6 +265,7 @@ export default function Tabbed({
           </div>
         </>
       )}
-    </SelectableGroup>
+      </SelectableGroup>
+    </div>
   )
 }

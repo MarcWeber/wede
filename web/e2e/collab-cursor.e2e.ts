@@ -114,3 +114,39 @@ test('off-screen code pointer pins to the pane edge with a scroll direction', as
 
   expect(crashes.pageErrors).toEqual([])
 })
+
+test('semantic image pointer maps to image coordinates', async ({ page }) => {
+  const crashes = watchForCrashes(page)
+  let send: ((msg: unknown) => void) | null = null
+
+  await installBackend(page, {
+    collab: (ws) => {
+      send = (msg) => ws.send(JSON.stringify(msg))
+      ws.send(JSON.stringify({ type: 'self', id: 'm2' }))
+      ws.send(JSON.stringify({
+        type: 'presence',
+        members: [{ id: 'm2', username: 'alice', color: '#f87171' }],
+      }))
+    },
+  })
+  await seed(page, 'authed')
+  await page.goto('/')
+  await page.getByText('pic.png', { exact: true }).click()
+  const img = page.getByAltText('pic.png')
+  await expect(img).toBeVisible()
+  await expect.poll(() => !!send).toBe(true)
+
+  const tab = `${WORKSPACE_ID}\u0000pic.png`
+  send!({ type: 'pointer', id: 'm2', target: { kind: 'image', tab, u: 0.5, v: 0.5 } })
+  const cursor = page.getByTestId('remote-cursor')
+  await expect(cursor).toBeVisible()
+
+  const a = await img.boundingBox()
+  expect(a).not.toBeNull()
+  const x = Number(await cursor.getAttribute('data-x'))
+  const y = Number(await cursor.getAttribute('data-y'))
+  expect(Math.abs(x - (a!.x + a!.width / 2))).toBeLessThan(2)
+  expect(Math.abs(y - (a!.y + a!.height / 2))).toBeLessThan(2)
+
+  expect(crashes.pageErrors).toEqual([])
+})

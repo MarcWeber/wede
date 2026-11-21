@@ -3,13 +3,12 @@
  *
  *   - Search keeps its query when the user switches to a file and back.
  *   - A right swipe on the Files menu row adds a second Files tab.
- *   - Settings exposes Open Folder + Open Workspace, and API/Log/Chat are
- *     hidden by default.
+ *   - Settings exposes Open Folder and API/Log/Chat are hidden by default.
  *   - Select all in the explorer includes directories, and Expand one level
  *     reveals their children.
  */
 
-import { test, expect, seed, ROOT } from './fixtures.js'
+import { test, expect, seed } from './fixtures.js'
 import type { Page } from '@playwright/test'
 
 async function boot(page: Page) {
@@ -55,15 +54,15 @@ test('swiping the Files menu row adds a second Files tab', async ({ wede }) => {
   await expect(tabs).toHaveCount(2)
 })
 
-test('Settings shows both workspace buttons and hides API/Log/Chat by default', async ({ wede }) => {
+test('Settings keeps Open Folder and hides API/Log/Chat by default', async ({ wede }) => {
   const { page } = wede
   await boot(page)
 
   await page.getByRole('menuitemcheckbox', { name: 'Settings' }).click()
 
   await expect(page.getByRole('button', { name: 'Open Folder' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Open Workspace' })).toBeVisible()
-  await expect(page.getByRole('button', { name: `default ${ROOT}` })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open Workspace' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Collaboration' })).toBeVisible()
 
   for (const kind of ['api', 'log', 'chat']) {
     await expect(page.getByRole('checkbox', { name: kind, exact: true })).not.toBeChecked()

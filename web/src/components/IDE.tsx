@@ -15,7 +15,6 @@ import FileExplorer from './FileExplorer'
 import Editor, { type CursorPos } from './Editor'
 import TerminalPanel from './TerminalPanel'
 import GitPanels from './GitPanels'
-import FolderPicker from './FolderPicker'
 import Browser from './Browser'
 import Settings from './Settings'
 import HelpView from './HelpView'
@@ -28,7 +27,6 @@ import { ImagePreview, BinaryNotice } from './ImagePreview'
 import { PdfPreview, VideoPreview } from './MediaPreview'
 import { useLSP } from '../hooks/useLSP'
 import { useCollab } from '../hooks/useCollab'
-import { useBranding } from '../hooks/useBranding'
 import { useYDoc } from '../hooks/useYDoc'
 import Chat from './Chat'
 import ApiClient from './ApiClient'
@@ -48,7 +46,7 @@ import { useDap } from '../hooks/useDap'
 import { workspaceUrl, rawFileUrl } from '../api'
 import { fileKey, parseFileKey, normalizeTabIdentity } from '../lib/fileKey'
 import { followTargetFromPeer, targetSelectionKey } from '../lib/followSelection'
-import { encodeCollabPointer } from '../lib/collabPointerDom'
+import { decodeCollabPointer, encodeCollabPointer } from '../lib/collabPointerDom'
 import { elementScale } from '../lib/uiScale'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo, CollabPointer } from '../types'
@@ -69,8 +67,7 @@ export interface IDEProps {
   onLogout: () => void
   workspace: string | null
   home: string | null
-  recents: string[]
-  onWorkspaceChange: (path: string) => void
+  allowCustomDirectory: boolean
   workspacesApi: ReturnType<typeof useWorkspaces>
   workspaceId: string | null
   username: string
@@ -231,7 +228,7 @@ interface FileReadResponse {
   size?: number
 }
 
-export default function IDE({ token, authFetch, onLogout, workspace, home, recents, onWorkspaceChange, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false }: IDEProps) {
+export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
   const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, isSet: uiScaleIsSet, enabled: uiScaleEnabled, setEnabled: setUiScaleEnabled, updateScale: updateUiScale } = useUiScale()
@@ -778,8 +775,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
 
   const [termFullscreen, setTermFullscreen] = useState(false)
 
-  const [showFolderPicker, setShowFolderPicker] = useState(false)
-  const [pickerMode, setPickerMode] = useState<'open' | 'add'>('open') // 'open' = switch workspace; 'add' = add a root
   const [saving, setSaving] = useState(false)
   const [autoSaveStatus, setAutoSaveStatus] = useState<'' | 'saving' | 'saved'>('') // 'saving'|'saved'|''
   const [showCommandPalette, setShowCommandPalette] = useState(false)
@@ -912,9 +907,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   // personal follow until the lead ends.
   const effectiveFollowId = forcedPresenter ? forcedPresenter.id : presenterIsMe ? null : followTargetId
   const effectiveFollowMode = forcedPresenter ? 'live' : presenterIsMe ? null : followMode
-
-  const branding = useBranding()
-  const folderName = workspace?.split('/').pop() || branding
 
   // Persist open tabs to localStorage (rel + workspaceId let multi-root tabs be
   // restored against their own workspace, not just the active one).
@@ -1656,32 +1648,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     }
   }, [openBrowser])
 
-  const handleWorkspaceOpen = useCallback((path: string) => {
-    setTabs([])
-    setActiveTab(null)
-    setTerminalKey((k) => k + 1)
-    setShowFolderPicker(false)
-    onWorkspaceChange(path)
-  }, [onWorkspaceChange])
-
-  // Multi-root: add another folder as an additional workspace root without
-  // disturbing the currently open tabs, then focus it.
-  const openAddFolder = useCallback(() => { setPickerMode('add'); setShowFolderPicker(true) }, [])
-  const handleAddFolder = useCallback(async (path: string) => {
-    setShowFolderPicker(false)
-    setPickerMode('open')
-    if (!workspacesApi?.createWorkspace) return
-    const norm = path.replace(/\/+$/, '')
-    // Already open as a root? Just focus it instead of adding a duplicate.
-    const existing = (workspacesApi.workspaces || []).find((w) => (w.root || '').replace(/\/+$/, '') === norm)
-    if (existing) { workspacesApi.setActiveWorkspaceId(existing.id); return }
-    const name = norm.split('/').filter(Boolean).pop() || 'folder'
-    try {
-      const ws = await workspacesApi.createWorkspace(name, path)
-      if (ws?.id) workspacesApi.setActiveWorkspaceId(ws.id)
-    } catch { /* ignore — createWorkspace surfaces its own errors */ }
-  }, [workspacesApi])
-
   // Remove a folder root from the workspace: close its open tabs, then close the
   // backend workspace. Never closes the last remaining root.
   const handleCloseWorkspace = useCallback(async (id: string) => {
@@ -2108,6 +2074,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   const shareCursors = (editorSettings.shareCursors ?? true)
   const lastPointerKeyRef = useRef('')
   const heldTouchRef = useRef(false)
+  const lastPointerTargetRef = useRef<CollabPointer | null>(null)
   useEffect(() => {
     if (!shareCursors) { sendPointer(null); return undefined }
     let clearTimer: ReturnType<typeof setTimeout> | null = null
@@ -2135,6 +2102,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       const key = JSON.stringify(pointer)
       if (key === lastPointerKeyRef.current) return
       lastPointerKeyRef.current = key
+      lastPointerTargetRef.current = pointer
       heldTouchRef.current = e.pointerType === 'touch' || e.pointerType === 'pen'
       sendPointer(pointer)
     }
@@ -2142,6 +2110,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       if (!heldTouchRef.current) return
       heldTouchRef.current = false
       lastPointerKeyRef.current = ''
+      lastPointerTargetRef.current = null
       sendPointer(null)
     }
     const onMove = (e: PointerEvent) => publish(e)
@@ -2149,12 +2118,21 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       if (e.pointerType === 'touch' || e.pointerType === 'pen') publish(e)
     }
     // Touch/pen pointers persist after lift so the peer can still see where the
-    // finger was; they clear on the next tab switch or scroll instead.
-    const onScroll = () => clearTouch()
+    // finger was; they clear on the next tab switch or once the location has
+    // scrolled out of its pane.
+    const onScroll = () => {
+      if (!heldTouchRef.current) return
+      const target = lastPointerTargetRef.current
+      const decoded = target ? decodeCollabPointer(target) : null
+      if (!decoded || decoded.offscreen) clearTouch()
+    }
     const onOut = (e: PointerEvent) => {
+      // A lifted touch fires pointerout with relatedTarget=null. Keep the
+      // published touch point until the tab changes or the pane scrolls.
+      if (heldTouchRef.current) return
       if (e.relatedTarget) return
-      heldTouchRef.current = false
       lastPointerKeyRef.current = ''
+      lastPointerTargetRef.current = null
       sendPointer(null)
     }
     window.addEventListener('pointermove', onMove, true)
@@ -2168,6 +2146,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       window.removeEventListener('scroll', onScroll, true)
       if (clearTimer) clearTimeout(clearTimer)
       heldTouchRef.current = false
+      lastPointerTargetRef.current = null
       sendPointer(null)
     }
   }, [shareCursors, sendPointer, activeTab])
@@ -2261,26 +2240,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
     return editorEl
   }
 
-  if (showFolderPicker) {
-    const adding = pickerMode === 'add'
-    return (
-      <div className="h-screen flex flex-col bg-bg-primary">
-        <div className="flex items-center px-4 py-2.5 bg-bg-tertiary border-b border-border">
-          <button onClick={() => { setShowFolderPicker(false); setPickerMode('open') }}
-            className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors">
-            <ChevronLeft className="w-4 h-4" /> Back
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto flex items-start justify-center p-6">
-          <div className="w-full max-w-xl bg-bg-primary border border-border rounded-xl p-6 shadow-xl shadow-shadow">
-            <h2 className="text-base font-semibold text-text-primary mb-4">{adding ? 'Add Folder to Workspace' : 'Open Folder'}</h2>
-            <FolderPicker authFetch={authFetch} recents={recents} onOpen={adding ? handleAddFolder : handleWorkspaceOpen} inline addMode={adding} />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   // A dock slot is only offered while empty; when it already holds a
   // container, that container's own tab strip is the drop target.
   const dropSlot = (parentKey: string | null, side: ViewMode) => {
@@ -2318,7 +2277,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
   const renderEntry = (e: ShellEntry): ReactNode => {
     switch (e.kind) {
       case 'files':
-        return <FileExplorer key={e.fileId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={e.id === activeShell ? handleRegisterExplorerActions : undefined} onAddFolder={openAddFolder} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
+        return <FileExplorer key={e.fileId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={e.id === activeShell ? handleRegisterExplorerActions : undefined} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
       case 'search':
         return <SearchPanel key={e.searchId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} readOnly={role === 'viewer'} onOpenFile={(entry, line) => {
           const key = fileKey(entry.workspaceId || workspaceId, entry.rel ?? entry.path)
@@ -2462,7 +2421,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
             role={role}
             workspaceId={workspaceId}
             visible
-            onOpenFolder={() => setShowFolderPicker(true)}
             workspace={workspace}
             editorSettings={editorSettings}
             onEditorSettingsChange={handleEditorSettingsChange}
@@ -2591,12 +2549,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
         else if (kind === 'search') addSearch()
         else if (kind === 'log') addLog()
       }}
-      onOpenFolder={() => setShowFolderPicker(true)}
       onLogout={onLogout}
       onClose={() => setMenuOpen(false)}
       desktop={desktop}
-      folderName={folderName}
-      workspaceSwitcher={<WorkspaceSwitcher workspacesApi={workspacesApi} menuUp />}
+      workspaceSwitcher={<WorkspaceSwitcher workspacesApi={workspacesApi} menuUp allowCustomDirectory={allowCustomDirectory} />}
       onToggleDesktop={() => setDesktopMode(!desktopMode)}
       pointers={collabPointers}
       onJumpToPointer={jumpToCollabPointer}
@@ -2608,6 +2564,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
       onResetView={resetView}
       username={username}
       users={collabRoster}
+      onOpenSharedTab={(rel) => { void openFile({ path: rel, rel, workspaceId }) }}
       selfId={selfId}
       teacher={teacher}
       presenter={presenter}
@@ -2879,7 +2836,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, recen
         onSaveAll={() => { void saveAll() }}
         onNewFile={() => { showView('files'); explorerActionsRef.current?.newFile() }}
         onNewFolder={() => { showView('files'); explorerActionsRef.current?.newFolder() }}
-        onOpenFolder={() => setShowFolderPicker(true)}
         onToggleTerminal={() => role !== 'viewer' && toggleVisible('terminals')}
         onOpenSettings={() => showView('settings')}
         onFocusExplorer={() => showView('files')}

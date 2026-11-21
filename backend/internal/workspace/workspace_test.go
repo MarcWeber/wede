@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -306,5 +308,24 @@ func TestZeroTimeoutNeverExpires(t *testing.T) {
 	}
 	if _, ok := m.Get(r.ID); !ok {
 		t.Fatal("zero-timeout session disappeared")
+	}
+}
+
+func TestHandleCreateHonorsCustomDirectoryFlag(t *testing.T) {
+	dir := t.TempDir()
+	body, _ := json.Marshal(map[string]string{"name": "custom", "path": dir})
+
+	m := NewManager("", "")
+	rr := httptest.NewRecorder()
+	m.HandleCreate(rr, httptest.NewRequest(http.MethodPost, "/api/workspaces", bytes.NewReader(body)))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("disabled custom dir: status = %d, want 403 (%s)", rr.Code, rr.Body.String())
+	}
+
+	m.SetAllowCustomDirectory(true)
+	rr = httptest.NewRecorder()
+	m.HandleCreate(rr, httptest.NewRequest(http.MethodPost, "/api/workspaces", bytes.NewReader(body)))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("enabled custom dir: status = %d, want 201 (%s)", rr.Code, rr.Body.String())
 	}
 }

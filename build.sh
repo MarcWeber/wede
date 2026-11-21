@@ -16,7 +16,8 @@
 
 set -x
 
-set -euo pipefail
+# Keep this POSIX-compatible: `sh build.sh` is supported.
+set -eu
 cd "$(dirname "$0")"
 
 CMD="${1:-dev-restart}"

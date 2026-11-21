@@ -47,7 +47,7 @@ export default function HelpView() {
         </Section>
 
         <Section title="Tab types">
-          <P className="mb-2">In the hamburger menu, swipe right to add a new tab for most types.</P>
+          <P className="mb-2">In the hamburger menu, swipe right to add a new tab for most types. Swipe files or search left to see every tab other people have open.</P>
           <List items={[
             <Item label="Files">directory tree; open files, long-press to open/rename/remove</Item>,
             <Item label="Search">search file contents and names</Item>,
@@ -91,8 +91,10 @@ export default function HelpView() {
         <Section title="Tabs">
           <List items={[
             'Click a tab type to show/hide all tabs of that type',
-            'Swipe down to expand the strip and see all tabs; swipe up to return to one line',
-            'Swipe a tab up-right to close it (locked tabs stay)',
+            'Drag or swipe left/right to scroll the strip',
+            'Swipe a tab up to expand/collapse the strip; swipe down for its menu',
+            'Swipe a tab to the top-right to close it (locked tabs stay)',
+            'Labels appear while dragging so the gesture is visible near the screen centre',
             'Long-press a tab to enter select mode; long-press again or right-click for the menu',
             'On desktop you can make tabs float above or dock',
           ]} />
@@ -120,8 +122,8 @@ export default function HelpView() {
 
         <Section title="Mobile optimization">
           <Rows rows={[
-            ['Tabs', 'Swipe up to hide/show all tabs. Swipe a tab up-right to close it (locked tabs stay).'],
-            ['Tab strip', 'Swipe down to expand the strip; swipe up to return to one line.'],
+            ['Tabs', 'Swipe left/right to scroll. Swipe up to expand/collapse; swipe down for the menu; swipe top-right to close (locked tabs stay).'],
+            ['Tab strip', 'Action labels are pulled toward the middle of the screen so your finger does not hide them.'],
             ['Keyboard layout', 'Terminal > settings > eye: Off, Follow cursor, Shrink & maximize, or Zoom (distort) when the keyboard opens.'],
             ['Terminal buttons', 'Terminal > settings > configure behavior: assign tap, swipe and long-press actions to each grid cell.'],
             ['1/2-finger swipe', 'Terminal > settings > single/two-finger swipe: cursor movement, PgUp/PgDn, Vim/Emacs paging, scroll events or native scrollback.'],

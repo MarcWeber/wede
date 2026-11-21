@@ -12,7 +12,7 @@ test('help renders the shared heading and list formatting', async ({ page }) => 
   await expect(page.getByRole('heading', { name: /How to use/ })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Tab types' })).toBeVisible()
   await expect(page.getByText('Quick open')).toBeVisible()
-  await expect(page.getByText('Swipe a tab up-right to close it')).toBeVisible()
+  await expect(page.getByText('Swipe a tab to the top-right to close it (locked tabs stay)')).toBeVisible()
 
   expect(crashes.pageErrors).toEqual([])
 })

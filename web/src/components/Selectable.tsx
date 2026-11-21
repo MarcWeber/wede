@@ -549,7 +549,6 @@ export default function Selectable({
           onDragDetach?.(dragId)
         }
       }
-      if (detached) return
       const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
       const row = el?.closest('[data-reorder-id]') as HTMLElement | null
       const rowId = row?.dataset.reorderId ?? null
@@ -571,16 +570,8 @@ export default function Selectable({
       setDragging(false)
       if (!active) return
       onDragStateChange?.(null)
-      if (detached) {
-        const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
-        const mode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode')
-        const row = el?.closest('[data-reorder-id]') as HTMLElement | null
-        const rowId = row?.dataset.reorderId
-        const r = row?.getBoundingClientRect()
-        if (mode) onDropViewMode?.(dragId, mode, rowId, r ? ev.clientX > r.left + r.width / 2 : undefined)
-        else onDragAway?.(dragId, { x: ev.clientX, y: ev.clientY })
-        return
-      }
+      // A tab that was dragged outside can be brought back in: prefer a tab
+      // under the pointer over the earlier "detached" state.
       if (overId && overId !== dragId) {
         onReorder?.(dragId, overId)
         return

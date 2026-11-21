@@ -1,16 +1,17 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
-  X, LogOut, FolderOpen, Moon, Sun, Monitor, Users,
+  X, LogOut, Moon, Sun, Monitor, Users,
   LayoutPanelLeft, ChevronDown, ChevronRight, RotateCcw,
   Eye, Radio, Scaling, MousePointer2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useRowMenu } from './Selectable'
+import { useDragHints } from './DragHint'
 import { pointerLabel } from '../lib/collabPointer'
 import type { CollabPointer } from '../types'
 import type { ViewTab } from './ViewTabs'
 import { TONE_STRONG, TONE_TEXT, TONE_WEAK, toneForView } from '../lib/viewTypes'
-import { useTheme, type ThemeLevel } from '../hooks/useTheme'
+import { THEME_LEVEL_STOPS, useTheme, type ThemeLevel } from '../hooks/useTheme'
 
 export type MenuPlacement =
   | 'left-icons'
@@ -26,18 +27,30 @@ interface MenuRowProps {
   checked: boolean
   onToggle: () => void
   onSwipeRight?: () => void
+  onSwipeLeft?: () => void
   hint?: string
   slim?: boolean
   disabled?: boolean
 }
 
 // One menu row: icon + label. The whole row toggles visibility. Rows that can
-// have multiple instances (web, terminals, API) also add one on a right swipe.
-function MenuRow({ kind, icon: Icon, label, checked, onToggle, onSwipeRight, hint, slim, disabled }: MenuRowProps) {
-  const { bind, consumeSwipe } = useRowMenu(
-    [], onSwipeRight ? { swipe: 'right', onSwipe: onSwipeRight } : {},
-  )
+// have multiple instances (web, terminals, API) also add one on a right swipe;
+// files/search can reveal every tab other people have open with a left swipe.
+function MenuRow({ kind, icon: Icon, label, checked, onToggle, onSwipeRight, onSwipeLeft, hint, slim, disabled }: MenuRowProps) {
+  const gestureActions = [
+    ...(onSwipeLeft ? [{ position: 'left' as const, label: 'All tabs' }] : []),
+    ...(onSwipeRight ? [{ position: 'right' as const, label: `Add ${label.toLowerCase()}` }] : []),
+  ]
+  const { bind, overlay } = useDragHints({
+    actions: gestureActions,
+    disabled,
+    onAction: (action) => {
+      if (action.position === 'left') onSwipeLeft?.()
+      else if (action.position === 'right') onSwipeRight?.()
+    },
+  })
   const tone = toneForView(kind || 'files')
+
   return (
     <div
       {...bind}
@@ -47,7 +60,7 @@ function MenuRow({ kind, icon: Icon, label, checked, onToggle, onSwipeRight, hin
       aria-label={label}
       title={slim ? label : undefined}
       tabIndex={disabled ? -1 : 0}
-      onClick={() => { if (disabled || consumeSwipe()) return; onToggle() }}
+      onClick={() => { if (disabled) return; onToggle() }}
       onKeyDown={(e) => {
         if (disabled) return
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() }
@@ -61,11 +74,12 @@ function MenuRow({ kind, icon: Icon, label, checked, onToggle, onSwipeRight, hin
           ? `${TONE_STRONG[tone]} ${TONE_TEXT[tone]} border-current`
           : 'text-text-secondary border-transparent hover:text-text-primary hover:bg-bg-hover'
       }`}
-      style={{ touchAction: onSwipeRight ? 'pan-y' : undefined }}
+      style={{ touchAction: onSwipeRight || onSwipeLeft ? 'pan-y' : undefined }}
     >
       <Icon className={`w-3.5 h-3.5 shrink-0 ${checked ? '' : 'text-text-muted'}`} />
       {!slim && <span className="text-[12px] font-medium truncate">{label}</span>}
       {!slim && hint && <span className={`ml-auto text-[10px] shrink-0 ${checked ? 'opacity-60' : 'text-text-muted'}`}>{hint}</span>}
+      {overlay}
     </div>
   )
 }
@@ -114,20 +128,21 @@ const PLACEMENTS: { key: MenuPlacement; label: string }[] = [
 
 function ThemeLevelRow({ slim }: { slim: boolean }) {
   const { level, setLevel } = useTheme()
+  const position = THEME_LEVEL_STOPS.indexOf(level)
   return (
     <div
       className={`border-l-2 border-transparent ${slim ? 'px-1 py-1.5' : 'px-2.5 py-2'}`}
-      title={`Theme level ${level} / 6 — 1–3 light, 4–6 dark`}
+      title={`Theme level ${level === 3.5 ? '3½' : level} / ${THEME_LEVEL_STOPS.length} — 1–3 night, 3½ high-contrast black, 4–6 evening, 7–9 day`}
     >
       <div className={slim ? 'flex flex-col items-center gap-1' : 'flex items-center gap-2'}>
         <Moon className={`${slim ? 'w-3 h-3' : 'w-3.5 h-3.5'} shrink-0 text-text-muted`} />
         <input
           type="range"
           min={1}
-          max={6}
+          max={THEME_LEVEL_STOPS.length}
           step={1}
-          value={7 - level}
-          onChange={(e) => setLevel((7 - Number(e.target.value)) as ThemeLevel)}
+          value={position + 1}
+          onChange={(e) => setLevel(THEME_LEVEL_STOPS[Number(e.target.value) - 1])}
           className={`${slim ? 'w-full' : 'flex-1'} accent-accent cursor-pointer`}
           aria-label="Theme brightness and contrast"
         />
@@ -142,11 +157,9 @@ export interface ViewMenuProps {
   visible: Record<string, boolean>
   onToggle: (kind: string) => void
   onAdd: (kind: string) => void
-  onOpenFolder: () => void
   onLogout: () => void
   onClose?: () => void
   desktop: boolean
-  folderName: string
   workspaceSwitcher?: ReactNode
   onToggleDesktop: () => void
   pointers?: Record<string, CollabPointer>
@@ -158,7 +171,8 @@ export interface ViewMenuProps {
   onPlacement: (p: MenuPlacement) => void
   onResetView: () => void
   username: string
-  users: { id: string; username?: string; color?: string; line?: number }[]
+  users: { id: string; username?: string; color?: string; line?: number; tabs?: string[] }[]
+  onOpenSharedTab?: (path: string) => void
   selfId?: string | null
   teacher?: boolean
   presenter?: { id: string; username: string } | null
@@ -173,16 +187,28 @@ export interface ViewMenuProps {
 // left; on mobile it opens as a left drawer. It is the only place that shows or
 // hides a tab type, adds instances, and changes global options.
 export default function ViewMenu({
-  views, visible, onToggle, onAdd, onOpenFolder,
-  onLogout, onClose, desktop, folderName, workspaceSwitcher,
+  views, visible, onToggle, onAdd,
+  onLogout, onClose, desktop, workspaceSwitcher,
   onToggleDesktop, pointers, onJumpToPointer, uiScaleIsSet, uiScaleEnabled, onToggleUiScale, placement, onPlacement,
-  onResetView, username, users,
+  onResetView, username, users, onOpenSharedTab,
   selfId, teacher = false, presenter = null,
   followTargetId = null, followMode = null,
   onFollow, onUnfollow, onLeadChange,
 }: ViewMenuProps) {
   const [showPlacement, setShowPlacement] = useState(false)
   const [followMenuId, setFollowMenuId] = useState<string | null>(null)
+  const [sharedTabsOpen, setSharedTabsOpen] = useState(false)
+  const sharedTabs = useMemo(() => {
+    const byPath = new Map<string, { path: string; users: string[] }>()
+    for (const u of users) {
+      for (const path of u.tabs || []) {
+        const entry = byPath.get(path) || { path, users: [] }
+        entry.users.push(u.username || u.id)
+        byPath.set(path, entry)
+      }
+    }
+    return Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path))
+  }, [users])
   const slim = desktop && (placement === 'left-icons' || placement === 'bottom-icons')
   const isSelf = (u: { id: string; username?: string }) =>
     selfId ? u.id === selfId : (u.username || '') === username
@@ -208,13 +234,51 @@ export default function ViewMenu({
                 ? () => onAdd(view.kind)
                 : undefined
             }
+            onSwipeLeft={
+              view.kind === 'files' || view.kind === 'search' ? () => setSharedTabsOpen((v) => !v) : undefined
+            }
             hint={
-              view.kind === 'files' || view.kind === 'web' || view.kind === 'terminals' || view.kind === 'api' || view.kind === 'search' || view.kind === 'log' ? 'swipe → add'
+              view.kind === 'files' || view.kind === 'search' ? '← all · → add'
+                : view.kind === 'web' || view.kind === 'terminals' || view.kind === 'api' || view.kind === 'log' ? 'swipe → add'
                 : view.kind === 'settings' || view.kind === 'help' ? 'show' : undefined
             }
             slim={slim}
           />
         ))}
+
+        {sharedTabsOpen && (
+          <div className="mx-2 my-1 rounded-md border border-border bg-bg-primary/60 p-1.5">
+            <div className="flex items-center justify-between px-1 pb-1">
+              <span className="text-[10px] uppercase tracking-wider text-text-muted">Open tabs</span>
+              <button
+                type="button"
+                onClick={() => setSharedTabsOpen(false)}
+                className="text-[10px] text-text-muted hover:text-text-primary"
+                aria-label="Close shared tabs"
+              >
+                [x]
+              </button>
+            </div>
+            {sharedTabs.length === 0 ? (
+              <div className="px-1 pb-1 text-[10px] text-text-muted">No tabs open by anyone yet</div>
+            ) : (
+              <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                {sharedTabs.map((tab) => (
+                  <button
+                    key={tab.path}
+                    type="button"
+                    onClick={() => onOpenSharedTab?.(tab.path)}
+                    className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-left text-[11px] text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                    title={`Open ${tab.path} — ${tab.users.join(', ')}`}
+                  >
+                    <span className="truncate">{tab.path}</span>
+                    <span className="ml-auto text-[9px] text-text-muted truncate max-w-20">{tab.users.join(', ')}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="my-1 border-t border-border" />
 
@@ -267,8 +331,9 @@ export default function ViewMenu({
               <span className="text-[12px] font-medium">Users</span>
             </div>
             <div className="pl-6 space-y-1">
-              <div className="text-[11px] text-text-secondary truncate flex items-center gap-1">
-                <span className={isLeading ? 'font-semibold text-text-primary' : ''} style={{ color: selfMember?.color || undefined }}>{selfName}</span>
+              <div className="text-[11px] text-text-secondary truncate flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-[2px] shrink-0" style={{ backgroundColor: selfMember?.color || '#888888' }} />
+                <span className={isLeading ? 'font-semibold text-text-primary' : ''}>{selfName}</span>
                 <span className="text-text-muted">(you)</span>
                 {isLeading && <Radio className="w-3 h-3 text-accent shrink-0" aria-label="Leading" />}
               </div>
@@ -284,7 +349,8 @@ export default function ViewMenu({
                       title="Follow this user"
                       className="w-full flex items-center gap-1.5 text-left text-[11px] text-text-secondary hover:text-text-primary transition-colors"
                     >
-                      <span className={`truncate ${mode ? 'font-semibold text-text-primary' : ''}`} style={{ color: u.color || undefined }}>
+                      <span className="w-2 h-2 rounded-[2px] shrink-0" style={{ backgroundColor: u.color || '#888888' }} />
+                      <span className={`truncate ${mode ? 'font-semibold text-text-primary' : ''}`}>
                         {u.username || u.id}
                       </span>
                       {pointers?.[u.id] && (
@@ -385,17 +451,8 @@ export default function ViewMenu({
         {/* Footer lives inside the scroll area so it never steals height in
             portrait mode. */}
         <div className="mt-1 border-t border-border py-1">
-          {!slim && (
-            <div className="px-2 pb-1">
-              {workspaceSwitcher ?? (
-                <button onClick={onOpenFolder}
-                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-                  title="Open Folder (change workspace)">
-                  <FolderOpen className="w-3.5 h-3.5 text-yellow shrink-0" />
-                  <span className="truncate font-medium">{folderName}</span>
-                </button>
-              )}
-            </div>
+          {!slim && workspaceSwitcher && (
+            <div className="px-2 pb-1">{workspaceSwitcher}</div>
           )}
           <button onClick={onLogout}
             title="Logout"

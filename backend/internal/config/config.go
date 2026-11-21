@@ -52,6 +52,11 @@ type Config struct {
 	// WEDE_WORKSPACE_ROOT environment variable or this config key.
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 
+	// WorkspaceAllowCustomDirectory enables creating a workspace from an
+	// arbitrary directory path (WorkspaceSwitcher / ?workspace=directory:...).
+	// Disabled by default so deployments stay limited to configured templates.
+	WorkspaceAllowCustomDirectory bool `json:"workspace_allow_custom_directory,omitempty"`
+
 	// ServeLanding controls whether the marketing landing page and /site/*
 	// docs viewer are hosted. Cloud-only; local wede serves only the IDE.
 	ServeLanding bool `json:"serve_landing,omitempty"`

@@ -1,33 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from './hooks/useAuth'
 import { useTheme } from './hooks/useTheme'
-import { useWorkspaces } from './hooks/useWorkspaces'
+import { useWorkspaces, urlCustomDirectory } from './hooks/useWorkspaces'
 import Logo from './components/Logo'
 import ThemePicker from './components/ThemePicker'
 import Login from './components/Login'
-import FolderPicker from './components/FolderPicker'
 import IDE from './components/IDE'
-
-const FOLDER_QUERY_KEY = 'folder'
-const PATH_QUERY_KEY = 'path'
-
-// Read the folder path from the URL query string. "?path=" is the current key;
-// "?folder=" is accepted for older links.
-function urlFolder(): string | null {
-  const params = new URLSearchParams(window.location.search)
-  return params.get(PATH_QUERY_KEY) || params.get(FOLDER_QUERY_KEY)
-}
-
-// Write the folder path to the URL query string, preserving the hash.
-function setUrlFolder(folder: string | null) {
-  const params = new URLSearchParams(window.location.search)
-  if (folder) params.set(PATH_QUERY_KEY, folder)
-  else params.delete(PATH_QUERY_KEY)
-  params.delete(FOLDER_QUERY_KEY)
-  const qs = params.toString()
-  const search = qs ? '?' + qs : ''
-  history.replaceState(null, '', window.location.pathname + search + window.location.hash)
-}
 
 interface WorkspaceFolderState {
   hasWorkspace?: boolean
@@ -45,19 +23,15 @@ function App() {
 
   const [workspace, setWorkspace] = useState<WorkspaceFolderState | null>(null)
   const [loading, setLoading] = useState(true)
+  const [allowCustomDirectory, setAllowCustomDirectory] = useState<boolean | null>(null)
+  const customDirRef = useRef<string | null>(null)
 
   const fetchWorkspace = useCallback(async () => {
     if (!token) return
     try {
       const res = await authFetch('/api/folder')
       const data: WorkspaceFolderState = await res.json()
-      // If the URL has a folder param, prefer it; otherwise use the API response.
-      const fromUrl = urlFolder()
-      if (fromUrl) {
-        setWorkspace({ ...data, current: fromUrl, hasWorkspace: true })
-      } else {
-        setWorkspace(data)
-      }
+      setWorkspace(data)
     } catch { /* ignore */ }
     setLoading(false)
   }, [token, authFetch])
@@ -79,19 +53,24 @@ function App() {
     redeem(invite).catch(() => {})
   }, [redeem])
 
-  // Keep ?path= in sync with the active workspace root so a refresh restores
-  // the folder (and the backend can resolve it before the IDE mounts).
+  // Custom directories are opt-in per deployment. The flag also gates the
+  // WorkspaceSwitcher's manual path entry.
   useEffect(() => {
-    const root = workspaces.find((w) => w.id === workspacesApi.activeWorkspaceId)?.root
-    if (root) setUrlFolder(root)
-  }, [workspaces, workspacesApi.activeWorkspaceId])
+    let cancelled = false
+    fetch('/api/ui-config')
+      .then((r) => r.json())
+      .then((data: { workspace_allow_custom_directory?: unknown }) => {
+        if (!cancelled) setAllowCustomDirectory(data.workspace_allow_custom_directory === true)
+      })
+      .catch(() => { if (!cancelled) setAllowCustomDirectory(false) })
+    return () => { cancelled = true }
+  }, [])
 
-  // Opening a folder adopts it as a real session (or focuses the existing
-  // session with the same root) so the workspace always has a folder attached
-  // instead of leaving the user on a separate "open folder" step.
-  const openFolderAsWorkspace = useCallback(async (path: string) => {
+  // Opening a directory adopts it as a real workspace (or focuses the existing
+  // workspace with the same root). Workspace switching itself lives in
+  // WorkspaceSwitcher; there is no separate folder picker.
+  const openDirectoryAsWorkspace = useCallback(async (path: string, requestedName?: string) => {
     setWorkspace((w) => ({ ...(w || {}), current: path, hasWorkspace: true }))
-    setUrlFolder(path)
     const norm = path.replace(/\/+$/, '')
     const existing = workspaces.find((w) => (w.root || '').replace(/\/+$/, '') === norm)
     if (existing) {
@@ -99,22 +78,21 @@ function App() {
       return
     }
     try {
-      const name = norm.split('/').filter(Boolean).pop() || 'workspace'
+      const name = requestedName?.trim() || norm.split('/').filter(Boolean).pop() || 'workspace'
       const ws = await createWorkspace(name, path)
       if (ws?.id) setActiveWorkspaceId(ws.id)
     } catch { /* createWorkspace surfaces its own errors */ }
   }, [workspaces, createWorkspace, setActiveWorkspaceId])
 
-  // If the URL carries ?path= (or ?folder=) and no workspace is active yet,
-  // auto-create (or focus) the workspace from that path so the user skips the
-  // "Choose workspace" screen and lands directly in the IDE.
+  // ?workspace=directory:<path>&name=<name> selects a custom directory. It is
+  // ignored unless the deployment opted in.
   useEffect(() => {
-    if (!workspacesApi.ready) return
-    if (workspacesApi.activeWorkspaceId) return
-    const fromUrl = urlFolder()
-    if (!fromUrl) return
-    void openFolderAsWorkspace(fromUrl)
-  }, [workspacesApi.ready, workspacesApi.activeWorkspaceId, openFolderAsWorkspace])
+    if (!workspacesApi.ready || allowCustomDirectory !== true) return
+    const dir = urlCustomDirectory()
+    if (!dir || customDirRef.current === dir.path) return
+    customDirRef.current = dir.path
+    void openDirectoryAsWorkspace(dir.path, dir.name)
+  }, [workspacesApi.ready, allowCustomDirectory, openDirectoryAsWorkspace])
 
   // First visit - pick theme
   if (!theme) {
@@ -142,16 +120,6 @@ function App() {
   // After sign-in: join an existing session or create one from a template. A
   // single active session is selected automatically by useWorkspaces.
   if (!workspacesApi.activeWorkspaceId) {
-    const hasChoices = workspacesApi.sessions.length > 0 || workspacesApi.templates.length > 0
-    if (!hasChoices) {
-      return (
-        <FolderPicker
-          authFetch={authFetch}
-          recents={workspace?.recents || []}
-          onOpen={openFolderAsWorkspace}
-        />
-      )
-    }
     return (
       <Login
         onLogin={login}
@@ -181,8 +149,7 @@ function App() {
       onLogout={logout}
       workspace={activeRoot ?? null}
       home={workspace?.home ?? null}
-      recents={workspace?.recents || []}
-      onWorkspaceChange={openFolderAsWorkspace}
+      allowCustomDirectory={allowCustomDirectory === true}
       workspaceId={workspacesApi.activeWorkspaceId}
       workspacesApi={workspacesApi}
       username={username}

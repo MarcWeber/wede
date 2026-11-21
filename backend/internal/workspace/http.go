@@ -94,8 +94,16 @@ func (m *Manager) HandleSessionClose(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleCreate serves POST /api/workspaces with body {name?, path}. This is the
-// legacy path-based creator; it creates a custom session.
+// legacy path-based creator; it creates a custom session when the deployment
+// allows custom directories.
 func (m *Manager) HandleCreate(w http.ResponseWriter, r *http.Request) {
+	m.mu.RLock()
+	allow := m.allowCustomDir
+	m.mu.RUnlock()
+	if !allow {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "custom workspace directories are disabled"})
+		return
+	}
 	var body struct {
 		Name string `json:"name"`
 		Path string `json:"path"`

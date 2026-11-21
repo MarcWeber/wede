@@ -91,6 +91,15 @@ export default function RemoteCursors({ pointers, roster, onJump }: RemoteCursor
             ) : (
               <MousePointer2 className={`drop-shadow-sm ${isMobile ? 'w-3 h-3' : 'w-4 h-4'}`} style={{ color, fill: color }} />
             )}
+            {!isMobile && (
+              <span
+                className="mt-3 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-white whitespace-nowrap shadow-md"
+                style={{ backgroundColor: color }}
+              >
+                {member.username || 'anon'}
+                {decoded.offscreen && <span className="opacity-80"> · {label}</span>}
+              </span>
+            )}
           </button>
         )
       })}

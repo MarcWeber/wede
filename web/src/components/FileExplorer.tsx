@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type ComponentType, type FormEvent, type MouseEvent } from 'react'
 import {
   ChevronRight, ChevronDown, File, Folder, FolderOpen,
-  FilePlus, FolderPlus, RefreshCw, Copy, Clipboard, Pencil, FolderPlus as AddRoot, X as XIcon,
+  FilePlus, FolderPlus, RefreshCw, Copy, Clipboard, Pencil, X as XIcon,
   Maximize2, Minimize2,
 } from 'lucide-react'
 import { makeWsFetch } from '../lib/wsScope'
@@ -707,13 +707,12 @@ export interface FileExplorerProps {
   onFileSelect: (entry: FileEntry, opts?: { preview?: boolean }) => void
   selectedPath?: string | null
   onRegisterActions?: (actions: ExplorerActions) => void
-  onAddFolder?: () => void
   onCloseWorkspace?: (id: string) => void
   roster?: PresenceMember[]
 }
 
 /* ── Main explorer: renders every open workspace as a root section. ── */
-export default function FileExplorer({ authFetch, workspaces = [], onFileSelect, selectedPath, onRegisterActions, onAddFolder, onCloseWorkspace, roster = [] }: FileExplorerProps) {
+export default function FileExplorer({ authFetch, workspaces = [], onFileSelect, selectedPath, onRegisterActions, onCloseWorkspace, roster = [] }: FileExplorerProps) {
   const [focusedRoot, setFocusedRoot] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(() => new Set())
@@ -773,7 +772,6 @@ export default function FileExplorer({ authFetch, workspaces = [], onFileSelect,
           {/* New file/folder route to the focused root (used when its own header is hidden). */}
           <IconBtn icon={FilePlus} title="New File" onClick={() => (activeRoot ? sectionActions.current[activeRoot] : undefined)?.newFile?.()} />
           <IconBtn icon={FolderPlus} title="New Folder" onClick={() => (activeRoot ? sectionActions.current[activeRoot] : undefined)?.newFolder?.()} />
-          {onAddFolder && <IconBtn icon={AddRoot} title="Add Folder to Workspace" onClick={onAddFolder} />}
           <IconBtn icon={RefreshCw} title="Refresh All" onClick={() => Object.values(sectionActions.current).forEach((a) => a?.refresh?.())} />
         </div>
       </div>

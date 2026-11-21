@@ -140,6 +140,7 @@ func main() {
 		authHandler.SetTeachers(c.Teachers)
 		wsMgr.SetDefaultTimeout(c.Defaults.Timeout())
 		wsMgr.SetVisibleTabTypes(c.VisibleTabTypes)
+		wsMgr.SetAllowCustomDirectory(c.WorkspaceAllowCustomDirectory)
 		wsMgr.SetTemplates(templatesFrom(c, rootFolder.Current()))
 		collab.SetDebug(c.Debug)
 		if c.Debug {
@@ -178,9 +179,10 @@ func main() {
 	mux.HandleFunc("GET /api/ui-config", func(w http.ResponseWriter, r *http.Request) {
 		c := cfgStore.Current()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"view_image": c.ViewImage,
-			"view_pdf":   c.ViewPdf,
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"view_image":                       c.ViewImage,
+			"view_pdf":                         c.ViewPdf,
+			"workspace_allow_custom_directory": c.WorkspaceAllowCustomDirectory,
 		})
 	})
 

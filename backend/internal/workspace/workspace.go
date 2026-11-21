@@ -333,24 +333,25 @@ func (r *Workspace) shutdown() {
 
 // Manager owns the set of live workspaces. Safe for concurrent use.
 type Manager struct {
-	mu             sync.RWMutex
-	workspaces     map[string]*Workspace
-	order          []string // preserves creation order for stable listing
-	templates      map[string]Template
-	defaultTimeout int
-	frameAncestors string // threaded into per-workspace terminal/lsp origin checks
-	allowedRoot    string // base dir under which new workspaces may be created ("" = no restriction)
-	canLead        func(username string) bool
+	mu              sync.RWMutex
+	workspaces      map[string]*Workspace
+	order           []string // preserves creation order for stable listing
+	templates       map[string]Template
+	defaultTimeout  int
+	frameAncestors  string // threaded into per-workspace terminal/lsp origin checks
+	allowedRoot     string // base dir under which new workspaces may be created ("" = no restriction)
+	allowCustomDir  bool   // permit POST /api/workspaces from an arbitrary path
+	canLead         func(username string) bool
 	visibleTabTypes map[string]bool // global visible tab types from config
 }
 
 // Template is a configured workspace blueprint. Sessions are created from it.
 type Template struct {
-	Name            string            `json:"name"`
-	Path            string            `json:"path"`
-	TimeoutSecs     int               `json:"timeout_secs"`
-	LSP             []string          `json:"lsp,omitempty"`
-	VisibleTabTypes map[string]bool   `json:"visible_tab_types,omitempty"`
+	Name            string          `json:"name"`
+	Path            string          `json:"path"`
+	TimeoutSecs     int             `json:"timeout_secs"`
+	LSP             []string        `json:"lsp,omitempty"`
+	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
 }
 
 // SessionInfo is a snapshot of a running session for the picker/API.
@@ -377,6 +378,15 @@ func NewManager(frameAncestors, allowedRoot string) *Manager {
 		frameAncestors: frameAncestors,
 		allowedRoot:    allowedRoot,
 	}
+}
+
+// SetAllowCustomDirectory controls whether POST /api/workspaces may create a
+// workspace from an arbitrary path. Templates and the boot workspace are
+// unaffected.
+func (m *Manager) SetAllowCustomDirectory(allow bool) {
+	m.mu.Lock()
+	m.allowCustomDir = allow
+	m.mu.Unlock()
 }
 
 // SetDefaultTimeout sets the fallback idle timeout for new sessions.

@@ -18,12 +18,31 @@ interface WorkspaceErrorResponse {
 
 const URL_HASH_PREFIX = '#session/'
 const WORKSPACE_QUERY_KEY = 'workspace'
+const DIRECTORY_PREFIX = 'directory:'
+
+export interface CustomDirectoryParam {
+  path: string
+  name: string
+}
+
+// urlCustomDirectory reads ?workspace=directory:<path>&name=<name>. The
+// directory form is only acted on when the deployment enables custom
+// directories (workspace_allow_custom_directory).
+export function urlCustomDirectory(): CustomDirectoryParam | null {
+  const params = new URLSearchParams(window.location.search)
+  const value = params.get(WORKSPACE_QUERY_KEY) || ''
+  if (!value.startsWith(DIRECTORY_PREFIX)) return null
+  const path = value.slice(DIRECTORY_PREFIX.length)
+  if (!path) return null
+  return { path, name: params.get('name') || '' }
+}
 
 // Read the session ID from the URL query string (e.g. "?workspace=abc123"),
-// falling back to the legacy "#session/abc123" hash.
+// falling back to the legacy "#session/abc123" hash. Directory selectors are
+// not session IDs and are handled by urlCustomDirectory.
 function urlSessionId(): string | null {
   const q = new URLSearchParams(window.location.search).get(WORKSPACE_QUERY_KEY)
-  if (q) return q
+  if (q) return q.startsWith(DIRECTORY_PREFIX) ? null : q
   const hash = window.location.hash
   if (hash.startsWith(URL_HASH_PREFIX)) return hash.slice(URL_HASH_PREFIX.length)
   return null
@@ -33,8 +52,13 @@ function urlSessionId(): string | null {
 // The hash is left untouched (legacy links still work).
 function setUrlSessionId(id: string | null) {
   const params = new URLSearchParams(window.location.search)
-  if (id) params.set(WORKSPACE_QUERY_KEY, id)
-  else params.delete(WORKSPACE_QUERY_KEY)
+  if (id) {
+    params.set(WORKSPACE_QUERY_KEY, id)
+    params.delete('name')
+  } else {
+    params.delete(WORKSPACE_QUERY_KEY)
+    params.delete('name')
+  }
   const qs = params.toString()
   history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash)
 }
@@ -62,6 +86,9 @@ export function useWorkspaces(token: string | null | undefined, authFetch: AuthF
 
   const choose = useCallback((list: WorkspaceSummary[]) => {
     setActiveWorkspaceIdState((prev) => {
+      // A directory selector owns the initial choice; App creates or focuses
+      // that workspace after the list is ready.
+      if (urlCustomDirectory()) return null
       if (prev && list.some((r) => r.id === prev)) return prev
       const saved = savedSessionId()
       if (saved && list.some((r) => r.id === saved)) return saved
@@ -147,6 +174,9 @@ export function useWorkspaces(token: string | null | undefined, authFetch: AuthF
   // single session) so a refresh restores the same workspace.
   useEffect(() => {
     if (!token) return
+    // Keep the directory selector in the URL until App resolves it to a
+    // workspace ID; otherwise a null active ID would erase it on first load.
+    if (!activeWorkspaceId && urlCustomDirectory()) return
     setUrlSessionId(activeWorkspaceId)
   }, [token, activeWorkspaceId])
 

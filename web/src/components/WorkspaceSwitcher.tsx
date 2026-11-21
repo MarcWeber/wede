@@ -13,12 +13,14 @@ export interface WorkspaceSwitcherProps {
   // Controlled open state, used by Settings to keep the selector visible.
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  // Show the manual path entry. Gated by workspace_allow_custom_directory.
+  allowCustomDirectory?: boolean
 }
 
 // WorkspaceSwitcher shows the active workspace ("workspace") and lets you switch between
 // open workspaces or open a new one. Workspaces are the multi-workspace backbone: each is an
 // isolated workspace served by the same wede instance.
-export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inline = false, label, open: controlledOpen, onOpenChange }: WorkspaceSwitcherProps) {
+export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inline = false, label, open: controlledOpen, onOpenChange, allowCustomDirectory = false }: WorkspaceSwitcherProps) {
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
   const setOpen = useCallback((next: boolean) => {
@@ -94,12 +96,13 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inlin
             )}
           </div>
 
+          {allowCustomDirectory && (
           <div className="border-t border-border mt-1 pt-1">
             {!adding ? (
               <button
                 onClick={() => setAdding(true)}
                 className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors">
-                <Plus className="w-3.5 h-3.5" /> New workspace…
+                <Plus className="w-3.5 h-3.5" /> Custom directory…
               </button>
             ) : (
               <div className="p-1.5 space-y-1.5">
@@ -133,6 +136,7 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inlin
               </div>
             )}
           </div>
+          )}
         </div>
       )}
     </div>
