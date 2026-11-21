@@ -54,7 +54,7 @@ export default function ViewTabs({ tabs, active, lockedIds, dropActive = false, 
       onToggleLock={onToggleLock}
       onSetViewMode={onSetViewMode}
       onReorder={onReorder}
-      onDragAway={onDragAway ?? ((id) => onClose(id))}
+      onDragAway={onDragAway}
       onDragDetach={onDragDetach}
       onDropViewMode={onDropViewMode}
       onDragCancelViewMode={onDragCancelViewMode}

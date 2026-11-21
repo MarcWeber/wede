@@ -85,9 +85,11 @@ export function useRowMenu(
 
   const openMenu = (x: number, y: number) => {
     openedAt.current = performance.now()
+    // Offset menu +20px down so it doesn't overlap the pointer/finger
+    const menuY = y + 20
     setPos({
       x: Math.max(8, Math.min(x, window.innerWidth - 220)),
-      y: Math.max(8, Math.min(y, window.innerHeight - 260)),
+      y: Math.max(8, Math.min(menuY, window.innerHeight - 260)),
     })
   }
 
@@ -438,18 +440,9 @@ export interface SelectableProps {
   onKeyDown?: (e: ReactKeyboardEvent<HTMLDivElement>) => void
   onMiddleClick?: () => void
   tone?: Tone
-  // Pointer-based reordering (desktop mouse). Drag a tab onto another tab to
-  // move it; drop it outside any target to fire onDragAway (float it).
+  // Drag ID for the gesture-based drag system (DragHint). The actual drag
+  // reorder/drag-away/drop logic is handled by the action list, not here.
   dragId?: string
-  onReorder?: (from: string, to: string) => void
-  onDragAway?: (id: string, at: { x: number; y: number }) => void
-  onDragDetach?: (id: string) => void
-  onDropViewMode?: (id: string, mode: string, nearId?: string, after?: boolean) => void
-  onDragCancelViewMode?: () => void
-  detachAbove?: boolean
-  dragAnyDirection?: boolean
-  verticalDownDrag?: boolean
-  onDragStateChange?: (id: string | null) => void
   // Native HTML5 drag-and-drop (kept for the legacy editor tab strip).
   draggable?: boolean
   onDragStart?: (e: ReactDragEvent<HTMLDivElement>) => void
@@ -467,17 +460,15 @@ export default function Selectable({
   checked, locked, onToggle, onActivate, onDoubleClick,
   menu = [], className = '', style, label,
   tabIndex, itemRef, onKeyDown, onMiddleClick, tone,
-  dragId, onReorder, onDragAway, onDragDetach, onDropViewMode, onDragCancelViewMode, detachAbove, dragAnyDirection, verticalDownDrag, onDragStateChange,
+  dragId,
   draggable, onDragStart, onDragOver, onDrop, onDragEnd, children,
 }: SelectableProps) {
   const group = useContext(SelectModeContext)
-  const [dragging, setDragging] = useState(false)
-  const suppressClick = useRef(false)
   const toneKey: Tone = tone || 'yellow'
   const selectedStyle = checked
     ? { backgroundColor: `color-mix(in srgb, var(${TONE_VAR[toneKey]}) 30%, transparent)` }
     : undefined
-  const { bind, openMenu, consumeLongPress, consumeSwipe, cancelLongPress, menuNode } = useRowMenu(menu, {
+  const { bind, openMenu, consumeLongPress, consumeSwipe, menuNode } = useRowMenu(menu, {
     onLongPress: (x, y) => {
       if (!group) { openMenu(x, y); return }
       if (group.mode === 'normal') {
@@ -498,106 +489,12 @@ export default function Selectable({
     onMenuClose: () => { if (group) group.setMode(group.selectedCount > 0 ? 'selecting' : 'normal') },
   })
 
-  const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    suppressClick.current = false
-    bind.onPointerDown(e)
-    if (!dragId || !onReorder) return
-    if (group?.mode === 'menu') return
-    // Drag reorder works only in selecting (edit) mode so swipe scrolling
-    // works normally. In normal mode the browser handles all touch gestures.
-    if (group?.mode !== 'selecting') return
-    const root = e.currentTarget
-    const groupEl = root.closest('[data-reorder-group]')
-    const startX = e.clientX
-    const startY = e.clientY
-    const groupRect = groupEl?.getBoundingClientRect()
-    const dragThreshold = e.pointerType === 'touch' ? 20 : 12
-    let active = false
-    let detached = false
-    let overId: string | null = null
-    let dropNear: { id: string; after: boolean } | null = null
-
-    const move = (ev: PointerEvent) => {
-      if (!active) {
-        const dx = ev.clientX - startX
-        const dy = ev.clientY - startY
-        if (e.pointerType !== 'mouse' && group?.mode !== 'selecting' && !dragAnyDirection) {
-          const adx = Math.abs(dx), ady = Math.abs(dy)
-          if (verticalDownDrag) {
-            // Up is the multiline toggle, never a drag.
-            if (dy < 0 && ady >= dragThreshold) return
-            // A short down gesture is still the multiline swipe. A long down
-            // drag (>50px) starts moving/placing the tab.
-            if (dy > 0 && ady >= adx && ady <= 50) return
-            if (adx < dragThreshold && !(dy > 0 && ady > 50)) return
-          } else if (adx < dragThreshold || adx <= ady) {
-            return
-          }
-        } else if (Math.abs(dx) < dragThreshold && Math.abs(dy) < dragThreshold) return
-        active = true
-        onDragStateChange?.(dragId)
-        cancelLongPress()
-        setDragging(true)
-        suppressClick.current = true
-        document.body.style.cursor = 'grabbing'
-      }
-      ev.preventDefault()
-      if (!detached && groupRect) {
-        const leftGroup = ev.clientX < groupRect.left - 12 || ev.clientX > groupRect.right + 12
-        if (leftGroup || ev.clientY > groupRect.bottom + 12 || (detachAbove && ev.clientY < groupRect.top - 12)) {
-          detached = true
-          onDragDetach?.(dragId)
-        }
-      }
-      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
-      const row = el?.closest('[data-reorder-id]') as HTMLElement | null
-      const rowId = row?.dataset.reorderId ?? null
-      if (row && rowId && groupEl?.contains(row)) {
-        overId = rowId
-        dropNear = null
-      } else {
-        overId = null
-        const r = row?.getBoundingClientRect()
-        dropNear = rowId && r ? { id: rowId, after: ev.clientX > r.left + r.width / 2 } : null
-      }
-    }
-
-    const up = (ev: PointerEvent) => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
-      document.body.style.cursor = ''
-      setDragging(false)
-      if (!active) return
-      onDragStateChange?.(null)
-      // A tab that was dragged outside can be brought back in: prefer a tab
-      // under the pointer over the earlier "detached" state.
-      if (overId && overId !== dragId) {
-        onReorder?.(dragId, overId)
-        return
-      }
-      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
-      const dropMode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode') || null
-      if (dropMode) {
-        onDropViewMode?.(dragId, dropMode, dropNear?.id, dropNear?.after)
-        return
-      }
-      if (!overId && (group?.mode === 'selecting' || e.pointerType === 'mouse') && (!groupEl || !el || !groupEl.contains(el))) {
-        onDragAway?.(dragId, { x: ev.clientX, y: ev.clientY })
-      }
-    }
-
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', up)
-  }
-
   return (
     <div
       ref={itemRef}
       tabIndex={tabIndex}
       onKeyDown={onKeyDown}
-      onPointerDown={handlePointerDown}
+      onPointerDown={bind.onPointerDown}
       onPointerMove={bind.onPointerMove}
       onPointerUp={bind.onPointerUp}
       onPointerLeave={bind.onPointerLeave}
@@ -614,17 +511,16 @@ export default function Selectable({
       aria-label={label}
       className={`no-callout relative select-none ${className}${
         checked ? ` ring-1 ring-inset ${TONE_RING[toneKey]}` : ''
-      }${dragging ? ' opacity-50' : ''}`}
+      }`}
       style={{
         // In selecting mode the row is a drag handle (touch included), so stop
         // the browser from turning the gesture into a scroll. In normal mode
-        // the browser handles swipe scrolling freely — drag reorder is disabled.
+        // the browser handles swipe scrolling freely.
         touchAction: group?.mode === 'selecting' ? 'none' : 'manipulation',
         ...selectedStyle,
         ...style,
       }}
       onClick={() => {
-        if (suppressClick.current) { suppressClick.current = false; return }
         if (consumeLongPress() || consumeSwipe()) return
         if (group && group.mode !== 'normal') { onToggle(); return }
         onActivate?.()

@@ -38,15 +38,17 @@ interface MenuRowProps {
 // files/search can reveal every tab other people have open with a left swipe.
 function MenuRow({ kind, icon: Icon, label, checked, onToggle, onSwipeRight, onSwipeLeft, hint, slim, disabled }: MenuRowProps) {
   const gestureActions = [
-    ...(onSwipeLeft ? [{ position: 'left' as const, label: 'All tabs' }] : []),
-    ...(onSwipeRight ? [{ position: 'right' as const, label: `Add ${label.toLowerCase()}` }] : []),
+    ...(onSwipeLeft ? [{ type: 'button' as const, position: 'left' as const, label: 'All tabs' }] : []),
+    ...(onSwipeRight ? [{ type: 'button' as const, position: 'right' as const, label: `Add ${label.toLowerCase()}` }] : []),
   ]
-  const { bind, overlay } = useDragHints({
+  const { bind, overlay, consumeAction } = useDragHints({
     actions: gestureActions,
     disabled,
     onAction: (action) => {
-      if (action.position === 'left') onSwipeLeft?.()
-      else if (action.position === 'right') onSwipeRight?.()
+      if (action.type === 'button' && typeof action.position === 'string') {
+        if (action.position === 'left') onSwipeLeft?.()
+        else if (action.position === 'right') onSwipeRight?.()
+      }
     },
   })
   const tone = toneForView(kind || 'files')
@@ -60,7 +62,7 @@ function MenuRow({ kind, icon: Icon, label, checked, onToggle, onSwipeRight, onS
       aria-label={label}
       title={slim ? label : undefined}
       tabIndex={disabled ? -1 : 0}
-      onClick={() => { if (disabled) return; onToggle() }}
+      onClick={() => { if (disabled) return; if (consumeAction()) return; onToggle() }}
       onKeyDown={(e) => {
         if (disabled) return
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() }

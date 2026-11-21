@@ -2492,8 +2492,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
           active={active?.id ?? ''}
           lockedIds={lockedShells}
           size="small"
-          detachAbove
-          dragAnyDirection
           dropMode={stripDropMode}
           dropActive={!!modeDrag}
           className="shrink-0"

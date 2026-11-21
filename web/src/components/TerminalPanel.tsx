@@ -134,8 +134,6 @@ export default function TerminalPanel({ token, workspaceId, term, visible, isFul
                 label={`Select ${t.name}`}
                 tone="green"
                 dragId={String(t.id)}
-                onReorder={(from, to) => reorderTerminals(Number(from), Number(to))}
-                onDragAway={(id) => closeTerminal(Number(id))}
                 className={`flex items-center gap-1.5 pl-1 pr-2 h-full min-w-[88px] text-[12px] font-medium border-r border-border shrink-0 cursor-pointer transition-colors ${TONE_WEAK.green} ${
                   isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
                 }`}

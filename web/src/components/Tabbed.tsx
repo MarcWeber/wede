@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Lock, Unlock } from 'lucide-react'
 import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
 import { TONE_WEAK, TONE_VAR, toneForView, VIEW_MODES, type ViewMode } from '../lib/viewTypes'
-import { useDragHints, type DragHintAction } from './DragHint'
+import { useDragHints, offset_pos, type DragHintAction, type DragEndInfo } from './DragHint'
 
 export interface TabbedItem {
   id: string
@@ -19,8 +19,6 @@ export interface TabbedProps {
   lockedIds?: string[]
   size?: 'normal' | 'small'
   multilineSwipe?: boolean
-  detachAbove?: boolean
-  dragAnyDirection?: boolean
   dropMode?: string
   dropActive?: boolean
   className?: string
@@ -41,7 +39,7 @@ export interface TabbedProps {
 // Tabbed — one reusable tab strip for the main center container and for each
 // dock area. `small` keeps the same behavior but takes less room.
 export default function Tabbed({
-  tabs, active, lockedIds = [], size = 'normal', multilineSwipe = false, detachAbove = false, dragAnyDirection = false, dropMode, dropActive = false, className = '', onBackgroundPointerDown,
+  tabs, active, lockedIds = [], size = 'normal', multilineSwipe = false, dropMode, dropActive = false, className = '', onBackgroundPointerDown,
   onActivate, onClose, onCloseSelected, onToggleLock, onSetViewMode,
   onReorder, onDragAway, onDragDetach, onDropViewMode, onDragCancelViewMode,
   onCopyLocation,
@@ -67,10 +65,45 @@ export default function Tabbed({
   }, [active, tabs, multiline])
 
   const gestureActions: DragHintAction[] = [
-    ...(multilineSwipe ? [{ position: 'top' as const, label: multiline ? 'Collapse tabs' : 'Expand tabs' }] : []),
-    { position: 'top-right', label: 'Close tab' },
-    { position: 'bottom', label: 'Tab menu' },
+    // Mouse-only: horizontal drag scrolls the strip
+    { type: 'chosen_by_mouse', position: (_dx, dy) => Math.abs(dy) < 25, label: 'Scroll', passive: true },
+    // Top: expand/collapse tabs
+    ...(multilineSwipe ? [{ type: 'button' as const, position: offset_pos('top'), label: multiline ? 'Collapse tabs' : 'Expand tabs' }] : []),
+    // Top-right: close tab
+    { type: 'button' as const, position: offset_pos('top-right'), label: 'Close tab' },
+    // Bottom-left: cancel selection
+    { type: 'button' as const, position: offset_pos('bottom-left'), label: 'Cancel' },
+    // Bottom: tab menu
+    { type: 'button' as const, position: offset_pos('bottom'), label: 'Tab menu' },
+    // Rest: start drag&drop
+    { type: 'rest' as const, label: 'Drag' },
   ]
+  const handleDragEnd = useCallback((info: DragEndInfo) => {
+    const tabEl = info.target?.closest('[data-reorder-id]') as HTMLElement | null
+    const tabId = tabEl?.dataset.reorderId ?? null
+    if (!tabId) return
+
+    // Reorder: dropped on another tab within the same group
+    if (info.dropReorderId && info.dropReorderId !== tabId) {
+      onReorder?.(tabId, info.dropReorderId)
+      return
+    }
+
+    // Drop into a view mode area (dock slot, center, etc.)
+    const dropModeEl = info.dropTarget?.closest('[data-drop-mode]') as HTMLElement | null
+    if (dropModeEl) {
+      const mode = dropModeEl.getAttribute('data-drop-mode') || 'center'
+      onDropViewMode?.(tabId, mode)
+      return
+    }
+
+    // Drag away: dropped outside the tab strip — float it
+    if (info.outsideGroup) {
+      onDragAway?.(tabId, { x: info.clientX, y: info.clientY })
+      return
+    }
+  }, [onReorder, onDropViewMode, onDragAway])
+
   const { bind: gestureBind, overlay: gestureOverlay } = useDragHints({
     actions: gestureActions,
     disabled: tabs.length === 0,
@@ -78,25 +111,40 @@ export default function Tabbed({
       const group = info.target?.closest('[data-reorder-group]') as HTMLElement | null
       if (group) group.scrollLeft -= dx
     },
+    onDragEnd: handleDragEnd,
     onAction: (action, info) => {
       const tabEl = info.target?.closest('[data-reorder-id]') as HTMLElement | null
       const tabId = tabEl?.dataset.reorderId ?? null
-      if (action.position === 'top') {
-        setMultiline((v) => !v)
+
+      if (action.type === 'chosen_by_mouse') {
+        // Horizontal scrolling is handled by onHorizontalDrag
         return
       }
-      if (action.position === 'top-right') {
-        if (tabId && !lockedIds.includes(tabId)) onClose(tabId)
-        return
-      }
-      if (action.position === 'bottom' && tabEl) {
-        tabEl.dispatchEvent(new MouseEvent('contextmenu', {
-          bubbles: true,
-          cancelable: true,
-          button: 2,
-          clientX: info.clientX,
-          clientY: info.clientY,
-        }))
+
+      if (action.type === 'button' && typeof action.position === 'string') {
+        if (action.position === 'top') {
+          setMultiline((v) => !v)
+          return
+        }
+        if (action.position === 'top-right') {
+          if (tabId && !lockedIds.includes(tabId)) onClose(tabId)
+          return
+        }
+        if (action.position === 'bottom-left') {
+          // Cancel selection mode
+          setSelected(new Set())
+          return
+        }
+        if (action.position === 'bottom' && tabEl) {
+          tabEl.dispatchEvent(new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            button: 2,
+            clientX: info.clientX,
+            clientY: info.clientY,
+          }))
+          return
+        }
       }
     },
   })
@@ -217,14 +265,6 @@ export default function Tabbed({
             label={`Select ${tab.ariaLabel ?? tab.label ?? tab.kind}`}
             tone={tone}
             dragId={tab.id}
-            onReorder={onReorder}
-            onDragAway={onDragAway}
-            onDragDetach={onDragDetach}
-            onDropViewMode={onDropViewMode}
-            onDragCancelViewMode={onDragCancelViewMode}
-            detachAbove={detachAbove}
-            dragAnyDirection={dragAnyDirection}
-            verticalDownDrag
             className={`flex items-center ${rowGap} ${rowPad} ${rowHeight} ${rowMin} border-r border-border shrink-0 select-none cursor-pointer transition-colors ${TONE_WEAK[tone]} ${
               isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
             }`}
