@@ -26,6 +26,7 @@ function WorkspaceDropdownContent({
   allowCustomDirectory, adding, setAdding,
   path, setPath, name, setName,
   error, create, busy, setError,
+  isLoading,
 }: {
   workspaces: WorkspaceSummary[]
   activeId: string | null
@@ -42,6 +43,7 @@ function WorkspaceDropdownContent({
   create: () => void
   busy: boolean
   setError: (v: string | null) => void
+  isLoading: boolean
 }) {
   return (
     <>
@@ -62,7 +64,7 @@ function WorkspaceDropdownContent({
           </button>
         ))}
         {workspaces.length === 0 && (
-          <div className="px-2 py-2 text-[11px] text-text-muted">No workspaces yet</div>
+          <div className="px-2 py-2 text-[11px] text-text-muted">{isLoading ? 'Loading…' : 'No workspaces yet'}</div>
         )}
       </div>
 
@@ -132,7 +134,25 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inlin
   const workspaces = workspacesApi?.workspaces || []
   const activeId = workspacesApi?.activeWorkspaceId
   const active = workspaces.find((r) => r.id === activeId)
-  const isLoading = workspacesApi?.loading === true && workspaces.length === 0
+  const hasWorkspaces = workspaces.length > 0
+  const loading = workspacesApi?.loading === true
+
+  // Auto-open the dropdown once when workspaces first load but none is active,
+  // so the user is prompted to pick one. A ref tracks whether we already fired
+  // to avoid re-opening on every re-render.
+  const autoOpened = useRef(false)
+  useEffect(() => {
+    if (inline) return
+    if (!loading && hasWorkspaces && !activeId && !autoOpened.current) {
+      autoOpened.current = true
+      setInternalOpen(true)
+    }
+    // Reset the flag when a workspace becomes active so a later null-ID
+    // (e.g. workspace closed) can trigger the prompt again.
+    if (activeId) {
+      autoOpened.current = false
+    }
+  }, [loading, hasWorkspaces, activeId, inline])
 
   // Position the portal dropdown near the trigger button.
   useEffect(() => {
@@ -198,8 +218,8 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inlin
         className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors ${inline ? 'w-full justify-center border border-border' : ''}`}
         title="Switch workspace">
         <Boxes className="w-3.5 h-3.5 text-accent" />
-        <span className="max-w-32 truncate font-medium">
-          {label || (isLoading ? 'Loading…' : active ? active.name : workspaces.length > 0 ? 'Select workspace' : 'No workspaces')}
+        <span className="max-w-48 truncate font-medium">
+          {label || (active ? active.name : 'Select workspace')}
         </span>
         <ChevronDown className="w-3 h-3 opacity-60" />
       </button>
@@ -211,6 +231,7 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inlin
             allowCustomDirectory={allowCustomDirectory} adding={adding} setAdding={setAdding}
             path={path} setPath={setPath} name={name} setName={setName}
             error={error} create={create} busy={busy} setError={setError}
+            isLoading={loading && !hasWorkspaces}
           />
         </div>
       ) : createPortal(
@@ -222,6 +243,7 @@ export default function WorkspaceSwitcher({ workspacesApi, menuUp = false, inlin
             allowCustomDirectory={allowCustomDirectory} adding={adding} setAdding={setAdding}
             path={path} setPath={setPath} name={name} setName={setName}
             error={error} create={create} busy={busy} setError={setError}
+            isLoading={loading && !hasWorkspaces}
           />
         </div>,
         document.body
