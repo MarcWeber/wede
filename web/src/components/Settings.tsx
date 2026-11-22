@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, Info, Minus, Plus, Check, User, ShieldCheck, Monitor } from 'lucide-react'
+import { FolderOpen, Info, Minus, Plus, Check, User, ShieldCheck, Monitor, Boxes } from 'lucide-react'
 import TunnelSettings from './TunnelSettings'
 import WedeLocation from './WedeLocation'
+import WorkspaceSwitcher from './WorkspaceSwitcher'
 import type { AuthFetch, EditorSettings } from '../types'
 import type { UiOrientation, UiScale } from '../lib/uiScale'
+import type { useWorkspaces } from '../hooks/useWorkspaces'
 import { useMediaSettings, type ImageViewMode, type PdfViewMode } from '../lib/mediaSettings'
 import { Eye, EyeOff } from 'lucide-react'
 
@@ -32,9 +34,11 @@ interface SettingsProps {
   uiScale: UiScale
   onUiScaleChange: (scale: UiScale) => void
   uiOrientation: UiOrientation
+  workspacesApi: ReturnType<typeof useWorkspaces>
+  allowCustomDirectory?: boolean
 }
 
-export default function Settings({ visible, onClose, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation }: SettingsProps) {
+export default function Settings({ visible, onClose, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation, workspacesApi, allowCustomDirectory = false }: SettingsProps) {
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
   const [media, setMedia] = useMediaSettings()
@@ -383,12 +387,21 @@ export default function Settings({ visible, onClose, workspace, editorSettings, 
         {/* Workspace */}
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Workspace</h3>
-          <div className="bg-bg-primary border border-border rounded-lg p-3">
-            <div className="flex items-center gap-2 mb-3">
-              <FolderOpen className="w-4 h-4 text-yellow" />
-              <span className="text-xs text-text-secondary font-mono truncate flex-1">
-                {workspace || 'No folder open'}
-              </span>
+          <div className="space-y-2">
+            {workspacesApi && (
+              <WorkspaceSwitcher
+                workspacesApi={workspacesApi}
+                inline
+                allowCustomDirectory={allowCustomDirectory}
+              />
+            )}
+            <div className="bg-bg-primary border border-border rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <FolderOpen className="w-4 h-4 text-yellow shrink-0" />
+                <span className="text-xs text-text-secondary font-mono truncate flex-1">
+                  {workspace || 'No folder open'}
+                </span>
+              </div>
             </div>
           </div>
         </div>

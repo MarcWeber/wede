@@ -2458,6 +2458,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
             uiScale={uiScale}
             onUiScaleChange={updateUiScale}
             uiOrientation={uiOrientation}
+            workspacesApi={workspacesApi}
+            allowCustomDirectory={allowCustomDirectory}
           />
         )
     }

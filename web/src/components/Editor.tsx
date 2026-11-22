@@ -36,6 +36,7 @@ import { cpp } from '@codemirror/lang-cpp'
 import { java } from '@codemirror/lang-java'
 import { php } from '@codemirror/lang-php'
 import { yaml } from '@codemirror/lang-yaml'
+import { typst_lezer } from 'codemirror-lang-typst/lezer'
 import { StreamLanguage, type StreamParser } from '@codemirror/language'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { ruby } from '@codemirror/legacy-modes/mode/ruby'
@@ -72,6 +73,7 @@ const langMap: Record<string, LangFn> = {
   ini: sl(properties), cfg: sl(properties), conf: sl(properties), env: sl(properties), properties: sl(properties),
   swift: sl(swift), ps1: sl(powerShell), psm1: sl(powerShell),
   cs: sl(csharp), kt: sl(kotlin), kts: sl(kotlin), scala: sl(scala), sbt: sl(scala), m: sl(objectiveC),
+  typ: () => typst_lezer(),
 }
 
 function getLang(filename: string): Extension {

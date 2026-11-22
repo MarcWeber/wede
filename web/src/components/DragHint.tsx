@@ -749,9 +749,12 @@ export function useDragHints(opts: UseDragHintsOptions) {
       return
     }
 
-    // Horizontal touch is native strip scrolling. As with the mouse, it can
-    // still take over after a small drag, but never once tab-drag mode starts.
-    if (!s.tabDragMode && adx > 18 && is_x_scroll(dx, dy)) {
+    // Horizontal touch is native strip scrolling — only for reorderable tab
+    // strips.  Menu rows and other elements without a [data-reorder-group]
+    // should not be treated as horizontal scroll so that directional swipe
+    // buttons (e.g. "Add Terminal" on a right swipe) still fire.
+    const inReorderGroup = s.target?.closest('[data-reorder-group]') !== null
+    if (!s.tabDragMode && inReorderGroup && adx > 18 && is_x_scroll(dx, dy)) {
       s.scrolling = true
       s.position = null
       if (s.dragging) {
@@ -807,6 +810,18 @@ export function useDragHints(opts: UseDragHintsOptions) {
     touchRef.current = null
     setStateSync(null)
     if (!s || s.cancelled || !s.dragging) {
+      actionFired.current = false
+      return
+    }
+    // If this element has no swipe/drag actions at all (e.g. a plain menu row
+    // such as Help or Settings), a slight finger movement should not swallow the
+    // tap click — the user just intended to tap.
+    const o = optsRef.current
+    const hasMeaningfulAction =
+      o.actions.some((a) => a.type === 'button' && actionAvailable(a, o.mode)) ||
+      o.actions.some((a) => a.type === 'rest' && actionAvailable(a, o.mode)) ||
+      !!o.onDragEnd
+    if (!hasMeaningfulAction) {
       actionFired.current = false
       return
     }

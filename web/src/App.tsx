@@ -117,9 +117,14 @@ function App() {
     )
   }
 
-  // After sign-in: join an existing session or create one from a template. A
-  // single active session is selected automatically by useWorkspaces.
-  if (!workspacesApi.activeWorkspaceId) {
+  // After sign-in: if there are sessions or templates but no workspace selected
+  // yet, still render the IDE so the WorkspaceSwitcher in the hamburger menu can
+  // be used to pick one.  Fall back to the Login workspace picker only when there
+  // are truly no sessions and no templates to choose from.
+  const hasSessions = workspacesApi.sessions.length > 0
+  const hasTemplates = workspacesApi.templates.length > 0
+
+  if (!workspacesApi.activeWorkspaceId && !hasSessions && !hasTemplates) {
     return (
       <Login
         onLogin={login}
