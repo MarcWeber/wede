@@ -2272,6 +2272,31 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     )
   }
 
+  // Literal bottom-left / bottom-right drop handles. These sit inside the
+  // container body so they work the same for the main container, nested
+  // containers, and floating containers.
+  const cornerDropSlot = (parentKey: string | null, side: 'docked-left' | 'docked-right') => {
+    const label = side === 'docked-left' ? 'Left' : 'Right'
+    const pos = side === 'docked-left' ? 'bottom-2 left-2' : 'bottom-2 right-2'
+    return (
+      <div
+        key={`${parentKey ?? 'root'}-${side}-corner`}
+        data-drop-mode={parentKey ? `slot:${parentKey}#${side}` : side}
+        data-drop-corner={side === 'docked-left' ? 'left' : 'right'}
+        className={`absolute z-30 w-14 h-14 rounded-lg border border-dashed border-border/70 bg-bg-elevated/85 flex items-center justify-center text-[9px] font-semibold text-text-muted/80 hover:border-accent hover:bg-accent/20 hover:text-text-primary transition-colors ${pos}`}
+        title={`Dock ${label.toLowerCase()} in this container`}>
+        {label}
+      </div>
+    )
+  }
+
+  const cornerDropSlots = (parentKey: string | null) => (
+    <>
+      {cornerDropSlot(parentKey, 'docked-left')}
+      {cornerDropSlot(parentKey, 'docked-right')}
+    </>
+  )
+
   // One renderer per flat shell tab. Every tab fills the same content area;
   // there are no nested tab strips inside a view.
   const renderEntry = (e: ShellEntry): ReactNode => {
@@ -2351,6 +2376,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         const sideWidth = (side: 'left' | 'right') => ({ width: `${dockSizes[side]}%` })
         return (
           <div className="h-full flex flex-col bg-bg-primary relative">
+            {modeDrag && cornerDropSlots(ckey)}
             <Tabbed
               tabs={stripTabs}
               active={stripActive}
@@ -2661,6 +2687,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
 
         {/* Content area: center tab + always-visible docked panes + floats. */}
         <div className="flex-1 min-h-0 relative bg-bg-primary" data-dock-area>
+          {modeDrag && cornerDropSlots(null)}
           {entries.length === 0 && (
             <div className="h-full flex items-center justify-center px-6 text-center text-text-muted">
               <span className="text-[12px]">open the hamburger menu in the corner to open files</span>

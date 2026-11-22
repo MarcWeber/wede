@@ -10,7 +10,8 @@ function point(x: number, y: number) {
 async function swipeUpRight(page: Page, x: number, y: number) {
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: point(x, y) })
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: point(x + 64, y - 40) })
+  // Stay inside the 2*D directional-button cap.
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: point(x + 28, y - 28) })
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
 }
 

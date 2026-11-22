@@ -6,6 +6,8 @@ import React, {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { detectSwipe, type SwipeDirection } from '../lib/swipe'
+import { fit_translation, is_x_scroll, TAB_DRAG_THRESHOLD, toward_center_translation } from '../lib/swipe-utilities'
+import { type D2, add, normalize, scale } from '../lib/2dspace'
 
 // ── DragHint: reusable action labels shown while dragging/swiping ────────────
 //
@@ -93,13 +95,23 @@ export interface DragEndInfo extends DragHintInfo {
 export interface UseDragHintsOptions {
   actions: DragHintAction[]
   onAction?: (action: DragHintAction, info: DragHintInfo) => void
-  onHorizontalDrag?: (dx: number, info: DragHintInfo) => void
+  onHorizontalDrag?: (dx: number, info: DragHintInfo) => boolean | void
+  onDragStart?: (info: DragHintInfo) => void
+  onDragCancel?: () => void
   // Called when the "rest" action fires on release — i.e. the user dragged
   // without hitting a directional button. Use it for drag-and-drop:
   // reorder tabs, float tabs, or drop into view modes.
   onDragEnd?: (info: DragEndInfo) => void
   triggerDistance?: number
+  // Rest drag only starts after this distance. Tabbed uses 3*D so a short
+  // directionless swipe does not reorder the strip.
+  restMinDistance?: number
+  // Optional cap for directional buttons. Past it the gesture is treated as a
+  // rest/drag instead of firing a button. Defaults to no cap (a row swipe must
+  // still fire after crossing the whole row). Tabbed caps at 2*D.
+  buttonMaxDistance?: number
   disabled?: boolean
+  mode?: string
 }
 
 export interface UseDragHintsResult {
@@ -128,9 +140,10 @@ interface GestureState {
   position: DragHintPosition | null
   target: Element | null
   pointerType: string
+  tabDragMode: boolean // true while the pointer is in tab-drag mode
 }
 
-const VECTORS: Record<DragHintPosition, [number, number]> = {
+const VECTORS: Record<DragHintPosition, D2> = {
   'top-left': [-1, -1],
   top: [0, -1],
   'top-right': [1, -1],
@@ -153,13 +166,12 @@ const DIRECTION_POSITION: Record<SwipeDirection, DragHintPosition> = {
   'down-right': 'bottom-right',
 }
 
-const LABEL_DISTANCE = 50
+const LABEL_DISTANCE = 50 // Distance from gesture start to labels
 const LABEL_HALF_WIDTH = 58
 const LABEL_HALF_HEIGHT = 16
 const DOT_HALF_SIZE = 5
-// Max drag distance for button-type action highlights. Beyond this, the drag
-// is considered "past" the button zone and buttons revert to their idle state.
-const MAX_TRIGGER_DISTANCE = 120
+// Max drag distance for tab-strip directional buttons is 2*D (see
+// swipe-utilities). Other DragHint users (menu rows) leave this uncapped.
 
 function clampPoint(x: number, y: number, halfW: number, halfH: number) {
   return {
@@ -173,118 +185,127 @@ function isMobile() {
   return window.innerWidth < 768 || window.innerHeight < 500
 }
 
-// Compute a translation vector toward the screen center for mobile devices.
-// When the drag starts at [0,0] relative to the drag origin, choose a direction
-// toward the center so the user can see the labels with their thumb.
-// For portrait mode: prefer y-axis (x=0, y=1)
-// For landscape mode: prefer x-axis (x=1, y=0)
-function mobileTranslationVector(dx: number, dy: number): [number, number] {
-  const cx = window.innerWidth / 2
-  const cy = window.innerHeight / 2
-  const isPortrait = window.innerHeight > window.innerWidth
+type Translation = D2
 
-  // Direction toward center from the drag point
-  let tx = cx - (dx > 0 ? dx : 0)
-  let ty = cy - (dy > 0 ? dy : 0)
-
-  // Normalize
-  const len = Math.hypot(tx, ty)
-  if (len === 0) {
-    // Default: toward center based on orientation
-    return isPortrait ? [0, 1] : [1, 0]
+// Compute the overlay shift once for the whole gesture. On touch the labels and
+// the red dot move together toward the screen centre. On desktop they move only
+// far enough to keep every button (and the dot) on screen.
+function overlay_translation(state: GestureState, actions: DragHintAction[], mode?: string): Translation {
+  const viewport = { width: window.innerWidth, height: window.innerHeight }
+  if (state.pointerType === 'touch' && isMobile()) {
+    const p = toward_center_translation({ x: state.startX, y: state.startY }, viewport, 60)
+    return [p.x, p.y]
   }
-  tx /= len
-  ty /= len
 
-  // Bias toward the preferred axis for readability
-  if (isPortrait) {
-    ty *= 1.5
-  } else {
-    tx *= 1.5
+  const points: Array<{ x: number; y: number; hw: number; hh: number }> = [
+    { x: state.x, y: state.y, hw: DOT_HALF_SIZE, hh: DOT_HALF_SIZE },
+  ]
+  if (!state.tabDragMode) {
+    for (const action of actions) {
+      if (action.type !== 'button' || !actionAvailable(action, mode)) continue
+      const p = add([state.startX, state.startY], scale(normalize(VECTORS[action.position]), LABEL_DISTANCE))
+      points.push({
+        x: p[0],
+        y: p[1],
+        hw: LABEL_HALF_WIDTH,
+        hh: LABEL_HALF_HEIGHT,
+      })
+    }
   }
-  const biasedLen = Math.hypot(tx, ty)
-  return [tx / biasedLen, ty / biasedLen]
+  const bounds = points.reduce(
+    (b, p) => ({
+      left: Math.min(b.left, p.x - p.hw),
+      right: Math.max(b.right, p.x + p.hw),
+      top: Math.min(b.top, p.y - p.hh),
+      bottom: Math.max(b.bottom, p.y + p.hh),
+    }),
+    { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity },
+  )
+  const fit = fit_translation(bounds, viewport, 8)
+  return [fit.x, fit.y]
 }
 
-// On mobile, shift the dot slightly toward screen center so the finger
-// doesn't cover it. On desktop the dot stays exactly where the pointer is.
-function relocate(pointX: number, pointY: number, isTouch: boolean = false) {
-  if (!isTouch || !isMobile()) return { x: pointX, y: pointY }
-  const cx = window.innerWidth / 2
-  const cy = window.innerHeight / 2
-  const [tx, ty] = mobileTranslationVector(pointX - cx, pointY - cy)
-  return { x: pointX + tx * 60, y: pointY + ty * 60 }
+// Position a label around the gesture start point in a given direction.
+function hintPoint(startX: number, startY: number, position: DragHintPosition, translation: Translation) {
+  const p = add(add([startX, startY], scale(normalize(VECTORS[position]), LABEL_DISTANCE)), translation)
+  return clampPoint(p[0], p[1], LABEL_HALF_WIDTH, LABEL_HALF_HEIGHT)
 }
 
-function hintPoint(state: GestureState, position: DragHintPosition) {
-  const [vx, vy] = VECTORS[position]
-  const len = Math.hypot(vx, vy) || 1
-  const baseX = state.startX + (vx / len) * LABEL_DISTANCE
-  const baseY = state.startY + (vy / len) * LABEL_DISTANCE
-  const isTouch = state.pointerType === 'touch'
-  const point = relocate(baseX, baseY, isTouch)
-  return clampPoint(point.x, point.y, LABEL_HALF_WIDTH, LABEL_HALF_HEIGHT)
+// Position the red dot at the current pointer plus the overlay translation.
+function dotPoint(x: number, y: number, translation: Translation) {
+  return clampPoint(x + translation[0], y + translation[1], DOT_HALF_SIZE, DOT_HALF_SIZE)
 }
 
-function dotPoint(state: GestureState) {
-  const isTouch = state.pointerType === 'touch'
-  const point = relocate(state.x, state.y, isTouch)
-  return clampPoint(point.x, point.y, DOT_HALF_SIZE, DOT_HALF_SIZE)
+// Check if an action is available in the current mode.
+function actionAvailable(action: DragHintAction, mode?: string): boolean {
+  if (!action.modes || action.modes.length === 0) return true
+  return mode ? action.modes.includes(mode) : true
 }
 
-// Find the first action in the list that matches the current drag state.
-// Order: chosen_by_mouse → button (directional) → rest (fallback).
-// Button actions always take priority over rest, even for left/right positions
-// (e.g., sidebar swipe-left uses button 'left' for "All tabs").
-function findActiveAction(state: GestureState, actions: DragHintAction[]): DragHintAction | null {
-  const dx = state.x - state.startX
-  const dy = state.y - state.startY
-
+// Find the first matching action: chosen_by_mouse → button → rest.
+function findActiveAction(
+  position: DragHintPosition | null,
+  dx: number,
+  dy: number,
+  pointerType: string,
+  actions: DragHintAction[],
+  mode?: string,
+  tabDrag = false,
+): DragHintAction | null {
   // 1. Mouse-only predicate actions
-  for (const action of actions) {
-    if (action.type === 'chosen_by_mouse') {
-      if (state.pointerType === 'mouse' && typeof action.position === 'function' && action.position(dx, dy)) {
-        return action
+  if (!tabDrag && pointerType === 'mouse') {
+    for (const a of actions) {
+      if (
+        a.type === 'chosen_by_mouse' &&
+        actionAvailable(a, mode) &&
+        typeof a.position === 'function' &&
+        a.position(dx, dy)
+      ) {
+        return a
       }
     }
   }
-  // 2. Directional button actions — always checked before rest
-  for (const action of actions) {
-    if (action.type === 'button' && typeof action.position === 'string' && state.position === action.position) {
-      return action
+  // 2. Directional button actions — always before rest
+  if (position) {
+    for (const a of actions) {
+      if (a.type === 'button' && actionAvailable(a, mode) && a.position === position) {
+        return a
+      }
     }
   }
-  // 3. Rest fallback — only when no button matched the current position
-  const restAction = actions.find((a) => a.type === 'rest')
-  if (restAction && state.position === null) return restAction
-
+  // 3. Rest fallback — only when no button matched
+  const restAction = actions.find((a) => a.type === 'rest' && actionAvailable(a, mode))
+  if (restAction && position === null) return restAction
   return null
 }
 
-// Compute label position from a base point (element center or gesture start)
-function labelPosition(baseX: number, baseY: number, position: DragHintPosition) {
-  const [vx, vy] = VECTORS[position]
-  const len = Math.hypot(vx, vy) || 1
-  const baseXOff = baseX + (vx / len) * LABEL_DISTANCE
-  const baseYOff = baseY + (vy / len) * LABEL_DISTANCE
-  return clampPoint(baseXOff, baseYOff, LABEL_HALF_WIDTH, LABEL_HALF_HEIGHT)
-}
+function DragHintOverlay({
+  state,
+  actions,
+  mode,
+  restMinDistance = 0,
+  buttonMaxDistance = Infinity,
+}: {
+  state: GestureState | null
+  actions: DragHintAction[]
+  mode?: string
+  restMinDistance?: number
+  buttonMaxDistance?: number
+}) {
+  if (!state || actions.length === 0) return null
 
-function DragHintOverlay({ state, actions }: { state: GestureState | null; actions: DragHintAction[] }) {
-  if (actions.length === 0) return null
-  if (!state) return null
+  const dragDistance = Math.hypot(state.x - state.startX, state.y - state.startY)
+  const translation = overlay_translation(state, actions, mode)
 
-  // Pointer event clientX/clientY are always in viewport coordinates, even
-  // inside a CSS-scaled container. Portal to <body> so the overlay uses
-  // viewport coordinates directly.
   return createPortal(
     <div className="fixed inset-0 z-[80] pointer-events-none overflow-hidden" aria-hidden>
-      {/* Show all action labels when dragging has started */}
-      {actions.map((action, i) => {
-        if (action.type === 'button' && typeof action.position === 'string' && action.label) {
-          const { x, y } = hintPoint(state, action.position)
-          const dragDistance = Math.hypot(state.x - state.startX, state.y - state.startY)
-          const isActive = state.position === action.position && dragDistance <= MAX_TRIGGER_DISTANCE
+      {/* Button-type action labels around gesture start */}
+      {!state.tabDragMode &&
+        actions.map((action, i) => {
+          if (action.type !== 'button' || typeof action.position !== 'string' || !action.label) return null
+          if (!actionAvailable(action, mode)) return null
+          const { x, y } = hintPoint(state.startX, state.startY, action.position, translation)
+          const isActive = state.position === action.position && dragDistance <= buttonMaxDistance
           return (
             <span
               key={`btn-${i}`}
@@ -298,50 +319,63 @@ function DragHintOverlay({ state, actions }: { state: GestureState | null; actio
               {action.label}
             </span>
           )
-        }
-        return null
-      })}
-      {/* Show the active action label for chosen_by_mouse and rest types */}
+        })}
+      {/* Active label for chosen_by_mouse and rest types */}
       {(() => {
-        const active = findActiveAction(state, actions)
-        if (!active) return null
-        const label = active.label || ''
+        const active = findActiveAction(
+          state.position,
+          state.x - state.startX,
+          state.y - state.startY,
+          state.pointerType,
+          actions,
+          mode,
+          state.tabDragMode,
+        )
+        if (!active || !active.label) return null
+        if (active.type === 'rest' && dragDistance < restMinDistance) return null
+        const dot = dotPoint(state.x, state.y, translation)
+        const { x, y } = clampPoint(dot.x, dot.y, LABEL_HALF_WIDTH, LABEL_HALF_HEIGHT)
         if (active.type === 'chosen_by_mouse') {
-          const { x, y } = clampPoint(state.x, state.y, LABEL_HALF_WIDTH, LABEL_HALF_HEIGHT)
           return (
             <span
               key="active"
               className="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-red-500 bg-red-500 px-2.5 py-1 text-[11px] font-medium text-white shadow-xl"
               style={{ left: x, top: y - 30 }}
             >
-              {label}
+              {active.label}
             </span>
           )
         }
         if (active.type === 'rest') {
-          const { x, y } = clampPoint(state.x, state.y, LABEL_HALF_WIDTH, LABEL_HALF_HEIGHT)
           return (
             <span
               key="active"
               className="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-red-500 bg-red-500 px-2.5 py-1 text-[11px] font-medium text-white shadow-xl"
               style={{ left: x, top: y + 30 }}
             >
-              {label}
+              {active.label}
             </span>
           )
         }
         return null
       })()}
       {/* Red dot at current pointer position */}
-      <span
-        data-testid="drag-hint-dot"
-        className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 ring-2 ring-white/80 shadow-lg"
-        style={{ ...dotPoint(state), width: 10, height: 10 }}
-      />
+      {(() => {
+        const { x, y } = dotPoint(state.x, state.y, translation)
+        return (
+          <span
+            data-testid="drag-hint-dot"
+            className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 ring-2 ring-white/80 shadow-lg"
+            style={{ left: x, top: y, width: 10, height: 10 }}
+          />
+        )
+      })()}
     </div>,
     document.body,
   )
 }
+
+// ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useDragHints(opts: UseDragHintsOptions) {
   const optsRef = useRef(opts)
@@ -371,214 +405,281 @@ export function useDragHints(opts: UseDragHintsOptions) {
     }, 80)
   }, [])
 
-  const runAction = useCallback((position: DragHintPosition | null, info: DragHintInfo) => {
-    // 1. Check for chosen_by_mouse action first (mouse-only)
-    if (info.pointerType === 'mouse') {
-      const mouseAction = optsRef.current.actions.find((a) => a.type === 'chosen_by_mouse')
-      if (mouseAction && typeof mouseAction.position === 'function') {
-        const isActive = mouseAction.position(info.dx, info.dy)
-        if (isActive) {
-          mouseAction.action?.()
-          optsRef.current.onAction?.(mouseAction, info)
-          return
+  const runAction = useCallback((position: DragHintPosition | null, info: DragHintInfo, tabDrag = false) => {
+    const o = optsRef.current
+    const currentMode = o.mode
+    const buttonMaxDistance = o.buttonMaxDistance ?? Infinity
+
+    // 1. chosen_by_mouse (mouse-only predicate). Never while tab-drag mode is
+    // active: the gesture has already become a drag & drop, so a horizontal
+    // final move must not swallow the drop.
+    if (!tabDrag && info.pointerType === 'mouse') {
+      const mouseAction = o.actions.find((a) => a.type === 'chosen_by_mouse' && actionAvailable(a, currentMode))
+      if (
+        mouseAction?.type === 'chosen_by_mouse' &&
+        typeof mouseAction.position === 'function' &&
+        mouseAction.position(info.dx, info.dy)
+      ) {
+        mouseAction.action?.()
+        o.onAction?.(mouseAction, info)
+        return
+      }
+    }
+    // 2. Directional button action — a matching button always wins, even if
+    // the pointer has left the strip (e.g. Close tab dragged upward).
+    // The release-point check below is only used for drag & drop.
+    const releaseEl = document.elementFromPoint(info.clientX, info.clientY) as HTMLElement | null
+    const releaseGroupEl = releaseEl?.closest('[data-reorder-group]') as HTMLElement | null
+    let releaseOutsideGroup = false
+    if (releaseGroupEl) {
+      const gr = releaseGroupEl.getBoundingClientRect()
+      releaseOutsideGroup =
+        info.clientX < gr.left - 12 ||
+        info.clientX > gr.right + 12 ||
+        info.clientY > gr.bottom + 12 ||
+        info.clientY < gr.top - 12
+    } else {
+      releaseOutsideGroup = true
+    }
+    const dragDistance = Math.hypot(info.dx, info.dy)
+    if (position && dragDistance <= buttonMaxDistance) {
+      const buttonAction = o.actions.find(
+        (a) => a.type === 'button' && actionAvailable(a, currentMode) && a.position === position,
+      )
+      if (buttonAction) {
+        if (!buttonAction.passive) {
+          buttonAction.action?.()
+          o.onAction?.(buttonAction, info)
         }
+        return
       }
     }
-    // 2. Check for directional button action — always before rest
-    const buttonAction = optsRef.current.actions.find((a) => a.type === 'button' && typeof a.position === 'string' && a.position === position)
-    if (buttonAction && position) {
-      if (!buttonAction.passive) {
-        buttonAction.action?.()
-        optsRef.current.onAction?.(buttonAction, info)
-      }
-      return
-    }
-    // 3. Rest fallback — only when no button matched (position is null)
-    if (!position) {
-      const restAction = optsRef.current.actions.find((a) => a.type === 'rest')
+    // 3. Rest fallback — drag & drop (when no button matched or outside group).
+    // A rest gesture is a real tab drag only after the tab-drag threshold.
+    if (Math.hypot(info.dx, info.dy) < (o.restMinDistance ?? 0)) return
+    {
+      const restAction = o.actions.find((a) => a.type === 'rest' && actionAvailable(a, currentMode))
       if (restAction) {
         restAction.action?.()
-        optsRef.current.onAction?.(restAction, info)
+        o.onAction?.(restAction, info)
       }
-      // If onDragEnd is configured, resolve what's under the pointer and call it
-      const opts = optsRef.current
-      if (opts.onDragEnd) {
-        const el = document.elementFromPoint(info.clientX, info.clientY) as HTMLElement | null
+      if (o.onDragEnd) {
+        const el = releaseEl
         const row = el?.closest('[data-reorder-id]') as HTMLElement | null
-        const groupEl = info.target?.closest('[data-reorder-group]') as HTMLElement | null
         const dropReorderId = row?.dataset.reorderId ?? null
-        let outsideGroup = false
-        if (groupEl && el) {
-          const gr = groupEl.getBoundingClientRect()
-          outsideGroup = info.clientX < gr.left - 12 || info.clientX > gr.right + 12
-            || info.clientY > gr.bottom + 12 || info.clientY < gr.top - 12
-        }
-        opts.onDragEnd({
+        o.onDragEnd({
           ...info,
           dropTarget: el,
           dropReorderId,
-          outsideGroup,
+          outsideGroup: releaseOutsideGroup,
         })
       }
-      return
     }
   }, [])
 
-  const onPointerDown = useCallback((e: ReactPointerEvent) => {
-    if (e.button !== 0) return
-    if (optsRef.current.disabled) return
-    // Touch is handled by touch events: browsers may cancel pointer events as
-    // soon as they decide the gesture is a pan, which would lose the swipe.
-    if (e.pointerType === 'touch') return
-    actionFired.current = false
-    const target = e.target instanceof Element ? e.target : null
-    if (target?.closest('[data-drag-hint-ignore]')) return
+  // ── Mouse pointer events ─────────────────────────────────────────────────
 
-    const startX = e.clientX
-    const startY = e.clientY
-    const pointerId = e.pointerId
-    const pointerType = e.pointerType
-    const triggerDistance = optsRef.current.triggerDistance ?? 15
-    let dragging = false
-    let scrolling = false
-    let activePosition: DragHintPosition | null = null
-    let lastX = startX
-    const resetEl = target?.closest('[data-reorder-id]') as HTMLElement | null
-    const insideResetEl = (x: number, y: number) => {
-      if (!resetEl) return true
-      const r = resetEl.getBoundingClientRect()
-      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
-    }
+  const onPointerDown = useCallback(
+    (e: ReactPointerEvent) => {
+      if (e.button !== 0 || optsRef.current.disabled) return
+      if (e.pointerType === 'touch') return // handled by touch events
+      actionFired.current = false
+      const target = e.target instanceof Element ? e.target : null
+      if (target?.closest('[data-drag-hint-ignore]')) return
 
-    const info = (ev: PointerEvent): DragHintInfo => ({
-      target,
-      dx: ev.clientX - startX,
-      dy: ev.clientY - startY,
-      clientX: ev.clientX,
-      clientY: ev.clientY,
-      pointerType,
-    })
+      const startX = e.clientX
+      const startY = e.clientY
+      const pointerId = e.pointerId
+      const pointerType = e.pointerType
+      const triggerDistance = optsRef.current.triggerDistance ?? 15
+      let dragging = false
+      let scrolling = false
+      let tabDragMode = false
+      let dragStarted = false
+      let cancelled = false
+      let activePosition: DragHintPosition | null = null
+      let lastX = startX
 
-    const cleanup = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onCancel)
-      cleanupRef.current = null
-    }
+      const info = (ev: PointerEvent): DragHintInfo => ({
+        target,
+        dx: ev.clientX - startX,
+        dy: ev.clientY - startY,
+        clientX: ev.clientX,
+        clientY: ev.clientY,
+        pointerType,
+      })
 
-    // Find the first chosen_by_mouse action whose predicate matches.
-    // This is the action "signaled" to the user — e.g. horizontal drag = Scroll.
-    const getActiveMouseAction = (dx: number, dy: number) => {
-      if (pointerType !== 'mouse') return null
-      for (const a of optsRef.current.actions) {
-        if (a.type === 'chosen_by_mouse' && typeof a.position === 'function' && a.position(dx, dy)) return a
+      const cleanup = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+        cleanupRef.current = null
       }
-      return null
-    }
 
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return
-      const dx = ev.clientX - startX
-      const dy = ev.clientY - startY
-      const adx = Math.abs(dx)
-      const ady = Math.abs(dy)
+      const getActiveMouseAction = (dx: number, dy: number) => {
+        if (pointerType !== 'mouse') return null
+        const currentMode = optsRef.current.mode
+        for (const a of optsRef.current.actions) {
+          if (
+            a.type === 'chosen_by_mouse' &&
+            actionAvailable(a, currentMode) &&
+            typeof a.position === 'function' &&
+            a.position(dx, dy)
+          )
+            return a
+        }
+        return null
+      }
 
-      if (!scrolling) {
-        // Check chosen_by_mouse first — it defines what horizontal drag means
-        // (e.g. scrolling). If it matches, use it as the scroll trigger.
-        // Scrolling takes priority over dragging so horizontal mouse drag
-        // always scrolls the strip, even if dragging was already activated.
-        const mouseAction = getActiveMouseAction(dx, dy)
+      const getActiveButtonAction = (position: DragHintPosition | null, distance: number) => {
+        if (!position || distance > (optsRef.current.buttonMaxDistance ?? Infinity)) return null
+        const currentMode = optsRef.current.mode
+        return (
+          optsRef.current.actions.find(
+            (a) => a.type === 'button' && actionAvailable(a, currentMode) && a.position === position,
+          ) ?? null
+        )
+      }
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId || cancelled) return
+        const dx = ev.clientX - startX
+        const dy = ev.clientY - startY
+        const adx = Math.abs(dx)
+        const distance = Math.hypot(dx, dy)
+
+        // Horizontal scroll wins until tab-drag mode starts. This is checked on
+        // every mouse move, not just the first one, so a slow drag cannot turn a
+        // scroll into a reorder by crossing 8px first.
         if (
-          mouseAction &&
+          !tabDragMode &&
           pointerType === 'mouse' &&
           optsRef.current.onHorizontalDrag &&
-          resetEl &&
-          insideResetEl(ev.clientX, ev.clientY) &&
-          adx > 18
+          adx > 18 &&
+          is_x_scroll(dx, dy)
         ) {
-          scrolling = true
-          lastX = ev.clientX
+          const mouseAction = getActiveMouseAction(dx, dy)
+          if (mouseAction) {
+            if (!scrolling) {
+              scrolling = true
+              lastX = ev.clientX
+              if (dragging) {
+                dragging = false
+                if (dragStarted) optsRef.current.onDragCancel?.()
+                dragStarted = false
+              }
+            }
+            const step = ev.clientX - lastX
+            lastX = ev.clientX
+            const handled = optsRef.current.onHorizontalDrag(step, info(ev))
+            ev.preventDefault()
+            if (handled === false) {
+              // The pointer left the strip: reset the whole gesture instead of
+              // letting it turn into a drop/reorder on release.
+              cancelled = true
+              scrolling = false
+              setStateSync(null)
+              return
+            }
+            setStateSync({
+              startX,
+              startY,
+              x: ev.clientX,
+              y: ev.clientY,
+              position: null,
+              target,
+              pointerType,
+              tabDragMode: false,
+            })
+            return
+          }
         }
-      }
 
-      if (!dragging && !scrolling && insideResetEl(ev.clientX, ev.clientY) && Math.hypot(dx, dy) >= 8) {
-        dragging = true
-      }
-
-      if (scrolling) {
-        // Leaving the tab resets the scroll gesture: re-entering must not apply
-        // the distance travelled while outside as a single scroll jump.
-        if (!insideResetEl(ev.clientX, ev.clientY)) {
-          scrolling = false
-          setStateSync(null)
-          return
+        if (!dragging && !scrolling && distance >= 8) {
+          dragging = true
         }
-        const step = ev.clientX - lastX
-        lastX = ev.clientX
-        optsRef.current.onHorizontalDrag?.(step, info(ev))
-        // Show the chosen_by_mouse label in the overlay so the user sees
-        // which action is being signaled.
+
+        if (!dragging) return
+
+        const swipe = detectSwipe(dx, dy, {
+          minDistance: triggerDistance,
+          diagonalMinDistance: triggerDistance,
+        })
+        activePosition = swipe ? DIRECTION_POSITION[swipe.direction] : null
+
+        // A directional button always wins. Tab-drag only starts when there is
+        // no action under the pointer, so dragging toward "Close tab" does not
+        // silently turn into a reorder at 60px.
+        if (!tabDragMode && !getActiveButtonAction(activePosition, distance) && distance >= TAB_DRAG_THRESHOLD) {
+          tabDragMode = true
+          dragStarted = true
+          optsRef.current.onDragStart?.(info(ev))
+        }
+
         setStateSync({
           startX,
           startY,
           x: ev.clientX,
           y: ev.clientY,
-          position: null,
+          position: tabDragMode ? null : activePosition,
           target,
           pointerType,
+          tabDragMode,
         })
-        ev.preventDefault()
-        return
+        if (pointerType === 'mouse') ev.preventDefault()
       }
 
-      if (!dragging) return
-
-      const swipe = detectSwipe(dx, dy, {
-        minDistance: triggerDistance,
-        diagonalMinDistance: triggerDistance,
-      })
-      activePosition = swipe ? DIRECTION_POSITION[swipe.direction] : null
-      setStateSync({
-        startX,
-        startY,
-        x: ev.clientX,
-        y: ev.clientY,
-        position: activePosition,
-        target,
-        pointerType,
-      })
-      // Only the mouse needs this; touch scrolling must stay native.
-      if (pointerType === 'mouse') ev.preventDefault()
-    }
-
-    const onUp = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return
-      cleanup()
-      const wasDragging = dragging || scrolling
-      setStateSync(null)
-      if (!wasDragging) {
-        actionFired.current = false
-        return
+      let handled = false
+      const onUp = (ev: PointerEvent | MouseEvent) => {
+        if (handled) return
+        if ('pointerId' in ev && ev.pointerId !== pointerId) return
+        handled = true
+        cleanup()
+        const wasDragging = dragging || scrolling
+        setStateSync(null)
+        if (cancelled) {
+          actionFired.current = false
+          return
+        }
+        if (!wasDragging) {
+          actionFired.current = false
+          return
+        }
+        swallowClick()
+        if (!scrolling) {
+          // Once tab-drag mode starts, direction buttons are no longer active;
+          // the release is a drag & drop operation.
+          const clientX = 'clientX' in ev ? ev.clientX : 0
+          const clientY = 'clientY' in ev ? ev.clientY : 0
+          runAction(tabDragMode ? null : activePosition, {
+            target,
+            dx: clientX - startX,
+            dy: clientY - startY,
+            clientX,
+            clientY,
+            pointerType,
+          }, tabDragMode)
+          actionFired.current = true
+        }
       }
-      swallowClick()
-      if (!scrolling) {
-        runAction(activePosition, info(ev))
-        actionFired.current = true
+
+      const onCancel = () => {
+        cleanup()
+        setStateSync(null)
+        if (dragStarted) optsRef.current.onDragCancel?.()
       }
-    }
 
-    const onCancel = () => {
-      cleanup()
-      setStateSync(null)
-    }
+      cleanupRef.current?.()
+      cleanupRef.current = cleanup
+      window.addEventListener('pointermove', onMove, { passive: false })
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('mouseup', onUp)
+      window.addEventListener('pointercancel', onCancel)
+    },
+    [runAction, swallowClick],
+  )
 
-    cleanupRef.current?.()
-    cleanupRef.current = cleanup
-    window.addEventListener('pointermove', onMove, { passive: false })
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onCancel)
-  }, [runAction, swallowClick])
+  // ── Touch events ─────────────────────────────────────────────────────────
 
   const touchRef = useRef<{
     startX: number
@@ -588,6 +689,9 @@ export function useDragHints(opts: UseDragHintsOptions) {
     target: Element | null
     dragging: boolean
     scrolling: boolean
+    tabDragMode: boolean
+    dragStarted: boolean
+    cancelled: boolean
     position: DragHintPosition | null
   } | null>(null)
 
@@ -605,6 +709,9 @@ export function useDragHints(opts: UseDragHintsOptions) {
       target,
       dragging: false,
       scrolling: false,
+      tabDragMode: false,
+      dragStarted: false,
+      cancelled: false,
       position: null,
     }
     setStateSync(null)
@@ -613,53 +720,85 @@ export function useDragHints(opts: UseDragHintsOptions) {
   const onTouchMove = useCallback((e: ReactTouchEvent) => {
     const s = touchRef.current
     const t = e.touches[0]
-    if (!s || !t) return
+    if (!s || !t || s.cancelled) return
     const dx = t.clientX - s.startX
     const dy = t.clientY - s.startY
     const adx = Math.abs(dx)
-    const ady = Math.abs(dy)
+    const distance = Math.hypot(dx, dy)
     s.x = t.clientX
     s.y = t.clientY
-    const resetEl = s.target?.closest('[data-reorder-id]') as HTMLElement | null
-    const insideResetEl = (x: number, y: number) => {
-      if (!resetEl) return true
-      const r = resetEl.getBoundingClientRect()
-      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
-    }
-    if (!s.dragging && !s.scrolling) {
-      if (Math.hypot(dx, dy) < 8) return
-      // Horizontal touch is native strip scrolling, not an action button.
-      if (resetEl && adx > 18 && adx > ady * 1.6) {
-        s.scrolling = true
-        s.position = null
-        setStateSync(null)
-        return
-      }
-      s.dragging = true
-    }
+
+    if (distance < 8 && !s.scrolling) return
+
     if (s.scrolling) {
-      if (!insideResetEl(t.clientX, t.clientY)) {
-        s.scrolling = false
-        s.startX = t.clientX
-        s.startY = t.clientY
-        s.dragging = false
+      // Leaving the strip resets the gesture instead of starting a drop.
+      const group = s.target?.closest('[data-reorder-group]') as HTMLElement | null
+      if (group) {
+        const r = group.getBoundingClientRect()
+        const inside = t.clientX >= r.left && t.clientX <= r.right && t.clientY >= r.top && t.clientY <= r.bottom
+        if (!inside) {
+          s.cancelled = true
+          s.scrolling = false
+          s.dragging = false
+          if (s.dragStarted) optsRef.current.onDragCancel?.()
+          setStateSync(null)
+          return
+        }
       }
       setStateSync(null)
       return
     }
+
+    // Horizontal touch is native strip scrolling. As with the mouse, it can
+    // still take over after a small drag, but never once tab-drag mode starts.
+    if (!s.tabDragMode && adx > 18 && is_x_scroll(dx, dy)) {
+      s.scrolling = true
+      s.position = null
+      if (s.dragging) {
+        s.dragging = false
+        if (s.dragStarted) optsRef.current.onDragCancel?.()
+        s.dragStarted = false
+      }
+      setStateSync(null)
+      return
+    }
+
+    if (!s.dragging) s.dragging = true
+
     const swipe = detectSwipe(dx, dy, {
       minDistance: optsRef.current.triggerDistance ?? 15,
       diagonalMinDistance: optsRef.current.triggerDistance ?? 15,
     })
     s.position = swipe ? DIRECTION_POSITION[swipe.direction] : null
+
+    const button =
+      s.position &&
+      distance <= (optsRef.current.buttonMaxDistance ?? Infinity) &&
+      optsRef.current.actions.find(
+        (a) => a.type === 'button' && actionAvailable(a, optsRef.current.mode) && a.position === s.position,
+      )
+    if (!s.tabDragMode && !button && distance >= TAB_DRAG_THRESHOLD) {
+      s.tabDragMode = true
+      s.dragStarted = true
+      optsRef.current.onDragStart?.({
+        target: s.target,
+        dx,
+        dy,
+        clientX: s.x,
+        clientY: s.y,
+        pointerType: 'touch',
+      })
+    }
+
     setStateSync({
       startX: s.startX,
       startY: s.startY,
       x: s.x,
       y: s.y,
-      position: s.position,
+      position: s.tabDragMode ? null : s.position,
       target: s.target,
       pointerType: 'touch',
+      tabDragMode: s.tabDragMode,
     })
   }, [])
 
@@ -667,31 +806,37 @@ export function useDragHints(opts: UseDragHintsOptions) {
     const s = touchRef.current
     touchRef.current = null
     setStateSync(null)
-    if (!s?.dragging) {
+    if (!s || s.cancelled || !s.dragging) {
       actionFired.current = false
       return
     }
     swallowClick()
-    runAction(s.position, {
+    // Tab-drag mode only moves the tab; direction buttons are disabled.
+    const pos = s.tabDragMode ? null : s.position
+    runAction(pos, {
       target: s.target,
       dx: s.x - s.startX,
       dy: s.y - s.startY,
       clientX: s.x,
       clientY: s.y,
       pointerType: 'touch',
-    })
+    }, s.tabDragMode)
     actionFired.current = true
   }, [runAction, swallowClick])
 
   const onTouchCancel = useCallback(() => {
+    const s = touchRef.current
     touchRef.current = null
     setStateSync(null)
+    if (s?.dragStarted) optsRef.current.onDragCancel?.()
   }, [])
 
-  const overlay = state ? <DragHintOverlay state={state} actions={opts.actions} /> : null
+  // ── Render ───────────────────────────────────────────────────────────────
 
-  // Expose whether a directional gesture is active (not scroll/rest).
-  // Other components should not start their own drag while this is true.
+  const overlay = state ? (
+    <DragHintOverlay state={state} actions={opts.actions} mode={opts.mode} restMinDistance={opts.restMinDistance} buttonMaxDistance={opts.buttonMaxDistance} />
+  ) : null
+
   const gestureActive = useCallback(() => {
     const s = stateRef.current
     if (!s || s.position === null) return false

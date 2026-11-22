@@ -21,7 +21,8 @@ test('mouse drag up-right shows the close label and closes the tab', async ({ we
   const y = box!.y + box!.height / 2
   await page.mouse.move(x, y)
   await page.mouse.down()
-  await page.mouse.move(x + 70, y - 50, { steps: 8 })
+  // Stay inside the 2*D button cap so release fires Close instead of a drag.
+  await page.mouse.move(x + 28, y - 28, { steps: 8 })
 
   await expect(page.getByText('Close tab')).toBeVisible()
   await expect(page.getByTestId('drag-hint-dot')).toBeVisible()
@@ -93,6 +94,115 @@ test('left swipe on Files lists tabs other people have open', async ({ page }) =
 })
 
 
+test('tab drag enters drop mode only past the threshold and docks in a corner', async ({ wede }) => {
+  const { page } = wede
+  await boot(page)
+
+  const tab = page.locator('[data-reorder-id]').first()
+  const box = await tab.boundingBox()
+  expect(box).not.toBeNull()
+  const x = box!.x + box!.width / 2
+  const y = box!.y + box!.height / 2
+
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+
+  // Inside the 2*D button cap and below 60px: still just a hint, not a tab drag.
+  await page.mouse.move(x + 25, y + 25, { steps: 5 })
+  await expect(page.locator('[data-drop-corner="left"]')).toHaveCount(0)
+  await expect(page.getByTestId('drag-hint-dot')).toBeVisible()
+
+  // Past 60px the tab detaches and the literal corner drop zones appear.
+  await page.mouse.move(x + 90, y + 90, { steps: 5 })
+  const left = page.locator('[data-drop-corner="left"]')
+  await expect(left).toBeVisible()
+  await expect(page.locator('[data-drop-corner="right"]')).toBeVisible()
+
+  const target = await left.boundingBox()
+  expect(target).not.toBeNull()
+  await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, { steps: 5 })
+  await page.mouse.up()
+
+  await expect(page.locator('[data-dock-side="left"]')).toBeVisible()
+  await expect(page.getByLabel('Select main.go').first()).toBeVisible()
+})
+
+test('tab dragged into the empty centre floats at the release point', async ({ wede }) => {
+  const { page } = wede
+  await boot(page)
+
+  const tab = page.locator('[data-reorder-id]').first()
+  const box = await tab.boundingBox()
+  expect(box).not.toBeNull()
+  const x = box!.x + box!.width / 2
+  const y = box!.y + box!.height / 2
+  const releaseX = x + 260
+  const releaseY = y + 190
+
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(releaseX, releaseY, { steps: 12 })
+  await page.mouse.up()
+
+  const float = page.locator('[data-float]').first()
+  await expect(float).toBeVisible()
+  const floatBox = await float.boundingBox()
+  expect(floatBox).not.toBeNull()
+  expect(Math.abs(floatBox!.x + floatBox!.width / 2 - releaseX)).toBeLessThan(80)
+  expect(Math.abs(floatBox!.y - releaseY)).toBeLessThan(80)
+})
+
+test('dragging straight down past the hint region floats instead of opening the tab menu', async ({ wede }) => {
+  const { page } = wede
+  await boot(page)
+
+  const tab = page.locator('[data-reorder-id]').first()
+  const box = await tab.boundingBox()
+  expect(box).not.toBeNull()
+  // Start near the tab's right edge so the release lands in the empty centre,
+  // not on the left dock strip that appears as soon as drop mode starts.
+  const x = box!.x + box!.width - 8
+  const y = box!.y + box!.height / 2
+
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x, y + 180, { steps: 12 })
+  await page.mouse.up()
+
+  await expect(page.locator('[data-float]').first()).toBeVisible()
+  await expect(page.getByText('Tab menu')).toHaveCount(0)
+})
+
+test('tab drag ending with a horizontal move still drops and clears drop mode', async ({ wede }) => {
+  const { page } = wede
+  await boot(page)
+
+  const tab = page.locator('[data-reorder-id]').first()
+  const box = await tab.boundingBox()
+  expect(box).not.toBeNull()
+  const x = box!.x + box!.width / 2
+  const y = box!.y + box!.height / 2
+
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+
+  // Start a tab drag (past the 2*D button cap and the tab-drag threshold).
+  await page.mouse.move(x, y + 130, { steps: 10 })
+  await expect(page.locator('[data-drop-corner="left"]')).toBeVisible()
+
+  // End with a horizontal move over another tab. This used to match the
+  // mouse-scroll predicate on release, swallowing the drop and leaving the
+  // drop zones stuck on screen.
+  await page.mouse.move(x + 100, y + 10, { steps: 6 })
+  await page.mouse.up()
+
+  await expect(page.locator('[data-drop-corner]')).toHaveCount(0)
+  await expect(page.locator('[data-drop-mode="docked-left"]')).toHaveCount(0)
+  await expect(page.locator('[data-drop-mode="docked-right"]')).toHaveCount(0)
+  await expect(page.locator('[data-drop-mode="docked-bottom"]')).toHaveCount(0)
+  await expect(page.getByTestId('drag-hint-dot')).toHaveCount(0)
+})
+
 test('gesture dot is relocated away from the pointer under UI scale', async ({ wede }) => {
   const { page } = wede
   await page.addInitScript(() => {
@@ -113,8 +223,8 @@ test('gesture dot is relocated away from the pointer under UI scale', async ({ w
   expect(box).not.toBeNull()
   const x = box!.x + box!.width / 2
   const y = box!.y + box!.height / 2
-  const px = x + 70
-  const py = y - 50
+  const px = x + 28
+  const py = y - 28
 
   await page.mouse.move(x, y)
   await page.mouse.down()

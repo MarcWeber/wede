@@ -3,7 +3,7 @@
  *
  *   - Search keeps its query when the user switches to a file and back.
  *   - A right swipe on the Files menu row adds a second Files tab.
- *   - Settings exposes Open Folder and API/Log/Chat are hidden by default.
+ *   - Settings exposes collaboration settings and API/Log/Chat are hidden by default.
  *   - Select all in the explorer includes directories, and Expand one level
  *     reveals their children.
  */
@@ -54,13 +54,13 @@ test('swiping the Files menu row adds a second Files tab', async ({ wede }) => {
   await expect(tabs).toHaveCount(2)
 })
 
-test('Settings keeps Open Folder and hides API/Log/Chat by default', async ({ wede }) => {
+test('Settings shows Collaboration and hides API/Log/Chat by default', async ({ wede }) => {
   const { page } = wede
   await boot(page)
 
   await page.getByRole('menuitemcheckbox', { name: 'Settings' }).click()
 
-  await expect(page.getByRole('button', { name: 'Open Folder' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open Folder' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Open Workspace' })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Collaboration' })).toBeVisible()
 

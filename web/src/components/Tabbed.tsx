@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Lock, Unlock } from 'lucide-react'
-import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
+import Selectable, { SelectableGroup, type MenuEntry, type SelectMode } from './Selectable'
 import { TONE_WEAK, TONE_VAR, toneForView, VIEW_MODES, type ViewMode } from '../lib/viewTypes'
 import { useDragHints, offset_pos, type DragHintAction, type DragEndInfo } from './DragHint'
+import { is_x_scroll, MAX_BUTTON_DISTANCE, TAB_DRAG_THRESHOLD } from '../lib/swipe-utilities'
 
 export interface TabbedItem {
   id: string
@@ -47,6 +48,7 @@ export default function Tabbed({
   const small = size === 'small'
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [multiline, setMultiline] = useState(false)
+  const [selectionMode, setSelectionMode] = useState<SelectMode>('normal')
   const [floatMenu, setFloatMenu] = useState<{ x: number; y: number; id: string; target: 'current' | 'selected' } | null>(null)
   const tabRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
@@ -65,14 +67,16 @@ export default function Tabbed({
   }, [active, tabs, multiline])
 
   const gestureActions: DragHintAction[] = [
-    // Mouse-only: horizontal drag scrolls the strip
-    { type: 'chosen_by_mouse', position: (_dx, dy) => Math.abs(dy) < 25, label: 'Scroll', passive: true },
+    // Mouse-only: horizontal drag scrolls the strip. Same predicate for touch,
+    // which scrolls the strip natively.
+    { type: 'chosen_by_mouse', position: (dx, dy) => is_x_scroll(dx, dy), label: 'Scroll', passive: true },
     // Top: expand/collapse tabs
     ...(multilineSwipe ? [{ type: 'button' as const, position: offset_pos('top'), label: multiline ? 'Collapse tabs' : 'Expand tabs' }] : []),
     // Top-right: close tab
     { type: 'button' as const, position: offset_pos('top-right'), label: 'Close tab' },
-    // Bottom-left: cancel selection
-    { type: 'button' as const, position: offset_pos('bottom-left'), label: 'Cancel' },
+    // Down-left / bottom-left: select the tab, or cancel while selecting.
+    { type: 'button' as const, position: offset_pos('bottom-left'), label: 'Cancel', modes: ['selecting'] },
+    { type: 'button' as const, position: offset_pos('bottom-left'), label: 'Select', modes: ['normal'] },
     // Bottom: tab menu
     { type: 'button' as const, position: offset_pos('bottom'), label: 'Tab menu' },
     // Rest: start drag&drop
@@ -86,6 +90,7 @@ export default function Tabbed({
     // Reorder: dropped on another tab within the same group
     if (info.dropReorderId && info.dropReorderId !== tabId) {
       onReorder?.(tabId, info.dropReorderId)
+      onDragCancelViewMode?.()
       return
     }
 
@@ -102,15 +107,30 @@ export default function Tabbed({
       onDragAway?.(tabId, { x: info.clientX, y: info.clientY })
       return
     }
-  }, [onReorder, onDropViewMode, onDragAway])
+    onDragCancelViewMode?.()
+  }, [onReorder, onDropViewMode, onDragAway, onDragCancelViewMode])
 
   const { bind: gestureBind, overlay: gestureOverlay } = useDragHints({
     actions: gestureActions,
+    mode: selectionMode,
     disabled: tabs.length === 0,
+    restMinDistance: TAB_DRAG_THRESHOLD,
+    buttonMaxDistance: MAX_BUTTON_DISTANCE,
     onHorizontalDrag: (dx, info) => {
       const group = info.target?.closest('[data-reorder-group]') as HTMLElement | null
-      if (group) group.scrollLeft -= dx
+      if (!group) return false
+      const r = group.getBoundingClientRect()
+      const inside = info.clientX >= r.left && info.clientX <= r.right
+        && info.clientY >= r.top && info.clientY <= r.bottom
+      if (!inside) return false
+      group.scrollLeft -= dx
+      return true
     },
+    onDragStart: (info) => {
+      const tabEl = info.target?.closest('[data-reorder-id]') as HTMLElement | null
+      if (tabEl?.dataset.reorderId) onDragDetach?.(tabEl.dataset.reorderId)
+    },
+    onDragCancel: () => onDragCancelViewMode?.(),
     onDragEnd: handleDragEnd,
     onAction: (action, info) => {
       const tabEl = info.target?.closest('[data-reorder-id]') as HTMLElement | null
@@ -124,18 +144,21 @@ export default function Tabbed({
       if (action.type === 'button' && typeof action.position === 'string') {
         if (action.position === 'top') {
           setMultiline((v) => !v)
-          return
-        }
-        if (action.position === 'top-right') {
+        } else if (action.position === 'top-right') {
           if (tabId && !lockedIds.includes(tabId)) onClose(tabId)
-          return
-        }
-        if (action.position === 'bottom-left') {
-          // Cancel selection mode
-          setSelected(new Set())
-          return
-        }
-        if (action.position === 'bottom' && tabEl) {
+        } else if (action.position === 'bottom-left') {
+          if (selectionMode === 'selecting') {
+            setSelected(new Set())
+            setSelectionMode('normal')
+          } else if (tabId) {
+            setSelected((prev) => {
+              const next = new Set(prev)
+              next.add(tabId)
+              return next
+            })
+            setSelectionMode('selecting')
+          }
+        } else if (action.position === 'bottom' && tabEl) {
           tabEl.dispatchEvent(new MouseEvent('contextmenu', {
             bubbles: true,
             cancelable: true,
@@ -143,8 +166,8 @@ export default function Tabbed({
             clientX: info.clientX,
             clientY: info.clientY,
           }))
-          return
         }
+        onDragCancelViewMode?.()
       }
     },
   })
@@ -196,7 +219,12 @@ export default function Tabbed({
         dropActive={dropActive}
         onBackgroundPointerDown={onBackgroundPointerDown}
         showMenuSelectMode
-        onCancelSelection={() => setSelected(new Set())}
+        mode={selectionMode}
+        onCancelSelection={() => {
+          setSelected(new Set())
+          setSelectionMode('normal')
+        }}
+        onModeChange={setSelectionMode}
       >
       {tabs.map((tab) => {
         const isActive = active === tab.id

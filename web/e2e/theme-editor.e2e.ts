@@ -19,12 +19,16 @@ test('editor background and text follow the theme contrast level', async ({ wede
   }
 
   const night = await read('1')
+  const highContrast = await read('3.5')
   const evening = await read('5')
   const day = await read('9')
 
   expect(night.background).toBe('rgb(0, 0, 0)')
+  expect(highContrast.background).toBe('rgb(0, 0, 0)')
+  expect(highContrast.color).toBe('rgb(255, 255, 255)')
   expect(evening.background).toBe('rgb(30, 30, 30)')
   expect(day.background).toBe('rgb(255, 255, 255)')
   expect(night.color).not.toBe(evening.color)
+  expect(highContrast.color).not.toBe(evening.color)
   expect(evening.color).not.toBe(day.color)
 })

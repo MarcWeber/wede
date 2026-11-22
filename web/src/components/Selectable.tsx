@@ -44,12 +44,12 @@ export function useRowMenu(
   opts: {
     swipe?: 'up' | 'left' | 'right'
     onSwipe?: () => void
-    onLongPress?: (x: number, y: number) => void
+    onLongPress?: (x: number, y: number, above?: boolean) => void
     onContextMenu?: () => void
     onMenuClose?: () => void
   } = {},
 ) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const [pos, setPos] = useState<{ x: number; y: number; above: boolean } | null>(null)
   const timer = useRef<number | null>(null)
   const longFired = useRef(false)
   const origin = useRef<{ x: number; y: number } | null>(null)
@@ -83,13 +83,16 @@ export function useRowMenu(
     prevPos.current = pos
   }, [pos]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openMenu = (x: number, y: number) => {
+  const openMenu = (x: number, y: number, above = false) => {
     openedAt.current = performance.now()
-    // Offset menu +20px down so it doesn't overlap the pointer/finger
-    const menuY = y + 20
+    // Mouse menus open just below the pointer. Touch menus open above the
+    // finger so the long-press point stays visible, unless there is no room.
+    const openAbove = above && y > 280
+    const menuY = openAbove ? y - 8 : y + 8
     setPos({
       x: Math.max(8, Math.min(x, window.innerWidth - 220)),
       y: Math.max(8, Math.min(menuY, window.innerHeight - 260)),
+      above: openAbove,
     })
   }
 
@@ -116,8 +119,8 @@ export function useRowMenu(
       if (items.length > 0 || opts.onLongPress) {
         timer.current = window.setTimeout(() => {
           longFired.current = true
-          if (opts.onLongPress) opts.onLongPress(pt.x, pt.y)
-          else openMenu(pt.x, pt.y)
+          if (opts.onLongPress) opts.onLongPress(pt.x, pt.y, e.pointerType === 'touch')
+          else openMenu(pt.x, pt.y, e.pointerType === 'touch')
         }, LONG_PRESS_MS)
       }
     },
@@ -163,15 +166,16 @@ export function useRowMenu(
         if (!longFired.current) {
           longFired.current = true
           clearTimer()
-          if (opts.onLongPress) opts.onLongPress(e.clientX, e.clientY)
-          else openMenu(e.clientX, e.clientY)
+          const above = (e.nativeEvent as PointerEvent).pointerType === 'touch'
+          if (opts.onLongPress) opts.onLongPress(e.clientX, e.clientY, above)
+          else openMenu(e.clientX, e.clientY, above)
         }
         return
       }
       clearTimer()
       if (longFired.current) return
       opts.onContextMenu?.()
-      openMenu(e.clientX, e.clientY)
+      openMenu(e.clientX, e.clientY, (e.nativeEvent as PointerEvent).pointerType === 'touch')
     },
   }
 
@@ -188,7 +192,7 @@ export function useRowMenu(
       />
       <div
         className="fixed z-50 bg-bg-elevated border border-border rounded-lg shadow-xl py-1 min-w-[200px]"
-        style={{ left: pos.x, top: pos.y }}
+        style={{ left: pos.x, top: pos.y, transform: pos.above ? 'translateY(-100%)' : undefined }}
       >
         {items.map((it) => {
           if (it.kind === 'separator') return <div key={it.key} className="my-1 border-t border-border" />
@@ -254,7 +258,7 @@ export function useRowMenu(
 //   menu      → the actions popup is open; closing returns to selecting
 // While selecting, the whole list gets a yellow dotted border.
 
-type SelectMode = 'normal' | 'selecting' | 'menu'
+export type SelectMode = 'normal' | 'selecting' | 'menu'
 
 interface SelectModeValue {
   mode: SelectMode
@@ -283,23 +287,22 @@ export interface SelectableGroupProps {
   onBackgroundPointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void
   dropMode?: string
   dropActive?: boolean
+  // Controlled selection mode. Omit for the normal long-press-driven behavior.
+  mode?: SelectMode
+  // Called when the selection mode changes (normal/selecting/menu).
+  // Use it to adjust gesture actions based on the current mode.
+  onModeChange?: (mode: SelectMode) => void
 }
 
-export function SelectableGroup({ children, className = '', style, selectedCount = 0, showMenuSelectMode = true, onCancelSelection, onTouchStart, onTouchMove, onTouchEnd, onTouchCancel, onBackgroundPointerDown, dropMode, dropActive = false }: SelectableGroupProps) {
-  const [mode, setMode] = useState<SelectMode>('normal')
+export function SelectableGroup({ children, className = '', style, selectedCount = 0, showMenuSelectMode = true, onCancelSelection, onTouchStart, onTouchMove, onTouchEnd, onTouchCancel, onBackgroundPointerDown, dropMode, dropActive = false, mode: controlledMode, onModeChange }: SelectableGroupProps) {
+  const [innerMode, setInnerMode] = useState<SelectMode>('normal')
+  const mode = controlledMode ?? innerMode
   const [cancelPos, setCancelPos] = useState<{ top: number; right: number } | null>(null)
   const groupRef = useRef<HTMLDivElement>(null)
   const prevCount = useRef(selectedCount)
   const onCancelRef = useRef(onCancelSelection)
 
   useEffect(() => { onCancelRef.current = onCancelSelection }, [onCancelSelection])
-
-  // Leave select mode when the last item is deselected (but not on the initial
-  // render, before the long-press has had a chance to select anything).
-  useEffect(() => {
-    if (prevCount.current > 0 && selectedCount === 0 && mode === 'selecting') setMode('normal')
-    prevCount.current = selectedCount
-  }, [selectedCount, mode])
 
   const updateCancelPos = useCallback(() => {
     const el = groupRef.current
@@ -311,15 +314,23 @@ export function SelectableGroup({ children, className = '', style, selectedCount
     })
   }, [])
 
-  const cancelSelection = useCallback(() => {
-    onCancelRef.current?.()
-    setMode('normal')
-  }, [])
-
   const enterMode = useCallback((next: SelectMode) => {
     if (next === 'selecting') updateCancelPos()
-    setMode(next)
-  }, [updateCancelPos])
+    if (controlledMode === undefined) setInnerMode(next)
+    onModeChange?.(next)
+  }, [controlledMode, updateCancelPos, onModeChange])
+
+  const cancelSelection = useCallback(() => {
+    onCancelRef.current?.()
+    enterMode('normal')
+  }, [enterMode])
+
+  // Leave select mode when the last item is deselected (but not on the initial
+  // render, before the long-press has had a chance to select anything).
+  useEffect(() => {
+    if (prevCount.current > 0 && selectedCount === 0 && mode === 'selecting') enterMode('normal')
+    prevCount.current = selectedCount
+  }, [selectedCount, mode, enterMode])
 
   useEffect(() => {
     if (mode !== 'selecting') return
@@ -469,15 +480,15 @@ export default function Selectable({
     ? { backgroundColor: `color-mix(in srgb, var(${TONE_VAR[toneKey]}) 30%, transparent)` }
     : undefined
   const { bind, openMenu, consumeLongPress, consumeSwipe, menuNode } = useRowMenu(menu, {
-    onLongPress: (x, y) => {
-      if (!group) { openMenu(x, y); return }
+    onLongPress: (x, y, above) => {
+      if (!group) { openMenu(x, y, above); return }
       if (group.mode === 'normal') {
         group.setMode('selecting')
         if (!checked) onToggle()
       } else if (group.mode === 'selecting') {
         if (menu.length > 0) {
           group.setMode('menu')
-          openMenu(x, y)
+          openMenu(x, y, above)
         } else {
           group.setMode('normal')
         }
