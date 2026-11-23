@@ -19,11 +19,12 @@ type WorkspaceProvider interface {
 }
 
 type Handler struct {
-	ws WorkspaceProvider
+	ws            WorkspaceProvider
+	hidePatterns  []string // glob patterns for hidden files/dirs
 }
 
-func New(ws WorkspaceProvider) *Handler {
-	return &Handler{ws: ws}
+func New(ws WorkspaceProvider, hidePatterns []string) *Handler {
+	return &Handler{ws: ws, hidePatterns: hidePatterns}
 }
 
 // treeSkipDirs are directories excluded from the Quick Open file index.
@@ -76,6 +77,19 @@ func isNoiseFile(name string) bool {
 	}
 	c := rest[0]
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// matchesHidePattern reports whether name matches any of the configured hide
+// patterns (glob-style: * matches anything, ? matches one char, [abc] matches
+// a set). Returns false if no patterns are configured.
+func matchesHidePattern(name string, patterns []string) bool {
+	for _, p := range patterns {
+		matched, _ := filepath.Match(p, name)
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 const treeMaxFiles = 10000
@@ -224,6 +238,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// showHidden controls whether dotfiles (names starting with ".") are included.
+	// Default is false — hidden files are excluded unless explicitly requested.
+	showHidden := r.URL.Query().Get("showHidden") == "true"
+
 	entries, err := os.ReadDir(full)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
@@ -234,7 +252,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	result := make([]FileEntry, 0, len(entries))
 	for _, e := range entries {
 		name := e.Name()
-		if name == ".git" || name == "node_modules" || isNoiseFile(name) {
+		if isNoiseFile(name) {
+			continue
+		}
+		if !showHidden && matchesHidePattern(name, h.hidePatterns) {
 			continue
 		}
 		info, _ := e.Info()

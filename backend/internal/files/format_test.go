@@ -19,7 +19,7 @@ type staticWSF struct{}
 func (s *staticWSF) Current() string { return "" }
 
 func newFormatHandler() *Handler {
-	return New(&staticWSF{})
+	return New(&staticWSF{}, nil)
 }
 
 func postFormatBody(t *testing.T, path, content string) *bytes.Reader {

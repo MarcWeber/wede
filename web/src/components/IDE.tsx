@@ -805,6 +805,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   const nextApiId = useRef(1)
   const nextSearchId = useRef(1)
   const nextLogId = useRef(1)
+  // Debounce ref: prevents double-fire of onAdd from swipe gestures
+  const addingViewRef = useRef<string | null>(null)
 
   const addWeb = useCallback((url = 'https://wede.vulos.org') => {
     const id = `browser:${++browserIdCounter}`
@@ -3296,6 +3298,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
        visible={visible}
        onToggle={(kind) => toggleVisible(kind as ViewKind)}
       onAdd={(kind) => {
+        // Debounce to prevent double-fire from swipe gestures
+        if (addingViewRef.current === kind) return
+        addingViewRef.current = kind
+        window.setTimeout(() => { addingViewRef.current = null }, 300)
+
         if (kind === 'files') addFiles()
         else if (kind === 'web') addWeb()
         else if (kind === 'api') addApi()

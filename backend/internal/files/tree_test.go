@@ -27,7 +27,7 @@ func TestTreeListsFilesAndSkipsNoise(t *testing.T) {
 	must(os.MkdirAll(filepath.Join(root, ".git"), 0o755))
 	must(os.WriteFile(filepath.Join(root, ".git", "config"), []byte("x"), 0o644))
 
-	h := New(&staticWS{root: root})
+	h := New(&staticWS{root: root}, nil)
 	rec := httptest.NewRecorder()
 	h.Tree(rec, httptest.NewRequest(http.MethodGet, "/api/files/tree", nil))
 
@@ -74,7 +74,7 @@ func TestTreeListsFilesAndSkipsNoise(t *testing.T) {
 }
 
 func TestTreeNoWorkspace(t *testing.T) {
-	h := New(&staticWS{root: ""})
+	h := New(&staticWS{root: ""}, nil)
 	rec := httptest.NewRecorder()
 	h.Tree(rec, httptest.NewRequest(http.MethodGet, "/api/files/tree", nil))
 	if rec.Code != http.StatusBadRequest {

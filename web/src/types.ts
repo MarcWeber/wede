@@ -178,6 +178,9 @@ export interface EditorSettings {
   // broadcasts. When false, the user must click [Refresh] manually — useful
   // when many users are connected and constant updates would be noisy.
   sessionTabAutoRefresh?: boolean
+  // When true, the FileExplorer shows dotfiles (.wede/, .wede-collab-*, etc.).
+  // Default is false — hidden files are excluded from the file tree.
+  showHiddenFiles?: boolean
   // 'smart' renders one digit per gutter row (stacked, width = 1 char) with
   // bold 10s and 5s as orientation marks — the phone-friendly default.
   numbering?: 'normal' | 'smart' | 'hidden'

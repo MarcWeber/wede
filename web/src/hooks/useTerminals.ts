@@ -68,6 +68,9 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   // Track the most recently added terminal ID to avoid a race where the
   // WebSocket echo arrives before React has flushed the local setTerminals.
   const lastAddedIdRef = useRef<number | null>(null)
+  // Prevent concurrent addTerminal calls (e.g. double-swipe) from creating
+  // duplicate terminals with the same server-assigned ID.
+  const addingRef = useRef(false)
 
   // Sync the terminal list across collaborators: broadcast on local change, and
   // union in peers' terminals (additive merge → converges; same ids map to the
@@ -200,6 +203,10 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   // terminal's PTY connects (used by the task runner). Fetches the next ID from
   // the server so two users in different tabs never get the same ID.
   const addTerminal = useCallback(async (name?: string, initial?: string) => {
+    // Guard against concurrent calls (e.g. double-swipe) creating duplicates.
+    if (addingRef.current) return lastAddedIdRef.current ?? 0
+    addingRef.current = true
+
     // Ask the server for the next sequential ID.
     let id: number
     if (authFetch && workspaceId) {
@@ -218,6 +225,7 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     lastAddedIdRef.current = id
     setTerminals((prev) => [...prev, { id, name: name || termName(id), initial: initial || undefined }])
     setActiveId(id)
+    addingRef.current = false
     return id
   }, [authFetch, workspaceId])
 

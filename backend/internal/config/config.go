@@ -85,6 +85,13 @@ type Config struct {
 	//   "external"    — offer an external-tab link instead
 	// Users can override this in Settings; the config value is only the default.
 	ViewPdf string `json:"view_pdf,omitempty"`
+
+	// FileHidePatterns is a list of glob patterns for files and directories
+	// that should be hidden in the FileExplorer. Matching entries are excluded
+	// from the file tree, Quick Open, and search. Supports shell-style wildcards
+	// (*, ?, [abc]). Default hides common noise: .wede-collab-*, .DS_Store,
+	// .nfs*, node_modules, dist, build, .next, vendor, .cache, target.
+	FileHidePatterns StringList `json:"file_hide_patterns,omitempty"`
 }
 
 // WorkspaceConfig is one workspace template. A template is not a running

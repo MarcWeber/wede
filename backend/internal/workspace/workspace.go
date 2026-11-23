@@ -60,6 +60,8 @@ type Workspace struct {
 	// visibleTabTypes controls which tab types are shown in the hamburger menu.
 	// nil means all tabs are visible.
 	visibleTabTypes map[string]bool
+	// fileHidePatterns are glob patterns for files/dirs hidden in the explorer.
+	fileHidePatterns []string
 	// tabSession fetches the saved layout for the connecting user.
 	tabSession func(sessionKey, username string) []byte
 
@@ -127,7 +129,7 @@ func (r *Workspace) Files() *files.Handler {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.files == nil {
-		r.files = files.New(r.ws)
+		r.files = files.New(r.ws, r.fileHidePatterns)
 	}
 	return r.files
 }
@@ -342,6 +344,7 @@ type Manager struct {
 	allowCustomDir  bool   // permit POST /api/workspaces from an arbitrary path
 	canLead         func(username string) bool
 	visibleTabTypes map[string]bool // global visible tab types from config
+	fileHidePatterns []string       // glob patterns for hidden files in explorer
 
 	tabSessions *tabSessionStore
 }
@@ -469,6 +472,19 @@ func (m *Manager) SetVisibleTabTypes(types map[string]bool) {
 	}
 }
 
+// SetFileHidePatterns sets the glob patterns for hidden files in the explorer.
+// Existing workspaces are updated too.
+func (m *Manager) SetFileHidePatterns(patterns []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fileHidePatterns = patterns
+	for _, r := range m.workspaces {
+		r.mu.Lock()
+		r.fileHidePatterns = patterns
+		r.mu.Unlock()
+	}
+}
+
 func newID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
@@ -501,7 +517,7 @@ func (m *Manager) Register(name string, ws *folder.Manager) *Workspace {
 		ID: newID(), Name: name, Template: name, CreatedAt: now,
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
-		visibleTabTypes: m.visibleTabTypes,
+		visibleTabTypes: m.visibleTabTypes, fileHidePatterns: m.fileHidePatterns,
 		tabSession: func(sessionKey, username string) []byte {
 			st := m.tabSessions.Get(sessionKey, username)
 			if st == nil {
@@ -537,7 +553,7 @@ func (m *Manager) Create(name, root string) (*Workspace, error) {
 		ID: newID(), Name: name, Template: "custom", CreatedAt: now,
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
-		visibleTabTypes: m.visibleTabTypes,
+		visibleTabTypes: m.visibleTabTypes, fileHidePatterns: m.fileHidePatterns,
 		tabSession: func(sessionKey, username string) []byte {
 			st := m.tabSessions.Get(sessionKey, username)
 			if st == nil {
@@ -582,7 +598,7 @@ func (m *Manager) CreateFromTemplate(templateName, sessionName string) (*Workspa
 		ID: newID(), Name: name, Template: templateName, CreatedAt: now,
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
-		visibleTabTypes: tpl.VisibleTabTypes,
+		visibleTabTypes: tpl.VisibleTabTypes, fileHidePatterns: m.fileHidePatterns,
 		tabSession: func(sessionKey, username string) []byte {
 			st := m.tabSessions.Get(sessionKey, username)
 			if st == nil {

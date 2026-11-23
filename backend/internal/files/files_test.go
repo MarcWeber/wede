@@ -16,7 +16,7 @@ func (s *staticWS) Current() string { return s.root }
 
 func TestSafePath(t *testing.T) {
 	tmp := t.TempDir()
-	h := New(&staticWS{root: tmp})
+	h := New(&staticWS{root: tmp}, nil)
 
 	tests := []struct {
 		name    string
@@ -84,7 +84,7 @@ func TestSafePathSymlinkEscapeDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := New(&staticWS{root: tmp})
+	h := New(&staticWS{root: tmp}, nil)
 
 	// "link/secret.txt" is lexically inside the workspace but resolves outside it,
 	// so safePath must deny it.
@@ -110,7 +110,7 @@ func TestSafePathHTTPDeny(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := New(&staticWS{root: tmp})
+	h := New(&staticWS{root: tmp}, nil)
 
 	// Build the relative path that would escape: ../secretXXXX/passwd
 	rel, err := filepath.Rel(tmp, secretFile)
@@ -131,7 +131,7 @@ func TestRawPDFInlineAndETag(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "doc.pdf"), pdf, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := New(&staticWS{root: tmp})
+	h := New(&staticWS{root: tmp}, nil)
 
 	rec := httptest.NewRecorder()
 	h.Raw(rec, httptest.NewRequest(http.MethodGet, "/files/raw?path=doc.pdf&inline=1", nil))
@@ -163,7 +163,7 @@ func TestRawDefaultsToAttachment(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "doc.pdf"), []byte("%PDF-1.4\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := New(&staticWS{root: tmp})
+	h := New(&staticWS{root: tmp}, nil)
 	rec := httptest.NewRecorder()
 	h.Raw(rec, httptest.NewRequest(http.MethodGet, "/files/raw?path=doc.pdf", nil))
 	if got := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "attachment") {
@@ -173,7 +173,7 @@ func TestRawDefaultsToAttachment(t *testing.T) {
 
 func TestRawRejectsOutsideWorkspace(t *testing.T) {
 	tmp := t.TempDir()
-	h := New(&staticWS{root: tmp})
+	h := New(&staticWS{root: tmp}, nil)
 	rec := httptest.NewRecorder()
 	h.Raw(rec, httptest.NewRequest(http.MethodGet, "/files/raw?path=../secret", nil))
 	if rec.Code != http.StatusForbidden {
@@ -189,7 +189,7 @@ func TestReadPDFMetadataAndAVIF(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "pic.avif"), []byte("not-a-real-avif"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := New(&staticWS{root: tmp})
+	h := New(&staticWS{root: tmp}, nil)
 
 	rec := httptest.NewRecorder()
 	h.Read(rec, httptest.NewRequest(http.MethodGet, "/files/read?path=doc.pdf", nil))

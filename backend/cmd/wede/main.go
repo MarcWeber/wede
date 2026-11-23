@@ -141,6 +141,7 @@ func main() {
 		authHandler.SetDebug(c.Debug)
 		wsMgr.SetDefaultTimeout(c.Defaults.Timeout())
 		wsMgr.SetVisibleTabTypes(c.VisibleTabTypes)
+		wsMgr.SetFileHidePatterns(c.FileHidePatterns)
 		wsMgr.SetAllowCustomDirectory(c.WorkspaceAllowCustomDirectory)
 		wsMgr.SetTemplates(templatesFrom(c, rootFolder.Current()))
 		collab.SetDebug(c.Debug)
