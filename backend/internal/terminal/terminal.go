@@ -186,10 +186,11 @@ func checkOrigin(r *http.Request, allowedOrigins map[string]struct{}) bool {
 }
 
 type Handler struct {
-	ws       WorkspaceProvider
-	mu       sync.Mutex
-	sessions map[string]*session
-	upgrader websocket.Upgrader
+	ws        WorkspaceProvider
+	mu        sync.Mutex
+	sessions  map[string]*session
+	upgrader  websocket.Upgrader
+	termNextId int // sequential counter for terminal IDs (1-based)
 }
 
 // New creates a terminal handler.  allowedOrigins is the space-separated list
@@ -371,6 +372,25 @@ func (h *Handler) HandleClose(w http.ResponseWriter, r *http.Request) {
 	outcome := h.CloseSession(sessionKey)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "result": outcome})
+}
+
+// NextTermID returns the next sequential terminal ID. The ID is 1-based and
+// increments atomically so two users in different browser tabs never get the
+// same ID. The returned ID is used as the PTY session key "term-<id>".
+func (h *Handler) NextTermID() int {
+	h.mu.Lock()
+	h.termNextId++
+	id := h.termNextId
+	h.mu.Unlock()
+	return id
+}
+
+// HandleNextTermID serves GET /terminal/next-id — returns the next sequential
+// terminal ID so the frontend can create a new terminal tab with a unique key.
+func (h *Handler) HandleNextTermID(w http.ResponseWriter, r *http.Request) {
+	id := h.NextTermID()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"id": id})
 }
 
 // ListSessions returns active session IDs via HTTP.

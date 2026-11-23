@@ -484,8 +484,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     return id
   }, [])
 
-  const addTerminalTab = useCallback(() => {
-    const id = terminalsApi.addTerminal()
+  const addTerminalTab = useCallback(async () => {
+    const id = await terminalsApi.addTerminal()
     setVisible((v) => ({ ...v, terminals: true }))
     setActiveShell(`term:${id}`)
     return id
@@ -812,10 +812,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     authFetch('/api/tasks').then((r) => r.json()).then((d: { tasks?: Task[] }) => setTasks(d.tasks || [])).catch(() => {})
   }, [authFetch])
   useEffect(() => { fetchTasks() }, [fetchTasks, workspaceId])
-  const runTask = useCallback((task: Task) => {
+  const runTask = useCallback(async (task: Task) => {
     if (role === 'viewer' || !task?.command) return
     const cmd = task.cwd ? `cd '${task.cwd}' && ${task.command}` : task.command
-    const id = terminalsApi.addTerminal(task.name || 'Task', cmd)
+    const id = await terminalsApi.addTerminal(task.name || 'Task', cmd)
     setVisible((v) => ({ ...v, terminals: true }))
     setActiveShell(`term:${id}`)
   }, [role, terminalsApi])
@@ -989,9 +989,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   // Publish the open file tabs for this workspace so peers can follow-open.
   const lastSentTabsRef = useRef('')
   useEffect(() => {
-    const list = tabs
-      .filter((t) => t.workspaceId === workspaceId && t.rel && !t.type)
-      .map((t) => t.rel as string)
+    const fileTabs = tabs.filter((t) => t.workspaceId === workspaceId && t.rel && !t.type)
+    const list = fileTabs.map((t) => t.rel as string)
     // Include selfId so the inventory is re-sent after a reconnect, while
     // ordinary keystrokes (which replace the tabs array) stay quiet.
     const key = `${selfId}:${JSON.stringify(list)}`

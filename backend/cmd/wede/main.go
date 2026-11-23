@@ -305,6 +305,7 @@ func main() {
 	protected.HandleFunc("GET /api/workspaces/{id}/watch", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Watcher().HandleSSE }))
 	// terminal (shared PTY sessions per workspace) + lsp (language servers per workspace)
 	protected.HandleFunc("GET /api/workspaces/{id}/terminal/sessions", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Terminal().ListSessions }))
+	protected.HandleFunc("GET /api/workspaces/{id}/terminal/next-id", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Terminal().HandleNextTermID }))
 	protected.Handle("GET /api/workspaces/{id}/terminal", re(rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Terminal().HandleWS }))) // viewers get no shell
 	// Close a single terminal PTY by client id. Demoted to a plain detach when
 	// other viewers are still attached, so closing the tab doesn't kill the shared shell.

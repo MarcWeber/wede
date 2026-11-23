@@ -16,14 +16,11 @@ export interface UseTerminalsSync {
 
 function loadTerminals(): TerminalSession[] | null {
   try {
-    const saved = localStorage.getItem('wede_terminals')
+    // Prefer sessionStorage (per-tab) so different users in different tabs
+    // don't share terminal state. Fall back to localStorage for migration.
+    const saved = sessionStorage.getItem('wede_terminals') ?? localStorage.getItem('wede_terminals')
     if (saved) {
-      // JSON.parse returns `any` by design; keep it at `unknown` until the
-      // Array.isArray check, then assert — this function's own return type is
-      // the declared boundary for the (trusted, our-own-write) localStorage blob.
       const parsed = JSON.parse(saved) as unknown
-      // An empty array is meaningful: "Reset view" persists zero terminals so a
-      // later swipe-right adds exactly one instead of resurrecting old tabs.
       if (Array.isArray(parsed)) {
         return (parsed as TerminalSession[]).map((t) => ({
           ...t,
@@ -36,27 +33,32 @@ function loadTerminals(): TerminalSession[] | null {
 }
 
 // Generate a unique terminal id that won't collide across browser tabs.
-// Each tab picks a random base so two users in different tabs don't both
-// create "Term 1". The server-side PTY session is keyed by term-<id>.
-function randomTermId(): number {
-  // 4-byte random number gives ~4B possible values — collisions are negligible.
-  return Math.floor(Math.random() * 0x100000000)
+// Each new terminal gets a random base (multiple of 1000) so two users in different
+// tabs get distinct ranges: e.g. 1000, 1001, 1002... vs 4000, 4001, 4002...
+// This keeps IDs short and readable (easy to say over the phone) while
+// preventing collisions on the server where PTY sessions are keyed by term-<id>.
+let termBase: number | null = null
+let termNext: number = 0
+function genId(): number {
+  if (termBase === null) {
+    // Pick a random base between 1000 and 999000 (step 1000) so each tab
+    // gets its own range. 1000 possible bases → collisions are very rare.
+    termBase = 1000 + Math.floor(Math.random() * 999) * 1000
+    termNext = 0
+  }
+  return termBase + termNext++
 }
 
-let nextId: number | null = null
-function genId(): number {
-  if (nextId === null) {
-    const saved = loadTerminals()
-    nextId = saved && saved.length > 0 ? Math.max(...saved.map((t) => t.id)) + 1 : 1
-  }
-  return nextId++
+// Format a terminal ID as a zero-padded 2-digit name: 1 → "Term 01", 10 → "Term 10".
+function termName(id: number): string {
+  return `Term ${String(id).padStart(2, '0')}`
 }
 
 export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceId: string | null | undefined, sync: UseTerminalsSync = {}) {
   const { sendTerminals, onTerminals } = sync
-  const [terminals, setTerminals] = useState<TerminalSession[]>(() => loadTerminals() || [{ id: genId(), name: 'Term 1' }])
+  const [terminals, setTerminals] = useState<TerminalSession[]>(() => loadTerminals() || [{ id: genId(), name: termName(1) }])
   const [activeId, setActiveId] = useState<number>(() => {
-    const saved = localStorage.getItem('wede_terminal_active')
+    const saved = sessionStorage.getItem('wede_terminal_active')
     return saved ? Number(saved) : (loadTerminals()?.[0]?.id || 1)
   })
   const reconciledRef = useRef(false)
@@ -71,11 +73,15 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     return onTerminals((list) => {
       setTerminals((prev) => {
         const ids = new Set(prev.map((t) => t.id))
-        const additions = (list || [])
-          .filter((t) => t && typeof t.id === 'number' && !ids.has(t.id))
-          .map((t) => ({ id: t.id, name: t.name || `Term ${t.id}` }))
-        if (additions.length === 0) return prev
-        for (const t of additions) if (t.id >= nextId) nextId = t.id + 1
+        const filtered = (list || []).filter((t) => t && typeof t.id === 'number' && !ids.has(t.id))
+        if (filtered.length === 0) return prev
+        // Assign position-based names for imported peer terminals so they show
+        // as "Term 04", "Term 05" etc. instead of the internal ID like "Term 1001".
+        const additions: TerminalSession[] = []
+        for (let i = 0; i < filtered.length; i++) {
+          const t = filtered[i]
+          additions.push({ id: t.id, name: t.name || termName(t.id) })
+        }
         applyingRemoteRef.current = true
         return [...prev, ...additions].sort((a, b) => a.id - b.id)
       })
@@ -88,22 +94,38 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   }, [terminals, sendTerminals])
 
   // Reconcile with live server sessions on mount (so refresh keeps PTYs).
-  // Skip when no workspace is active — the legacy /api/terminal/sessions route
-  // has been removed.
+  // The server is the source of truth: import any server session not already
+  // in the local list, and remove local tabs whose PTY no longer exists.
   useEffect(() => {
     if (reconciledRef.current || !authFetch || !workspaceId) return
     reconciledRef.current = true
     authFetch(workspaceUrl(workspaceId, '/terminal/sessions'))
       .then((res) => res.json())
       .then((data: { sessions?: string[] }) => {
-        const serverSessions = new Set(data.sessions || [])
-        if (serverSessions.size === 0) return
+        const serverSessions = data.sessions || []
+        const serverIds = new Set(serverSessions)
         setTerminals((prev) => {
-          // Only keep tabs whose PTY is still alive. Server sessions that are
-          // not in the persisted list are leftovers from closed tabs; importing
-          // them resurrected every old PTY as a phantom tab on each reload.
-          const alive = prev.filter((t) => serverSessions.has(`term-${t.id}`))
-          return alive.length ? alive : prev
+          // Keep local tabs whose PTY is still alive on the server.
+          const alive = prev.filter((t) => serverIds.has(`term-${t.id}`))
+          // Import server sessions not already in the local list.
+          const localIds = new Set(prev.map((t) => `term-${t.id}`))
+          const additions: TerminalSession[] = []
+          for (const sess of serverSessions) {
+            if (!localIds.has(sess)) {
+              const m = sess.match(/^term-(\d+)$/)
+              if (m) {
+                const id = parseInt(m[1], 10)
+                additions.push({ id, name: termName(id) })
+              }
+            }
+          }
+          // If nothing was loaded from storage and the server has sessions,
+          // use the server list as the source of truth.
+          if (prev.length === 0 && additions.length > 0) {
+            return additions.sort((a, b) => a.id - b.id)
+          }
+          const merged = [...alive, ...additions].sort((a, b) => a.id - b.id)
+          return merged.length ? merged : prev
         })
       })
       .catch(() => {})
@@ -113,19 +135,34 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     try {
       // Never persist `initial` (a one-shot task command) — it must not re-run on reload.
       // `manual` is kept so a user-chosen name survives reload and still wins over OSC titles.
-      localStorage.setItem('wede_terminals', JSON.stringify(terminals.map((t) => ({ id: t.id, name: t.name, manual: t.manual || undefined, locked: t.locked || undefined }))))
-      localStorage.setItem('wede_terminal_active', String(activeId))
+      // Use sessionStorage (per-tab) so different users in different tabs don't share state.
+      sessionStorage.setItem('wede_terminals', JSON.stringify(terminals.map((t) => ({ id: t.id, name: t.name, manual: t.manual || undefined, locked: t.locked || undefined }))))
+      sessionStorage.setItem('wede_terminal_active', String(activeId))
     } catch { /* ignore */ }
   }, [terminals, activeId])
 
   // addTerminal(name?, initial?) — `initial` is a command run once when the new
-  // terminal's PTY connects (used by the task runner).
-  const addTerminal = useCallback((name?: string, initial?: string) => {
-    const id = genId()
-    setTerminals((prev) => [...prev, { id, name: name || `Term ${id}`, initial: initial || undefined }])
+  // terminal's PTY connects (used by the task runner). Fetches the next ID from
+  // the server so two users in different tabs never get the same ID.
+  const addTerminal = useCallback(async (name?: string, initial?: string) => {
+    // Ask the server for the next sequential ID.
+    let id: number
+    if (authFetch && workspaceId) {
+      try {
+        const res = await authFetch(workspaceUrl(workspaceId, '/terminal/next-id'))
+        const data = await res.json()
+        id = data.id
+      } catch {
+        // Fallback to local generation if server is unreachable.
+        id = genId()
+      }
+    } else {
+      id = genId()
+    }
+    setTerminals((prev) => [...prev, { id, name: name || termName(id), initial: initial || undefined }])
     setActiveId(id)
     return id
-  }, [])
+  }, [authFetch, workspaceId])
 
   // clearInitial drops a terminal's one-shot command so it can't re-run on a
   // tab-switch remount within the session.

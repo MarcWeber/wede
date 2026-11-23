@@ -122,7 +122,9 @@ export interface PresenceMember {
   anchorCol?: number  // selection start column (1-based, 0 = no selection)
   headLine?: number   // selection end line (1-based, 0 = no selection)
   headCol?: number    // selection end column (1-based, 0 = no selection)
-  tabs?: string[]
+  tabs?: string[]     // open file tabs (relative paths)
+  tabViewState?: string  // user:<name>:<id> view state using this socket
+  collabContext?: string // session/context that owns TabViewState
   [key: string]: unknown
 }
 
