@@ -98,7 +98,8 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// Identity comes from the authenticated session (attached by auth.Middleware),
 	// not a client-supplied query param, so presence can't be spoofed.
 	username := auth.GetUsername(r)
-	id, out := h.hub.Join(username)
+	tabViewState := strings.TrimSpace(r.URL.Query().Get("tab_view_state"))
+	id, out := h.hub.Join(username, tabViewState)
 	if id == "" { // hub already closed (room shutting down)
 		conn.Close()
 		return

@@ -18,7 +18,7 @@ import { basePath } from '../api'
 import type { PresenceMember, CollabPointer, TerminalSession, CollabPresenter } from '../types'
 import { isCollabPointer } from '../lib/collabPointer'
 
-function buildWsUrl(workspaceId: string, token: string, username: string | null | undefined): string {
+function buildWsUrl(workspaceId: string, token: string, username: string | null | undefined, tabViewState?: string | null): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   // In dev (Vite on 5173/5174) the WS must hit the backend on :9090 directly.
   const port = window.location.port
@@ -29,6 +29,7 @@ function buildWsUrl(workspaceId: string, token: string, username: string | null 
   return `${proto}//${host}${base}/api/workspaces/${encodeURIComponent(workspaceId)}/collab`
     + `?token=${encodeURIComponent(token)}`
     + `&username=${encodeURIComponent(username || '')}`
+    + (tabViewState ? `&tab_view_state=${encodeURIComponent(tabViewState)}` : '')
 }
 
 const THROTTLE_MS = 150
@@ -80,6 +81,7 @@ export function useCollab(
   workspaceId: string | null | undefined,
   token: string | null | undefined,
   username: string | null | undefined,
+  tabViewState?: string | null,
 ): UseCollabResult {
   const [roster, setRoster] = useState<PresenceMember[]>([])
   const [presenter, setPresenter] = useState<CollabPresenter | null>(null)
@@ -100,7 +102,7 @@ export function useCollab(
     let disposed = false
     let ws: WebSocket | undefined
     try {
-      ws = new WebSocket(buildWsUrl(workspaceId, token, username))
+      ws = new WebSocket(buildWsUrl(workspaceId, token, username, tabViewState))
       wsRef.current = ws
       ws.onmessage = (ev: MessageEvent) => {
         try {
@@ -158,7 +160,7 @@ export function useCollab(
       try { if (ws) ws.close() } catch { /* ignore */ }
       if (wsRef.current === ws) wsRef.current = null
     }
-  }, [workspaceId, token, username])
+  }, [workspaceId, token, username, tabViewState])
 
   const send = useCallback((obj: unknown) => {
     const ws = wsRef.current

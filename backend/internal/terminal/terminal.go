@@ -319,6 +319,60 @@ func (h *Handler) getOrCreateSession(id string) (*session, bool, error) {
 	return s, false, nil
 }
 
+// CloseSession terminates a single terminal session by id. A "close" request is
+// demoted to a plain detach (hide) when another viewer is still attached, so one
+// user closing the tab doesn't kill the PTY that others are using. Returns
+// "closed" when the PTY was actually killed, "detached" when the request was
+// demoted, or "not-found".
+func (h *Handler) CloseSession(id string) string {
+	h.mu.Lock()
+	s, ok := h.sessions[id]
+	if !ok || s.closed {
+		h.mu.Unlock()
+		return "not-found"
+	}
+	s.mu.Lock()
+	others := len(s.subs) > 1
+	if others {
+		// Keep the pty alive for the remaining viewers; the PTY persists until
+		// the last viewer leaves or the workspace closes.
+		s.mu.Unlock()
+		h.mu.Unlock()
+		return "detached"
+	}
+	s.closeConns()
+	if s.ptmx != nil {
+		s.ptmx.Close()
+	}
+	if s.cmd != nil && s.cmd.Process != nil {
+		s.cmd.Process.Kill() //nolint:errcheck
+	}
+	s.closed = true
+	s.mu.Unlock()
+	delete(h.sessions, id)
+	h.mu.Unlock()
+	return "closed"
+}
+
+// HandleClose closes a single terminal session by id (POST body {id} or query
+// id). The id is the client terminal id; the session key is "term-<id>". A
+// "close" is demoted to a plain detach when another viewer is still attached, so
+// one user closing the tab doesn't kill the shared PTY. Responds with the
+// outcome so the client knows whether the PTY was actually killed.
+func (h *Handler) HandleClose(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &struct {
+			ID string `json:"id"`
+		}{ID: id})
+	}
+	sessionKey := "term-" + id
+	outcome := h.CloseSession(sessionKey)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "result": outcome})
+}
+
 // ListSessions returns active session IDs via HTTP.
 func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()

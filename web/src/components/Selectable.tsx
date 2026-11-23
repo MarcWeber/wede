@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent,
@@ -258,7 +259,7 @@ export function useRowMenu(
 //   menu      → the actions popup is open; closing returns to selecting
 // While selecting, the whole list gets a yellow dotted border.
 
-export type SelectMode = 'normal' | 'selecting' | 'menu'
+type SelectMode = 'normal' | 'selecting' | 'menu'
 
 interface SelectModeValue {
   mode: SelectMode
@@ -328,6 +329,7 @@ export function SelectableGroup({ children, className = '', style, selectedCount
   // Leave select mode when the last item is deselected (but not on the initial
   // render, before the long-press has had a chance to select anything).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (prevCount.current > 0 && selectedCount === 0 && mode === 'selecting') enterMode('normal')
     prevCount.current = selectedCount
   }, [selectedCount, mode, enterMode])

@@ -258,11 +258,16 @@ export default forwardRef<TerminalHandle, TerminalProps>(function Terminal({ tok
       // appears in server access logs or browser history. The session ID is a
       // non-secret resumption handle passed as a query param.
       //
-      // Workspace-scoped path so everyone in a workspace shares one PTY per session id;
-      // falls back to the legacy default-workspace route until the workspace id resolves.
-      const path = workspaceId
-        ? `${base}/api/workspaces/${encodeURIComponent(workspaceId)}/terminal`
-        : `${base}/api/terminal`
+      // Workspace-scoped path only — the legacy default-workspace route has been
+      // removed.  When no workspace is active yet (e.g. the user is still picking
+      // one from the hamburger menu), skip this attempt and retry shortly.
+      if (!workspaceId) {
+        reconnectRef.current = setTimeout(() => {
+          if (mountedRef.current) connect(isReconnect)
+        }, 1000)
+        return
+      }
+      const path = `${base}/api/workspaces/${encodeURIComponent(workspaceId)}/terminal`
       const ws = new WebSocket(
         `${protocol}//${host}${path}?session=${encodeURIComponent(sid)}`,
         [`auth.${token}`]

@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from './hooks/useAuth'
 import { useTheme } from './hooks/useTheme'
-import { useWorkspaces, urlCustomDirectory } from './hooks/useWorkspaces'
+import { useWorkspaces, urlCustomDirectory, urlCollabContext, urlTabViewState } from './hooks/useWorkspaces'
 import Logo from './components/Logo'
 import ThemePicker from './components/ThemePicker'
 import Login from './components/Login'
 import IDE from './components/IDE'
+import ChooseWorkspaceAndTabSession from './components/ChooseWorkspaceAndTabSession'
+import { navigateToSession } from './lib/sessionNav'
+import { workspaceUrl } from './api'
 
 interface WorkspaceFolderState {
   hasWorkspace?: boolean
@@ -20,11 +23,17 @@ function App() {
   const { theme, setTheme } = useTheme()
   const workspacesApi = useWorkspaces(token, authFetch)
   const { createWorkspace, setActiveWorkspaceId, workspaces } = workspacesApi
+  const collabContext = urlCollabContext()
+  const tabViewState = urlTabViewState()
 
   const [workspace, setWorkspace] = useState<WorkspaceFolderState | null>(null)
   const [loading, setLoading] = useState(true)
   const [allowCustomDirectory, setAllowCustomDirectory] = useState<boolean | null>(null)
+  const [resolvingCustomDir, setResolvingCustomDir] = useState(false)
   const customDirRef = useRef<string | null>(null)
+  // A view state is claimed only if no other socket already uses it. When it is
+  // in use elsewhere we show the chooser instead of silently sharing a layout.
+  const [claim, setClaim] = useState<'checking' | 'blocked' | 'free'>('checking')
 
   const fetchWorkspace = useCallback(async () => {
     if (!token) return
@@ -66,6 +75,29 @@ function App() {
     return () => { cancelled = true }
   }, [])
 
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    const wsId = workspacesApi.activeWorkspaceId
+    if (!workspacesApi.ready || !wsId) { setClaim('free'); return }
+    if (!tabViewState) { setClaim('free'); return }
+    let cancelled = false
+    setClaim('checking')
+    const params = new URLSearchParams()
+    if (collabContext) params.set('context', collabContext)
+    const qs = params.toString()
+    authFetch(workspaceUrl(wsId, `/tab_sessions${qs ? `?${qs}` : ''}`))
+      .then((res) => res.json())
+      .then((data: { tab_sessions?: { name: string; connected?: boolean }[] }) => {
+        if (cancelled) return
+        const name = tabViewState.startsWith('user:') ? tabViewState : `user:${tabViewState}`
+        const state = (data.tab_sessions || []).find((s) => s.name === name)
+        setClaim(state?.connected ? 'blocked' : 'free')
+      })
+      .catch(() => { if (!cancelled) setClaim('free') })
+    return () => { cancelled = true }
+  }, [workspacesApi.ready, workspacesApi.activeWorkspaceId, collabContext, tabViewState, authFetch])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   // Opening a directory adopts it as a real workspace (or focuses the existing
   // workspace with the same root). Workspace switching itself lives in
   // WorkspaceSwitcher; there is no separate folder picker.
@@ -86,13 +118,16 @@ function App() {
 
   // ?workspace=directory:<path>&name=<name> selects a custom directory. It is
   // ignored unless the deployment opted in.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!workspacesApi.ready || allowCustomDirectory !== true) return
     const dir = urlCustomDirectory()
     if (!dir || customDirRef.current === dir.path) return
     customDirRef.current = dir.path
-    void openDirectoryAsWorkspace(dir.path, dir.name)
+    setResolvingCustomDir(true)
+    void openDirectoryAsWorkspace(dir.path, dir.name).finally(() => setResolvingCustomDir(false))
   }, [workspacesApi.ready, allowCustomDirectory, openDirectoryAsWorkspace])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // First visit - pick theme
   if (!theme) {
@@ -103,8 +138,10 @@ function App() {
     return <Login onLogin={login} error={error} remaining={remaining} />
   }
 
-  // Wait for the workspace list before deciding what to show.
-  if (loading || !workspacesApi.ready) {
+  // Wait for the workspace list before deciding what to show. The ui-config
+  // flag is needed first so ?workspace=directory: links can resolve without
+  // flashing the chooser.
+  if (loading || !workspacesApi.ready || allowCustomDirectory === null || resolvingCustomDir || claim === 'checking') {
     return (
       <div className="min-h-screen bg-bg-tertiary flex items-center justify-center">
         <div className="animate-fade-in text-center">
@@ -117,28 +154,47 @@ function App() {
     )
   }
 
-  // After sign-in: if there are sessions or templates but no workspace selected
-  // yet, still render the IDE so the WorkspaceSwitcher in the hamburger menu can
-  // be used to pick one.  Fall back to the Login workspace picker only when there
-  // are truly no sessions and no templates to choose from.
-  const hasSessions = workspacesApi.sessions.length > 0
-  const hasTemplates = workspacesApi.templates.length > 0
-
-  if (!workspacesApi.activeWorkspaceId && !hasSessions && !hasTemplates) {
+  // Main state is { workspace?, modal? }: without a workspace the only sensible
+  // screen is the chooser — showing the IDE without one is misleading.
+  if (!workspacesApi.activeWorkspaceId) {
     return (
-      <Login
-        onLogin={login}
-        error={error}
-        remaining={remaining}
-        authenticated
-        username={username}
-        sessions={workspacesApi.sessions}
-        templates={workspacesApi.templates}
-        sessionsLoading={workspacesApi.loading}
-        onJoinSession={setActiveWorkspaceId}
-        onCreateSession={workspacesApi.createSession}
-        onLogout={logout}
-      />
+      <div className="min-h-screen bg-bg-tertiary flex items-center justify-center p-4">
+        <ChooseWorkspaceAndTabSession
+          embedded
+          workspacesApi={workspacesApi}
+          authFetch={authFetch}
+          username={username}
+          currentWorkspaceId={null}
+          currentCollabContext={collabContext}
+          currentTabViewState={null}
+          showCancel={false}
+          onCancel={() => { /* nothing to cancel back to */ }}
+          onApply={navigateToSession}
+          onLogout={logout}
+          onCloseAllAndLogout={logout}
+        />
+      </div>
+    )
+  }
+
+  if (claim === 'blocked' && workspacesApi.activeWorkspaceId) {
+    return (
+      <div className="min-h-screen bg-bg-tertiary flex items-center justify-center p-4">
+        <ChooseWorkspaceAndTabSession
+          embedded
+          workspacesApi={workspacesApi}
+          authFetch={authFetch}
+          username={username}
+          currentWorkspaceId={workspacesApi.activeWorkspaceId}
+          currentCollabContext={collabContext}
+          currentTabViewState={tabViewState}
+          showCancel={false}
+          onCancel={() => { /* the state is in use elsewhere */ }}
+          onApply={navigateToSession}
+          onLogout={logout}
+          onCloseAllAndLogout={logout}
+        />
+      </div>
     )
   }
 
@@ -161,6 +217,8 @@ function App() {
       onUsernameChange={updateUsername}
       role={role}
       teacher={teacher}
+      collabContext={collabContext}
+      tabViewState={tabViewState}
     />
   )
 }

@@ -1,8 +1,8 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import {
   X, LogOut, Moon, Sun, Monitor, Users,
   LayoutPanelLeft, ChevronDown, ChevronRight, RotateCcw,
-  Eye, Radio, Scaling, MousePointer2,
+  Eye, Radio, Scaling, MousePointer2, Boxes, FolderOpen,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useRowMenu } from './Selectable'
@@ -120,6 +120,49 @@ function SectionRow({ icon: Icon, label, expanded, onClick, onSwipeRight, slim }
   )
 }
 
+interface SessionSectionProps {
+  info: SessionInfo
+  slim: boolean
+  onOpen?: () => void
+}
+
+// SessionSection is the hamburger entry for workspace:collab_context. Clicking
+// the row (or its directory line) opens the choose-workspace modal; closing and
+// switching live inside that modal.
+function SessionSection({ info, slim, onOpen }: SessionSectionProps) {
+  const tabName = info.tabViewState.replace(/^user:/, '')
+  if (slim) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        title={`${info.workspace}:${info.collabContext}\n${info.directory} (${tabName})`}
+        className="w-full flex justify-center py-2 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+      >
+        <Boxes className="w-3.5 h-3.5 text-accent" />
+      </button>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Open workspace & session selector"
+      className="w-full flex items-start gap-2.5 px-2.5 py-1.5 text-left text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+    >
+      <Boxes className="w-3.5 h-3.5 shrink-0 mt-0.5 text-accent" />
+      <span className="flex-1 min-w-0">
+        <span className="block truncate text-[12px] font-medium">{info.workspace}:{info.collabContext}</span>
+        <span className="flex items-center gap-1 text-[10px] text-text-muted min-w-0">
+          <FolderOpen className="w-2.5 h-2.5 shrink-0" />
+          <span className="truncate">{info.directory || '(workspace root)'} ({tabName})</span>
+        </span>
+      </span>
+      <ChevronRight className="w-3 h-3 shrink-0 mt-0.5 text-text-muted" />
+    </button>
+  )
+}
+
 const PLACEMENTS: { key: MenuPlacement; label: string }[] = [
   { key: 'left-icons', label: 'Left icons' },
   { key: 'left-icons-and-text', label: 'Left icons + text' },
@@ -154,6 +197,13 @@ function ThemeLevelRow({ slim }: { slim: boolean }) {
   )
 }
 
+export interface SessionInfo {
+  workspace: string
+  collabContext: string
+  directory: string
+  tabViewState: string
+}
+
 export interface ViewMenuProps {
   views: ViewTab[]
   visible: Record<string, boolean>
@@ -162,7 +212,8 @@ export interface ViewMenuProps {
   onLogout: () => void
   onClose?: () => void
   desktop: boolean
-  workspaceSwitcher?: ReactNode
+  sessionInfo?: SessionInfo | null
+  onOpenSessionPicker?: () => void
   onToggleDesktop: () => void
   pointers?: Record<string, CollabPointer>
   onJumpToPointer?: (pointer: CollabPointer) => void
@@ -190,7 +241,8 @@ export interface ViewMenuProps {
 // hides a tab type, adds instances, and changes global options.
 export default function ViewMenu({
   views, visible, onToggle, onAdd,
-  onLogout, onClose, desktop, workspaceSwitcher,
+  onLogout, onClose, desktop, sessionInfo,
+  onOpenSessionPicker,
   onToggleDesktop, pointers, onJumpToPointer, uiScaleIsSet, uiScaleEnabled, onToggleUiScale, placement, onPlacement,
   onResetView, username, users, onOpenSharedTab,
   selfId, teacher = false, presenter = null,
@@ -453,13 +505,18 @@ export default function ViewMenu({
         {/* Footer lives inside the scroll area so it never steals height in
             portrait mode. */}
         <div className="mt-1 border-t border-border py-1">
-          {!slim && workspaceSwitcher && (
-            <div className="px-2 pb-1">{workspaceSwitcher}</div>
+          {sessionInfo && (
+            <SessionSection
+              info={sessionInfo}
+              slim={slim}
+              onOpen={onOpenSessionPicker}
+            />
           )}
+          <div className="my-1 border-t border-border" />
           <button onClick={onLogout}
-            title="Logout"
+            title="Logout (does not close)"
             className={`w-full flex items-center gap-2.5 h-9 text-[12px] text-text-secondary hover:text-red hover:bg-bg-hover transition-colors ${slim ? 'justify-center px-0' : 'px-3'}`}>
-            <LogOut className="w-3.5 h-3.5 shrink-0" /> {!slim && 'Logout'}
+            <LogOut className="w-3.5 h-3.5 shrink-0" /> {!slim && 'Logout (does not close)'}
           </button>
         </div>
       </nav>

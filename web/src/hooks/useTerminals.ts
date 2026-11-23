@@ -76,10 +76,12 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   }, [terminals, sendTerminals])
 
   // Reconcile with live server sessions on mount (so refresh keeps PTYs).
+  // Skip when no workspace is active — the legacy /api/terminal/sessions route
+  // has been removed.
   useEffect(() => {
-    if (reconciledRef.current || !authFetch) return
+    if (reconciledRef.current || !authFetch || !workspaceId) return
     reconciledRef.current = true
-    authFetch(workspaceId ? workspaceUrl(workspaceId, '/terminal/sessions') : '/api/terminal/sessions')
+    authFetch(workspaceUrl(workspaceId, '/terminal/sessions'))
       .then((res) => res.json())
       .then((data: { sessions?: string[] }) => {
         const serverSessions = new Set(data.sessions || [])
@@ -134,25 +136,46 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     setTerminals((prev) => applyAutoName(prev, id, title))
   }, [])
 
+  // killPty asks the server to kill a terminal's PTY. A "close" is demoted to a
+  // plain detach server-side when another viewer is still attached, so one user
+  // closing the tab doesn't kill the shared shell out from under them.
+  const killPty = useCallback((id: number) => {
+    if (!authFetch || !workspaceId) return
+    authFetch(workspaceUrl(workspaceId, `/terminal/close?id=${id}`), { method: 'POST' })
+      .catch(() => { /* server already gone, or last-viewer demotion */ })
+  }, [authFetch, workspaceId])
+
+  // closeTerminal hides the tab locally and asks the server to kill the PTY.
+  // preventHide is a per-user lock (part of the tab_view_state dump);
+  // preventClose is shared state — the server demotes a close to a detach when
+  // another viewer is still attached.
   const closeTerminal = useCallback((id: number) => {
     setTerminals((prev) => {
+      const t = prev.find((x) => x.id === id)
       // Locked terminals refuse to close until unlocked.
-      if (prev.find((t) => t.id === id)?.locked) return prev
-      const next = prev.filter((t) => t.id !== id)
+      if (t?.preventHide || t?.locked) return prev
+      const next = prev.filter((x) => x.id !== id)
       // Closing the last terminal is allowed: leave the list empty instead of
       // resurrecting a fresh PTY (the menu can add one again on demand).
       if (next.length === 0) setActiveId(0)
       else if (activeId === id) setActiveId(next[next.length - 1].id)
       return next
     })
-  }, [activeId])
+    killPty(id)
+  }, [activeId, killPty])
 
   // closeSelected closes the given terminals, skipping locked ones unless
   // includeLocked is set.
   const closeSelected = useCallback((ids: number[], includeLocked: boolean) => {
     const set = new Set(ids)
+    const killed: number[] = []
     setTerminals((prev) => {
-      const next = prev.filter((t) => !set.has(t.id) || (!includeLocked && t.locked))
+      const next = prev.filter((t) => {
+        if (!set.has(t.id)) return true
+        if (!includeLocked && (t.preventHide || t.locked)) return true
+        killed.push(t.id)
+        return false
+      })
       if (next.length === prev.length) return prev
       if (next.length === 0) setActiveId(0)
       else if (!next.some((t) => t.id === activeId)) {
@@ -160,7 +183,8 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
       }
       return next
     })
-  }, [activeId])
+    for (const id of killed) killPty(id)
+  }, [activeId, killPty])
 
   // resetTerminals clears the tab list (used by "Reset view"). The next
   // swipe-right / toggle then adds exactly one fresh terminal instead of

@@ -76,7 +76,11 @@ export interface TerminalSession {
   name: string
   manual?: boolean
   initial?: string
-  locked?: boolean
+  // preventHide is per-user (part of the tab_view_state dump); preventClose is
+  // shared state sent to the server so no user can kill the PTY by accident.
+  locked?: boolean      // alias for preventHide (legacy)
+  preventHide?: boolean
+  preventClose?: boolean
 }
 
 // Imperative handle exposed by the <Terminal> component (via useImperativeHandle)

@@ -147,6 +147,29 @@ export default function HelpView() {
         <Section title="Help">
           <P>This page. Terminal help: terminal &gt; settings &gt; help.</P>
         </Section>
+            <pre>{`
+  Workspaces, Session
+
+  workspace: controls who can login, base directory and settings
+  workspace:session_name
+        The session_name's default is the workspace. It controls who can collaborate on open files and follow each other
+        join same session_name to collaborate in a group
+
+        directory -> what base directory to show
+
+  A session controls what terminals eg are open (server state)
+  If a sesison is closed, the terminals are closed and the shared
+  session state is lost. Thus close belows closes the state
+
+  workspace:session_name:directory
+  -> when clicked show submenu
+      submenu:
+      -> switch
+      -> close & switch
+      -> close & logout
+  --------
+  Logout (does not close)
+`}</pre>
       </div>
     </div>
   )

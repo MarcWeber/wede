@@ -40,7 +40,8 @@ import ViewTabs, { type ViewTab } from './ViewTabs'
 import Tabbed from './Tabbed'
 import { formatTabLocation } from '../lib/tabPath'
 import ViewMenu from './ViewMenu'
-import WorkspaceSwitcher from './WorkspaceSwitcher'
+import ChooseWorkspaceAndTabSession from './ChooseWorkspaceAndTabSession'
+import { navigateToSession, type SessionChoice } from '../lib/sessionNav'
 import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
 import { workspaceUrl, rawFileUrl } from '../api'
@@ -49,6 +50,7 @@ import { followTargetFromPeer, targetSelectionKey } from '../lib/followSelection
 import { decodeCollabPointer, encodeCollabPointer } from '../lib/collabPointerDom'
 import { elementScale } from '../lib/uiScale'
 import { useWorkspaces } from '../hooks/useWorkspaces'
+import { useTabSession } from '../hooks/useTabSession'
 import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo, CollabPointer } from '../types'
 
 // colorFromName derives a stable per-user color for collaboration cursors.
@@ -74,6 +76,8 @@ export interface IDEProps {
   onUsernameChange: (name: string) => void
   role: string
   teacher?: boolean
+  collabContext?: string | null
+  tabViewState?: string | null
 }
 
 export type MenuPlacement =
@@ -228,7 +232,7 @@ interface FileReadResponse {
   size?: number
 }
 
-export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false }: IDEProps) {
+export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false, collabContext = null, tabViewState = null }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
   const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, isSet: uiScaleIsSet, enabled: uiScaleEnabled, setEnabled: setUiScaleEnabled, updateScale: updateUiScale } = useUiScale()
@@ -248,8 +252,20 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     return saved ? (normalizeTabIdentity({ path: saved }, workspaceId)?.path ?? null) : null
   })
 
+  const tabSession = useTabSession({ workspaceId, authFetch, username, collabContext, tabViewState })
+
   // Collaboration presence: who else is in this workspace and what they're viewing.
-  const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, pointers: collabPointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username)
+  // The tab view state is advertised so the chooser can mark connected states.
+  const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, pointers: collabPointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username, tabSession.name)
+
+  // Workspace/session chooser modal. showCancel is only set when there is a
+  // previous selection to return to (i.e. a switch, not an initial pick).
+  const [sessionPicker, setSessionPicker] = useState<{ showCancel: boolean } | null>(null)
+  const openSessionPicker = useCallback((showCancel = false) => setSessionPicker({ showCancel }), [])
+
+  const applySessionChoice = useCallback((choice: SessionChoice) => {
+    navigateToSession(choice)
+  }, [])
 
   // Built-in API client — shared between the sidebar collections and the editor tab.
   const apiClient = useApiClient(workspaceId, authFetch)
@@ -625,6 +641,26 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   useEffect(() => { try { localStorage.setItem('wede_view_modes', JSON.stringify(viewModes)) } catch { /* ignore */ } }, [viewModes])
   useEffect(() => { try { localStorage.setItem('wede_float_geom', JSON.stringify(floatGeom)) } catch { /* ignore */ } }, [floatGeom])
   useEffect(() => { try { localStorage.setItem('wede_dock_sizes', JSON.stringify(dockSizes)) } catch { /* ignore */ } }, [dockSizes])
+
+  useEffect(() => {
+    tabSession.saveLayout({
+      tabs: tabs.map((t) => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url })),
+      activeTab,
+      visible,
+      tabOrder,
+      fileIds,
+      activeFileId,
+      activeShell,
+      menuPlacement,
+      containers,
+      containerOf,
+      containerActive,
+      lockedShells,
+      viewModes,
+      floatGeom,
+      dockSizes,
+    })
+  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabSession])
 
   // Upgrade any legacy raw floating tab into a floating container so every
   // float keeps a draggable container tab.
@@ -2453,6 +2489,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
             lspAvailable={lspAvailable}
             desktopMode={desktopMode}
             onDesktopModeChange={setDesktopMode}
+            onLogout={onLogout}
             visibleTabTypes={mergedVisibleTabTypes}
             onVisibleTabTypesChange={setLocalVisibleTabTypes}
             uiScale={uiScale}
@@ -2562,6 +2599,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
 		[mergedVisibleTabTypes],
 	)
 
+   const activeWsForMenu = workspacesApi.sessions.find((s) => s.id === workspaceId)
+   const sessionInfo = {
+     workspace: activeWsForMenu?.name || '(no workspace)',
+     collabContext: collabContext || activeWsForMenu?.name || '',
+     directory: activeWsForMenu?.root || workspace || '',
+     tabViewState: tabSession.name,
+   }
+
    const viewMenu = (desktop: boolean) => (
      <ViewMenu
        views={filteredViews}
@@ -2578,7 +2623,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       onLogout={onLogout}
       onClose={() => setMenuOpen(false)}
       desktop={desktop}
-      workspaceSwitcher={<WorkspaceSwitcher workspacesApi={workspacesApi} menuUp allowCustomDirectory={allowCustomDirectory} />}
+      sessionInfo={sessionInfo}
+      onOpenSessionPicker={() => openSessionPicker(true)}
       onToggleDesktop={() => setDesktopMode(!desktopMode)}
       pointers={collabPointers}
       onJumpToPointer={jumpToCollabPointer}
@@ -2614,6 +2660,22 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       }}
     >
       {desktopMode && viewMenu(true)}
+
+      {sessionPicker && (
+        <ChooseWorkspaceAndTabSession
+          workspacesApi={workspacesApi}
+          authFetch={authFetch}
+          username={username}
+          currentWorkspaceId={workspaceId}
+          currentCollabContext={collabContext}
+          currentTabViewState={tabSession.name}
+          showCancel={sessionPicker.showCancel}
+          onCancel={() => setSessionPicker(null)}
+          onApply={applySessionChoice}
+          onLogout={onLogout}
+          onCloseAllAndLogout={onLogout}
+        />
+      )}
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar: menu button (mobile) + view tabs + file actions */}

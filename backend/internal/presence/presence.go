@@ -42,7 +42,8 @@ type Member struct {
 	AnchorCol  int      `json:"anchorCol,omitempty"`  // selection start column (1-based, 0 = no selection)
 	HeadLine   int      `json:"headLine,omitempty"`   // selection end line (0 = no selection)
 	HeadCol    int      `json:"headCol,omitempty"`    // selection end column (1-based, 0 = no selection)
-	Tabs       []string `json:"tabs,omitempty"` // open file tabs (relative paths)
+	Tabs         []string `json:"tabs,omitempty"`          // open file tabs (relative paths)
+	TabViewState string   `json:"tabViewState,omitempty"` // user:<name> view state using this socket
 }
 
 // Presenter is the single participant currently leading the room. While set,
@@ -90,7 +91,7 @@ func NewHub() *Hub {
 // channel that will receive roster events (including the one triggered by this
 // join). The channel is buffered; if a consumer falls behind, events are dropped
 // rather than blocking the hub.
-func (h *Hub) Join(username string) (string, <-chan []byte) {
+func (h *Hub) Join(username string, tabViewState ...string) (string, <-chan []byte) {
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -103,14 +104,15 @@ func (h *Hub) Join(username string) (string, <-chan []byte) {
 	if username == "" {
 		username = "anon"
 	}
-	c := &client{
-		member: Member{
-			ID:       id,
-			Username: username,
-			Color:    palette[(h.counter-1)%uint64(len(palette))],
-		},
-		out: make(chan []byte, 16),
+	member := Member{
+		ID:       id,
+		Username: username,
+		Color:    palette[(h.counter-1)%uint64(len(palette))],
 	}
+	if len(tabViewState) > 0 {
+		member.TabViewState = tabViewState[0]
+	}
+	c := &client{member: member, out: make(chan []byte, 16)}
 	h.clients[id] = c
 	h.mu.Unlock()
 

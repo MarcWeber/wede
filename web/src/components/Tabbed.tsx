@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Lock, Unlock } from 'lucide-react'
-import Selectable, { SelectableGroup, type MenuEntry, type SelectMode } from './Selectable'
+import Selectable, { SelectableGroup, type MenuEntry } from './Selectable'
 import { TONE_WEAK, TONE_VAR, toneForView, VIEW_MODES, type ViewMode } from '../lib/viewTypes'
 import { useDragHints, offset_pos, type DragHintAction, type DragEndInfo } from './DragHint'
 import { is_x_scroll, MAX_BUTTON_DISTANCE, TAB_DRAG_THRESHOLD } from '../lib/swipe-utilities'
@@ -48,7 +48,7 @@ export default function Tabbed({
   const small = size === 'small'
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [multiline, setMultiline] = useState(false)
-  const [selectionMode, setSelectionMode] = useState<SelectMode>('normal')
+  const [selectionMode, setSelectionMode] = useState<'normal' | 'selecting' | 'menu'>('normal')
   const [floatMenu, setFloatMenu] = useState<{ x: number; y: number; id: string; target: 'current' | 'selected' } | null>(null)
   const tabRefs = useRef<Record<string, HTMLDivElement | null>>({})
 

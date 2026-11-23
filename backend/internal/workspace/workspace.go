@@ -1,12 +1,3 @@
-// Package workspace introduces the multi-project ("workspace") model that replaces wede's
-// former single global workspace. Each Workspace owns an isolated project root via its
-// own folder.Manager, which satisfies the WorkspaceProvider interface that the
-// files/git/search/filewatcher/terminal/lsp handlers depend on. A RoomManager owns
-// the set of live workspaces.
-//
-// This is the backbone of the collaborative rebuild: per-workspace state instead of one
-// global singleton. Route-scoping of the per-workspace services (/api/workspaces/{id}/...) is
-// layered on in subsequent slices; this file establishes the registry and lifecycle.
 package workspace
 
 import (
@@ -41,6 +32,12 @@ import (
 // through its folder.Manager (which the per-workspace service handlers consume).
 // The service handlers (files/git/search) are constructed lazily and bound to
 // this workspace's workspace, so each workspace operates on its own isolated root.
+//
+// A Workspace is also one live session. A workspace may host several sessions
+// (one per collaboration context); the root folder is shared, while everything
+// else (terminals, documents, chat, presence) is per-session. A session is
+// uniquely identified by "workspace:context[:root]" (context defaults to the
+// workspace name).
 type Workspace struct {
 	ID        string
 	Name      string
@@ -343,6 +340,8 @@ type Manager struct {
 	allowCustomDir  bool   // permit POST /api/workspaces from an arbitrary path
 	canLead         func(username string) bool
 	visibleTabTypes map[string]bool // global visible tab types from config
+
+	tabSessions *tabSessionStore
 }
 
 // Template is a configured workspace blueprint. Sessions are created from it.
@@ -377,6 +376,7 @@ func NewManager(frameAncestors, allowedRoot string) *Manager {
 		defaultTimeout: 600,
 		frameAncestors: frameAncestors,
 		allowedRoot:    allowedRoot,
+		tabSessions:    newTabSessionStore(),
 	}
 }
 
@@ -595,6 +595,13 @@ func (m *Manager) uniqueSessionName(base string) string {
 			return candidate
 		}
 	}
+}
+
+// TabSessions returns the manager's tab_view_state store (initialized in NewManager).
+func (m *Manager) TabSessions() *tabSessionStore {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tabSessions
 }
 
 // Get returns the workspace with the given id.

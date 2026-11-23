@@ -29,6 +29,7 @@ interface SettingsProps {
   onTrustChange: () => void
   desktopMode: boolean
   onDesktopModeChange: (v: boolean) => void
+  onLogout: () => void
   visibleTabTypes: Record<string, boolean> | null
   onVisibleTabTypesChange: (types: Record<string, boolean>) => void
   uiScale: UiScale
@@ -38,7 +39,7 @@ interface SettingsProps {
   allowCustomDirectory?: boolean
 }
 
-export default function Settings({ visible, onClose, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation, workspacesApi, allowCustomDirectory = false }: SettingsProps) {
+export default function Settings({ visible, onClose, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, onLogout, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation, workspacesApi, allowCustomDirectory = false }: SettingsProps) {
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
   const [media, setMedia] = useMediaSettings()
@@ -389,11 +390,7 @@ export default function Settings({ visible, onClose, workspace, editorSettings, 
           <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Workspace</h3>
           <div className="space-y-2">
             {workspacesApi && (
-              <WorkspaceSwitcher
-                workspacesApi={workspacesApi}
-                inline
-                allowCustomDirectory={allowCustomDirectory}
-              />
+              <WorkspaceSwitcher workspacesApi={workspacesApi} onLogout={onLogout} />
             )}
             <div className="bg-bg-primary border border-border rounded-lg p-3">
               <div className="flex items-center gap-2">

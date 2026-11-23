@@ -3,6 +3,7 @@ package workspace
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -118,6 +119,93 @@ func (m *Manager) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, toDTO(rm))
+}
+
+// HandleTabSessionList serves GET /api/workspaces/{id}/tab_sessions?context=&dir=
+func (m *Manager) HandleTabSessionList(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	store := m.TabSessions()
+	if store == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"tab_sessions": []any{}})
+		return
+	}
+	key := tabStateKey(id, r.URL.Query().Get("context"), r.URL.Query().Get("dir"))
+	connected := map[string]bool{}
+	if rm, ok := m.Get(id); ok {
+		for _, member := range rm.Presence().Roster() {
+			if member.TabViewState != "" {
+				connected[member.TabViewState] = true
+			}
+		}
+	}
+	users := store.List(key)
+	out := make([]map[string]any, 0, len(users))
+	for _, u := range users {
+		if st := store.Get(key, u); st != nil {
+			out = append(out, map[string]any{
+				"name":       st.Name,
+				"updated_at": st.UpdatedAt,
+				"data":       st.Data,
+				"connected":  connected[st.Name],
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tab_sessions": out})
+}
+
+// HandleTabSessionGet serves GET /api/workspaces/{id}/tab_sessions/{name}?context=&dir=
+func (m *Manager) HandleTabSessionGet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	store := m.TabSessions()
+	if store == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tab session not found"})
+		return
+	}
+	key := tabStateKey(id, r.URL.Query().Get("context"), r.URL.Query().Get("dir"))
+	st := store.Get(key, name)
+	if st == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tab session not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// HandleTabSessionPut serves PUT /api/workspaces/{id}/tab_sessions/{name}?context=&dir=
+func (m *Manager) HandleTabSessionPut(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	if strings.TrimSpace(name) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name required"})
+		return
+	}
+	var body json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
+		return
+	}
+	store := m.TabSessions()
+	if store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "tab sessions disabled"})
+		return
+	}
+	key := tabStateKey(id, r.URL.Query().Get("context"), r.URL.Query().Get("dir"))
+	st := store.Put(key, name, body)
+	writeJSON(w, http.StatusOK, st)
+}
+
+// HandleTabSessionDelete serves DELETE /api/workspaces/{id}/tab_sessions/{name}?context=&dir=
+func (m *Manager) HandleTabSessionDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	store := m.TabSessions()
+	if store == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "gone"})
+		return
+	}
+	key := tabStateKey(id, r.URL.Query().Get("context"), r.URL.Query().Get("dir"))
+	store.Delete(key, name)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // Scoped adapts a per-workspace handler into an http.HandlerFunc registered under a

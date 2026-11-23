@@ -246,6 +246,12 @@ func main() {
 	protected.HandleFunc("GET /api/workspaces/{id}", wsMgr.HandleGet)
 	protected.Handle("DELETE /api/workspaces/{id}", re(http.HandlerFunc(wsMgr.HandleClose))) // editor+ only: closing a workspace is a mutating/DoS-capable action
 
+	// Per-user tab_view_states (window layout) keyed by session context.
+	protected.HandleFunc("GET /api/workspaces/{id}/tab_sessions", wsMgr.HandleTabSessionList)
+	protected.HandleFunc("GET /api/workspaces/{id}/tab_sessions/{name}", wsMgr.HandleTabSessionGet)
+	protected.Handle("PUT /api/workspaces/{id}/tab_sessions/{name}", re(http.HandlerFunc(wsMgr.HandleTabSessionPut)))
+	protected.Handle("DELETE /api/workspaces/{id}/tab_sessions/{name}", re(http.HandlerFunc(wsMgr.HandleTabSessionDelete)))
+
 	// Per-workspace service routes. Each resolves {id} -> Workspace and dispatches to a
 	// handler bound to that workspace's isolated workspace. The legacy /api/files,
 	// /api/git, /api/search routes below remain (default workspace) until the frontend
@@ -300,6 +306,9 @@ func main() {
 	// terminal (shared PTY sessions per workspace) + lsp (language servers per workspace)
 	protected.HandleFunc("GET /api/workspaces/{id}/terminal/sessions", rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Terminal().ListSessions }))
 	protected.Handle("GET /api/workspaces/{id}/terminal", re(rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Terminal().HandleWS }))) // viewers get no shell
+	// Close a single terminal PTY by client id. Demoted to a plain detach when
+	// other viewers are still attached, so closing the tab doesn't kill the shared shell.
+	protected.Handle("POST /api/workspaces/{id}/terminal/close", re(rs(func(ws *workspace.Workspace) http.HandlerFunc { return ws.Terminal().HandleClose })))
 	// Tasks (~/.wede/tasks.json + trusted project .wede/tasks.json) — run client-side
 	// in a terminal, which is itself editor-gated.
 	protected.HandleFunc("GET /api/workspaces/{id}/tasks", rs(func(ws *workspace.Workspace) http.HandlerFunc { return tasks.Handler(ws.Root()) }))
