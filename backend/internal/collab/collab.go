@@ -47,6 +47,10 @@ const (
 	readLimit    = 8 << 10 // 8 KiB — cursor messages are tiny
 )
 
+// TabSessionGetter fetches the saved layout for a user's tab view state.
+// It returns nil if no saved state exists.
+type TabSessionGetter func(sessionKey, username string) []byte
+
 // Handler upgrades collaboration WebSockets for a single room's presence hub.
 type Handler struct {
 	hub      *presence.Hub
@@ -55,13 +59,16 @@ type Handler struct {
 	// visibleTabTypes controls which tab types are shown in the hamburger menu.
 	// nil means all tabs are visible.
 	visibleTabTypes map[string]bool
+	// tabSession fetches the saved layout for the connecting user.
+	tabSession TabSessionGetter
 }
 
 // New builds a collab handler bound to a room's presence hub. frameAncestors
 // mirrors the terminal/lsp origin-check behaviour (space-separated origins).
 // canLead validates the teacher permission for starting a forced-follow lead.
 // visibleTabTypes controls which tab types are shown (nil = all visible).
-func New(frameAncestors string, hub *presence.Hub, canLead func(username string) bool, visibleTabTypes map[string]bool) *Handler {
+// tabSession fetches the saved layout for the connecting user (nil = no layout).
+func New(frameAncestors string, hub *presence.Hub, canLead func(username string) bool, visibleTabTypes map[string]bool, tabSession TabSessionGetter) *Handler {
 	allowed := parseOrigins(frameAncestors)
 	return &Handler{
 		hub:     hub,
@@ -70,6 +77,7 @@ func New(frameAncestors string, hub *presence.Hub, canLead func(username string)
 			CheckOrigin: func(r *http.Request) bool { return checkOrigin(r, allowed) },
 		},
 		visibleTabTypes: visibleTabTypes,
+		tabSession:      tabSession,
 	}
 }
 
@@ -106,14 +114,29 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tell this client which roster id belongs to it. Roster broadcasts are
-	// shared, so identity cannot be inferred reliably from the member list.
-	selfMsg := map[string]any{"type": "self", "id": id}
+	// Send one initial packet: self identity + saved layout (init) + current roster (presence).
+	// The client needs all three to initialize the IDE state — no separate packets, no race.
+	initPacket := map[string]any{"type": "init"}
+	initPacket["id"] = id
 	if h.visibleTabTypes != nil {
-		selfMsg["visibleTabTypes"] = h.visibleTabTypes
+		initPacket["visibleTabTypes"] = h.visibleTabTypes
 	}
-	if self, err := json.Marshal(selfMsg); err == nil {
-		_ = conn.WriteMessage(websocket.TextMessage, self)
+
+	// Include saved layout for existing sessions; null for new sessions.
+	if h.tabSession != nil && tabViewState != "" {
+		workspaceID := r.PathValue("id")
+		dir := strings.TrimSpace(r.URL.Query().Get("dir"))
+		sessionKey := tabStateKey(workspaceID, collabContext, dir)
+		data := h.tabSession(sessionKey, tabViewState)
+		initPacket["data"] = json.RawMessage(data)
+	}
+
+	// Include current presence roster so the client knows who else is connected.
+	roster := h.hub.Roster()
+	initPacket["members"] = roster
+
+	if initBytes, err := json.Marshal(initPacket); err == nil {
+		_ = conn.WriteMessage(websocket.TextMessage, initBytes)
 	}
 
 	stop := make(chan struct{})
@@ -339,4 +362,17 @@ func validPointerRelay(m map[string]json.RawMessage) bool {
 	default:
 		return false
 	}
+}
+
+// tabStateKey builds the session key "workspace:context[:dir]" from request
+// parts. context defaults to the workspace id; dir is an optional relative path.
+func tabStateKey(workspace, context, dir string) string {
+	if strings.TrimSpace(context) == "" {
+		context = workspace
+	}
+	key := workspace + ":" + context
+	if dir = strings.Trim(strings.TrimSpace(dir), "/"); dir != "" {
+		key += ":" + dir
+	}
+	return key
 }

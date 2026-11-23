@@ -60,6 +60,8 @@ type Workspace struct {
 	// visibleTabTypes controls which tab types are shown in the hamburger menu.
 	// nil means all tabs are visible.
 	visibleTabTypes map[string]bool
+	// tabSession fetches the saved layout for the connecting user.
+	tabSession func(sessionKey, username string) []byte
 
 	mu          sync.Mutex
 	files       *files.Handler
@@ -211,7 +213,7 @@ func (r *Workspace) Collab() *collab.Handler {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.collab == nil {
-		r.collab = collab.New(r.frameAncestors, hub, r.canLead, r.visibleTabTypes)
+		r.collab = collab.New(r.frameAncestors, hub, r.canLead, r.visibleTabTypes, r.tabSession)
 	}
 	return r.collab
 }
@@ -500,6 +502,13 @@ func (m *Manager) Register(name string, ws *folder.Manager) *Workspace {
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
 		visibleTabTypes: m.visibleTabTypes,
+		tabSession: func(sessionKey, username string) []byte {
+			st := m.tabSessions.Get(sessionKey, username)
+			if st == nil {
+				return nil
+			}
+			return st.Data
+		},
 	}
 	m.register(r)
 	return r
@@ -529,6 +538,13 @@ func (m *Manager) Create(name, root string) (*Workspace, error) {
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
 		visibleTabTypes: m.visibleTabTypes,
+		tabSession: func(sessionKey, username string) []byte {
+			st := m.tabSessions.Get(sessionKey, username)
+			if st == nil {
+				return nil
+			}
+			return st.Data
+		},
 	}
 	m.register(r)
 	return r, nil
@@ -567,6 +583,13 @@ func (m *Manager) CreateFromTemplate(templateName, sessionName string) (*Workspa
 		ws: ws, frameAncestors: m.frameAncestors, canLead: m.canLead,
 		timeoutSecs: timeout, lastActive: now,
 		visibleTabTypes: tpl.VisibleTabTypes,
+		tabSession: func(sessionKey, username string) []byte {
+			st := m.tabSessions.Get(sessionKey, username)
+			if st == nil {
+				return nil
+			}
+			return st.Data
+		},
 	}
 	m.register(r)
 	return r, nil

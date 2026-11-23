@@ -61,6 +61,7 @@ interface CollabMessage {
   list?: Pick<TerminalSession, 'id' | 'name'>[]
   visibleTabTypes?: Record<string, boolean>
   reason?: string
+  data?: unknown  // saved layout from server on connect
 }
 
 export interface UseCollabResult {
@@ -88,6 +89,7 @@ export function useCollab(
   tabViewState?: string | null,
   collabContext?: string | null,
   onKicked?: () => void,
+  onInit?: (data: unknown) => void,
 ): UseCollabResult {
   const [roster, setRoster] = useState<PresenceMember[]>([])
   const [presenter, setPresenter] = useState<CollabPresenter | null>(null)
@@ -96,7 +98,9 @@ export function useCollab(
   const [pointers, setPointers] = useState<Record<string, CollabPointer>>({})
   const wsRef = useRef<WebSocket | null>(null)
   const kickedRef = useRef(onKicked)
+  const initRef = useRef(onInit)
   useEffect(() => { kickedRef.current = onKicked }, [onKicked])
+  useEffect(() => { initRef.current = onInit }, [onInit])
   const lastSentRef = useRef<{ file: string | null; tabId: number; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number }>({ file: null, tabId: 0, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 })
   const pendingRef = useRef<{ file: string; tabId: number; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -119,6 +123,24 @@ export function useCollab(
           if (!msg) return
           if (msg.type === 'kicked') {
             kickedRef.current?.()
+            return
+          }
+          if (msg.type === 'init') {
+            // Single init packet: contains id, visibleTabTypes, data (layout), and members (roster).
+            // The hub's broadcast will still send separate 'presence' updates for changes.
+            if (msg.id) setSelfId(msg.id)
+            if (msg.visibleTabTypes) setVisibleTabTypes(msg.visibleTabTypes)
+            if (Array.isArray(msg.members)) {
+              setRoster(msg.members)
+              setPresenter(msg.presenter ?? null)
+              const ids = new Set(msg.members.map((m) => m.id))
+              setPointers((prev) => {
+                const next: Record<string, CollabPointer> = {}
+                for (const k of Object.keys(prev)) if (ids.has(k)) next[k] = prev[k]
+                return next
+              })
+            }
+            initRef.current?.(msg.data)
             return
           }
           if (msg.type === 'self' && msg.id) {

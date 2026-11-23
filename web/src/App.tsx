@@ -174,6 +174,7 @@ function App() {
           currentWorkspaceId={null}
           currentCollabContext={collabContext}
           currentTabViewState={null}
+          username={username}
           showCancel={false}
           onCancel={() => { /* nothing to cancel back to */ }}
           onApply={navigateToSession}
@@ -194,6 +195,7 @@ function App() {
           currentWorkspaceId={workspacesApi.activeWorkspaceId}
           currentCollabContext={collabContext}
           currentTabViewState={tabViewState}
+          username={username}
           showCancel={false}
           onCancel={() => { /* the state is in use elsewhere */ }}
           onApply={navigateToSession}
