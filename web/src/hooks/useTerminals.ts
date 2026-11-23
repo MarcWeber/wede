@@ -255,7 +255,7 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   // preventHide is a per-user lock (part of the tab_view_state dump);
   // preventClose is shared state — the server demotes a close to a detach when
   // another viewer is still attached.
-  const closeTerminal = useCallback((id: number) => {
+  const closeTerminal = useCallback((id: number, onEmpty?: () => void) => {
     setTerminals((prev) => {
       const t = prev.find((x) => x.id === id)
       // Locked terminals refuse to close until unlocked.
@@ -263,8 +263,12 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
       const next = prev.filter((x) => x.id !== id)
       // Closing the last terminal is allowed: leave the list empty instead of
       // resurrecting a fresh PTY (the menu can add one again on demand).
-      if (next.length === 0) setActiveId(0)
-      else if (activeId === id) setActiveId(next[next.length - 1].id)
+      if (next.length === 0) {
+        setActiveId(0)
+        onEmpty?.()
+      } else if (activeId === id) {
+        setActiveId(next[next.length - 1].id)
+      }
       return next
     })
     killPty(id)

@@ -14,7 +14,7 @@ export const add = (a: D2, b: D2): D2 => [a[0] + b[0], a[1] + b[1]]
 export const sub = (a: D2, b: D2): D2 => [a[0] - b[0], a[1] - b[1]]
 export const scale = (p: D2, s: number): D2 => [p[0] * s, p[1] * s]
 export const length = (p: D2) => Math.hypot(p[0], p[1])
-export const abs = (p: D2) => [Math.abs(p[1]), Math.abs(p[0])]
+export const abs = (p: D2) => [Math.abs(p[0]), Math.abs(p[1])]
 // [0,0] yields [inf, inf]
 export const normalize = (p: D2): D2 => scale(p, 1 / length(p))
 export type Orientation = 'portrait' | 'landscape'

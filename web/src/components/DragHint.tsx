@@ -88,6 +88,8 @@ export interface DragEndInfo extends DragHintInfo {
   dropTarget: Element | null
   // The [data-reorder-id] element under the pointer, if any
   dropReorderId: string | null
+  // Whether the pointer landed on the right half of the target tab
+  dropReorderAfter: boolean
   // Whether the pointer is outside the [data-reorder-group] at release
   outsideGroup: boolean
 }
@@ -467,10 +469,17 @@ export function useDragHints(opts: UseDragHintsOptions) {
         const el = releaseEl
         const row = el?.closest('[data-reorder-id]') as HTMLElement | null
         const dropReorderId = row?.dataset.reorderId ?? null
+        // Detect left/right half of the target tab for insert position
+        let dropReorderAfter = false
+        if (row) {
+          const rect = row.getBoundingClientRect()
+          dropReorderAfter = info.clientX > rect.left + rect.width / 2
+        }
         o.onDragEnd({
           ...info,
           dropTarget: el,
           dropReorderId,
+          dropReorderAfter,
           outsideGroup: releaseOutsideGroup,
         })
       }

@@ -395,10 +395,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
           for (const lt of container.attached.left.container.tabs) {
             restoredContainerOf[tabEntryId(lt)] = `container:${cid}`
           }
-          if (container.attached.left.container.selected_tab) {
-            const sel = container.attached.left.container.tabs.find((t) => t.id === container.attached.left.container.selected_tab)
+          const leftC = container.attached!.left!.container
+          if (leftC.selected_tab) {
+            const sel = leftC.tabs.find((t: LayoutTab) => t.id === leftC.selected_tab)
             if (sel) restoredContainerActive[cid] = tabEntryId(sel)
-            else if (container.attached.left.container.tabs.length > 0) restoredContainerActive[cid] = tabEntryId(container.attached.left.container.tabs[0])
+            else if (leftC.tabs.length > 0) restoredContainerActive[cid] = tabEntryId(leftC.tabs[0])
           }
           restoreAttached(container.attached.left.container)
         }
@@ -409,10 +410,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
           for (const lt of container.attached.right.container.tabs) {
             restoredContainerOf[tabEntryId(lt)] = `container:${cid}`
           }
-          if (container.attached.right.container.selected_tab) {
-            const sel = container.attached.right.container.tabs.find((t) => t.id === container.attached.right.container.selected_tab)
+          const rightC = container.attached!.right!.container
+          if (rightC.selected_tab) {
+            const sel = rightC.tabs.find((t: LayoutTab) => t.id === rightC.selected_tab)
             if (sel) restoredContainerActive[cid] = tabEntryId(sel)
-            else if (container.attached.right.container.tabs.length > 0) restoredContainerActive[cid] = tabEntryId(container.attached.right.container.tabs[0])
+            else if (rightC.tabs.length > 0) restoredContainerActive[cid] = tabEntryId(rightC.tabs[0])
           }
           restoreAttached(container.attached.right.container)
         }
@@ -423,10 +425,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
           for (const lt of container.attached.bottom.container.tabs) {
             restoredContainerOf[tabEntryId(lt)] = `container:${cid}`
           }
-          if (container.attached.bottom.container.selected_tab) {
-            const sel = container.attached.bottom.container.tabs.find((t) => t.id === container.attached.bottom.container.selected_tab)
+          const bottomC = container.attached!.bottom!.container
+          if (bottomC.selected_tab) {
+            const sel = bottomC.tabs.find((t: LayoutTab) => t.id === bottomC.selected_tab)
             if (sel) restoredContainerActive[cid] = tabEntryId(sel)
-            else if (container.attached.bottom.container.tabs.length > 0) restoredContainerActive[cid] = tabEntryId(container.attached.bottom.container.tabs[0])
+            else if (bottomC.tabs.length > 0) restoredContainerActive[cid] = tabEntryId(bottomC.tabs[0])
           }
           restoreAttached(container.attached.bottom.container)
         }
@@ -445,7 +448,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
           restoredContainerOf[entryId] = `container:${cid}`
         }
         if (fw.container.selected_tab) {
-          const sel = fw.container.tabs.find((t) => t.id === fw.container.selected_tab)
+          const sel = fw.container.tabs.find((t: LayoutTab) => t.id === fw.container.selected_tab)
           if (sel) restoredContainerActive[cid] = tabEntryId(sel)
           else if (fw.container.tabs.length > 0) restoredContainerActive[cid] = tabEntryId(fw.container.tabs[0])
         } else if (fw.container.tabs.length > 0) {
@@ -494,7 +497,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
 
     containerIdRef.current = Math.max(containerIdRef.current, nextCid)
 
-    // Collect file tabs and file IDs from the layout tree
+    // Collect file tabs and file IDs from the layout tree.
+    // Terminal IDs are imported by useTerminals server reconciliation, not here.
     const restoredTabs: Tab[] = []
     const restoredFileIds: number[] = []
     function collectTabs(container: LayoutContainer) {
@@ -1087,27 +1091,12 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   const mainTabs = rootEntries.filter((e) => !isDockedMode(shellMode(e.id)) && shellMode(e.id) !== 'float')
   const mainActive = activeRootEntry && mainTabs.some((e) => e.id === activeRootEntry.id) ? activeRootEntry.id : centerEntry?.id ?? ''
 
-  // When entries change and activeShell is not in the list, pick the first
-  // available entry so the UI always has something active.
-  useEffect(() => {
-    if (!entries.length || entries.some((e) => e.id === activeShell)) return
-    const e = entries[0]
-    setLayout(prev => {
-      const updates: Partial<WorkspaceLayout> = { activeShell: e.id }
-      if (e.filePath) updates.activeTab = e.filePath
-      else if (e.webPath) updates.activeTab = e.webPath
-      else if (e.fileId != null) updates.activeFileId = e.fileId
-      else if (e.apiId != null) updates.activeApiId = e.apiId
-      else if (e.termId != null) { terminalsApi.setActiveId(e.termId); /* no layout change */ }
-      else updates.activeTab = null
-      return { ...prev, ...updates }
-    })
-  }, [entries, activeShell, terminalsApi])
 
   // No restore useEffect needed — layout comes from WebSocket onInit callback.
   // The server is the single source of truth.
 
   // Remove empty containers so no ghost strip/window remains.
+  // Runs synchronously after drag & drop to prevent a visible ghost frame.
   useEffect(() => {
     const empty = containers.filter((c) => {
       if (!c.visible) return false
@@ -1130,7 +1119,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       for (const [cid, child] of Object.entries(nextContainerActive)) if (keys.has(child)) delete nextContainerActive[Number(cid)]
       const nextContainerOf = { ...prev.containerOf }
       for (const key of keys) { if (nextContainerOf[key]) delete nextContainerOf[key] }
-      return { ...prev, containers: prev.containers.filter((c) => !ids.has(c.id)), viewModes: nextViewModes, containerActive: nextContainerActive, containerOf: nextContainerOf }
+      // Also clean up floatGeom for removed containers
+      const nextFloatGeom = { ...prev.floatGeom }
+      for (const key of keys) delete nextFloatGeom[key]
+      return { ...prev, containers: prev.containers.filter((c) => !ids.has(c.id)), viewModes: nextViewModes, containerActive: nextContainerActive, containerOf: nextContainerOf, floatGeom: nextFloatGeom }
     })
     setNestedDockActive((prev) => {
       let changed = false
@@ -1166,12 +1158,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     setLayout(prev => ({ ...prev, visible: { ...prev.visible, terminals: true }, activeShell: `term:${id}` }))
   }, [role, terminalsApi])
 
-  // Closing the last terminal leaves an empty terminal list. Uncheck the
-  // Terminals menu row too, so the UI doesn't claim a view exists with no tabs.
-  useEffect(() => {
-    if (terminalsApi.terminals.length > 0) return
-    setVisible((v) => (v.terminals ? { ...v, terminals: false } : v))
-  }, [terminalsApi.terminals.length])
 
   // Debugging (DAP) — adapter availability, breakpoints, and the live session.
   const dap = useDap({ workspaceId, token })
@@ -2013,7 +1999,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       setContainers((prev) => prev.map((c) => (c.id === e.containerId ? { ...c, visible: false } : c)))
       return
     }
-    if (e.termId != null) { terminalsApi.closeTerminal(e.termId); return }
+    if (e.termId != null) { terminalsApi.closeTerminal(e.termId, () => setVisible(v => ({ ...v, terminals: false }))); return }
     setVisible((v) => ({ ...v, [e.kind]: false }))
   }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping, fileIds])
 
@@ -2031,7 +2017,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       else if (e.searchId != null) setSearchIds((prev) => prev.filter((x) => x !== e.searchId))
       else if (e.logId != null) setLogIds((prev) => prev.filter((x) => x !== e.logId))
       else if (e.containerId != null) setContainers((prev) => prev.map((c) => (c.id === e.containerId ? { ...c, visible: false } : c)))
-      else if (e.termId != null) terminalsApi.closeTerminal(e.termId)
+      else if (e.termId != null) terminalsApi.closeTerminal(e.termId, () => setVisible(v => ({ ...v, terminals: false })))
       else setVisible((v) => ({ ...v, [e.kind]: false }))
     }
     if (closeFileIds.size > 0) {
@@ -2041,7 +2027,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     }
   }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping, fileIds])
 
-  const reorderShell = useCallback((from: string, to: string) => {
+  const reorderShell = useCallback((from: string, to: string, after = false) => {
     setTabOrder((prev) => {
       const ids = entries.map((e) => e.id)
       const base = [...new Set([...prev.filter((id) => ids.includes(id)), ...ids])]
@@ -2050,7 +2036,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       if (a < 0 || b < 0 || a === b) return prev
       const next = base.slice()
       const [moved] = next.splice(a, 1)
-      next.splice(b, 0, moved)
+      const insertAt = after ? b + 1 : b
+      next.splice(insertAt, 0, moved)
       return next
     })
   }, [entries])
@@ -2988,9 +2975,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
               onCloseSelected={closeSelectedShells}
               onToggleLock={setShellLock}
               onSetViewMode={setShellViewMode}
-              onReorder={(from, to) => {
+              onReorder={(from, to, after) => {
                 if (from === e.id || to === e.id) return
-                reorderShell(from, to)
+                reorderShell(from, to, after)
               }}
               onDragAway={handleDragAway}
               onDragDetach={(id) => setModeDrag(id)}

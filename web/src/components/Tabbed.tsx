@@ -29,7 +29,7 @@ export interface TabbedProps {
   onCloseSelected?: (ids: string[], includeLocked?: boolean) => void
   onToggleLock?: (ids: string[], locked: boolean) => void
   onSetViewMode?: (ids: string[], mode: ViewMode) => void
-  onReorder?: (from: string, to: string) => void
+  onReorder?: (from: string, to: string, after: boolean) => void
   onDragAway?: (id: string, at: { x: number; y: number }) => void
   onDragDetach?: (id: string) => void
   onDropViewMode?: (id: string, mode: string, nearId?: string, after?: boolean) => void
@@ -89,7 +89,7 @@ export default function Tabbed({
 
     // Reorder: dropped on another tab within the same group
     if (info.dropReorderId && info.dropReorderId !== tabId) {
-      onReorder?.(tabId, info.dropReorderId)
+      onReorder?.(tabId, info.dropReorderId, info.dropReorderAfter)
       onDragCancelViewMode?.()
       return
     }
