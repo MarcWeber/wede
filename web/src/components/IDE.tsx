@@ -331,15 +331,16 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
 
   // Collaboration presence + layout init.
   // The WebSocket is the single path: connects → server sends init packet → layout set once.
-  // No REST fetch, no useEffect race, no initReceived gate.
+  // The initReceived gate prevents the save effect from running before init arrives.
+  const [initReceived, setInitReceived] = useState(false)
   const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, pointers: collabPointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals, setPushTabs } = useCollab(workspaceId, token, username, tabSession.name, collabContext, handleKicked, (data) => {
     // Server always sends init. For existing sessions: data contains the saved layout.
     // For new sessions: data is null, client uses default layout.
-    // This callback directly sets the layout — no gates, no deferrals.
 
     // New session — no saved layout, use defaults
     if (data == null) {
       if (debug) logInitPath('new-session')
+      setInitReceived(true)
       return
     }
 
@@ -354,6 +355,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       logLayoutRestore('initialize', true)
       logInitPath('restore-from-server')
     }
+
+    // Mark init as received so the save effect can proceed after this callback completes
+    setInitReceived(true)
 
     let nextCid = 1
     const restoredContainers: Array<{ id: number; visible: boolean; ownTab?: boolean }> = []
@@ -645,10 +649,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   const setActiveLogId = useCallback((up: React.SetStateAction<number>) => setLayout(p => ({ ...p, activeLogId: typeof up === 'function' ? up(p.activeLogId) : up })), [])
 
   // Save layout to server on every change.
-  // The saveLayoutToServer is debounced at 500ms and uses pendingRef,
-  // so if onInit fires before the debounce, the restored layout overwrites
-  // the default state in pendingRef. The final flush saves the correct state.
+  // Waits for initReceived before the first save to avoid saving default state
+  // before the WebSocket init message arrives.
   useEffect(() => {
+    if (!initReceived) return // wait for WebSocket init message
     // Global tab ID counter — each tab gets a unique sequential ID
     let nextTabId = 1
     // Map entry ID -> assigned tab ID so we can find selected_tab / focused_tab_id
@@ -786,7 +790,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     if (focusedTabId) layoutRoot.focused_tab_id = focusedTabId
 
     if (debug) {
-      logLayoutSave('full', { tabs: tabs.length })
+      logLayoutSave('full', layoutRoot)
     }
     // Save only what the spec says: layout tree + visible + tabContentStates
     saveLayoutToServer({
@@ -794,7 +798,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       visible,
       tabContentStates,
     })
-  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates, saveLayoutToServer, debug])
+  }, [initReceived, tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates, saveLayoutToServer, debug])
   const [modeDrag, setModeDrag] = useState<string | null>(null)
   const [dockActive, setDockActive] = useState<{ left: string | null; right: string | null; bottom: string | null }>({ left: null, right: null, bottom: null })
   const [nestedDockActive, setNestedDockActive] = useState<Record<string, string>>({})
@@ -2131,6 +2135,32 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     }
   }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping, fileIds])
 
+  // hideSelectedShells hides the given tabs by toggling their visibility off
+  // instead of closing them — the layout position is preserved.
+  const hideSelectedShells = useCallback((ids: string[]) => {
+    const kindsToHide = new Set<string>()
+    for (const id of ids) {
+      const e = entries.find((x) => x.id === id)
+      if (!e) continue
+      if (e.kind === 'file') {
+        // For file tabs, hide by setting the kind's visibility — but files
+        // are individual tabs, so we hide the whole "files" view if all
+        // selected are files, or we just hide the specific file's kind.
+        // Since files share the "files" kind, we hide the files view.
+        kindsToHide.add('files')
+      } else if (e.kind === 'term') {
+        kindsToHide.add('terminals')
+      } else {
+        kindsToHide.add(e.kind)
+      }
+    }
+    setVisible((v) => {
+      const next = { ...v }
+      for (const kind of kindsToHide) next[kind] = false
+      return next
+    })
+  }, [entries])
+
   const reorderShell = useCallback((from: string, to: string, after = false) => {
     setTabOrder((prev) => {
       const ids = entries.map((e) => e.id)
@@ -3077,6 +3107,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
               onActivate={selectShell}
               onClose={closeShell}
               onCloseSelected={closeSelectedShells}
+              onHideSelected={hideSelectedShells}
               onToggleLock={setShellLock}
               onSetViewMode={setShellViewMode}
               onReorder={(from, to, after) => {
@@ -3229,6 +3260,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
           }}
           onClose={closeShell}
           onCloseSelected={closeSelectedShells}
+          onHideSelected={hideSelectedShells}
           onToggleLock={setShellLock}
           onSetViewMode={setShellViewMode}
           onReorder={reorderShell}
@@ -3350,6 +3382,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
                 onSelect={selectShell}
                 onClose={closeShell}
                 onCloseSelected={closeSelectedShells}
+                onHideSelected={hideSelectedShells}
                 onToggleLock={setShellLock}
                 onSetViewMode={setShellViewMode}
                 onReorder={reorderShell}

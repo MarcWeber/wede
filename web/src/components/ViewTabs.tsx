@@ -26,6 +26,7 @@ export interface ViewTabsProps {
   onSelect: (id: string) => void
   onClose: (id: string) => void
   onCloseSelected: (ids: string[], includeLocked?: boolean) => void
+  onHideSelected?: (ids: string[]) => void
   onToggleLock?: (ids: string[], locked: boolean) => void
   onSetViewMode?: (ids: string[], mode: ViewMode) => void
   onReorder?: (from: string, to: string) => void
@@ -38,7 +39,7 @@ export interface ViewTabsProps {
 
 // ViewTabs is the main center tab strip. It is the same Tabbed component used
 // by the dock areas, at normal size and with multiline swipe support.
-export default function ViewTabs({ tabs, active, lockedIds, dropActive = false, onSelect, onClose, onCloseSelected, onToggleLock, onSetViewMode, onReorder, onDragDetach, onDragAway, onDropViewMode, onDragCancelViewMode, onCopyLocation }: ViewTabsProps) {
+export default function ViewTabs({ tabs, active, lockedIds, dropActive = false, onSelect, onClose, onCloseSelected, onHideSelected, onToggleLock, onSetViewMode, onReorder, onDragDetach, onDragAway, onDropViewMode, onDragCancelViewMode, onCopyLocation }: ViewTabsProps) {
   return (
     <Tabbed
       tabs={tabs}
@@ -51,6 +52,7 @@ export default function ViewTabs({ tabs, active, lockedIds, dropActive = false, 
       onActivate={onSelect}
       onClose={onClose}
       onCloseSelected={onCloseSelected}
+      onHideSelected={onHideSelected}
       onToggleLock={onToggleLock}
       onSetViewMode={onSetViewMode}
       onReorder={onReorder}

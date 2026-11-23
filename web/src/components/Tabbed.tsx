@@ -27,6 +27,7 @@ export interface TabbedProps {
   onActivate: (id: string) => void
   onClose: (id: string) => void
   onCloseSelected?: (ids: string[], includeLocked?: boolean) => void
+  onHideSelected?: (ids: string[]) => void
   onToggleLock?: (ids: string[], locked: boolean) => void
   onSetViewMode?: (ids: string[], mode: ViewMode) => void
   onReorder?: (from: string, to: string, after: boolean) => void
@@ -41,7 +42,7 @@ export interface TabbedProps {
 // dock area. `small` keeps the same behavior but takes less room.
 export default function Tabbed({
   tabs, active, lockedIds = [], size = 'normal', multilineSwipe = false, dropMode, dropActive = false, className = '', onBackgroundPointerDown,
-  onActivate, onClose, onCloseSelected, onToggleLock, onSetViewMode,
+  onActivate, onClose, onCloseSelected, onHideSelected, onToggleLock, onSetViewMode,
   onReorder, onDragAway, onDragDetach, onDropViewMode, onDragCancelViewMode,
   onCopyLocation,
 }: TabbedProps) {
@@ -249,6 +250,15 @@ export default function Tabbed({
               { key: 'close', label: 'Close', onSelect: () => onClose(tab.id) },
               { key: 'selected', label: 'Selected', tint: 'yellow', disabled: selected.size === 0, onSelect: () => onCloseSelected?.(targets) },
               { key: 'all', label: 'All', onSelect: () => onCloseSelected?.(allTargets) },
+            ],
+          },
+          {
+            key: 'hideSplit',
+            kind: 'split',
+            segments: [
+              { key: 'hide', label: 'Hide', onSelect: () => onHideSelected?.([tab.id]) },
+              { key: 'hideSelected', label: 'Selected', tint: 'yellow', disabled: selected.size === 0, onSelect: () => onHideSelected?.(targets) },
+              { key: 'hideAll', label: 'All', onSelect: () => onHideSelected?.(allTargets) },
             ],
           },
           {
