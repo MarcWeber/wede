@@ -127,7 +127,7 @@ interface TreeNodeProps {
   onToggle: (path: string) => void
   expanded: Set<string>
   authFetch: AuthFetch
-  onRefresh: () => void
+  refreshCount: number
   selectedPath?: string | null
   gitMap: GitMap
   presenceMap: Record<string, PresenceMember[]>
@@ -150,7 +150,7 @@ interface TreeNodeProps {
 /* ── Tree node ── */
 function TreeNode({
   entry, depth, rootId, onSelect, onToggle, expanded, authFetch,
-  onRefresh, selectedPath, gitMap, presenceMap, clipboard, setClipboard,
+  refreshCount, selectedPath, gitMap, presenceMap, clipboard, setClipboard,
   onPaste, onDelete, onRename, onFocusDir, selectedFiles, onToggleSelect,
   onSelectAll, onUnselectAll, onOpenSelected, onOpenAll, onDeleteSelected,
   showHiddenFiles = false,
@@ -181,6 +181,14 @@ function TreeNode({
       setChildren(Array.isArray(data) ? data as TreeEntry[] : [])
     } catch { setChildren([]) }
   }, [entry.path, entry.isDir, authFetch, showHiddenFiles])
+
+  // refreshCount increments when parent refreshes — clear cached children so they reload
+  useEffect(() => {
+    if (entry.isDir) {
+      setChildren(null)
+      if (isOpen) void loadChildren()
+    }
+  }, [refreshCount, entry.isDir, isOpen, loadChildren])
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -326,7 +334,7 @@ function TreeNode({
             <TreeNode
               key={child.path} entry={child} depth={depth + 1} rootId={rootId}
               onSelect={onSelect} onToggle={onToggle} expanded={expanded}
-              authFetch={authFetch} onRefresh={onRefresh} selectedPath={selectedPath}
+              authFetch={authFetch} refreshCount={refreshCount} selectedPath={selectedPath}
               gitMap={gitMap} presenceMap={presenceMap} clipboard={clipboard} setClipboard={setClipboard}
               onPaste={onPaste} onDelete={onDelete} onRename={onRename}
               onFocusDir={onFocusDir} selectedFiles={selectedFiles} onToggleSelect={onToggleSelect}
@@ -410,6 +418,7 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, showHiddenFile
   const [files, _setFiles] = useState<TreeEntry[]>([])
   const setFiles = (v: unknown) => _setFiles(Array.isArray(v) ? v as TreeEntry[] : [])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [refreshCount, setRefreshCount] = useState(0)
   const [showNew, setShowNew] = useState<'file' | 'folder' | null>(null)
   const [newName, setNewName] = useState('')
   const [clipboard, setClipboard] = useState<ClipboardEntry | null>(null)
@@ -437,6 +446,12 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, showHiddenFile
       setGitMap(map)
     } catch { /* ignore */ }
   }, [wsFetch])
+
+  const doRefresh = useCallback(() => {
+    void loadRoot()
+    void loadGitStatus()
+    setRefreshCount(prev => prev + 1)
+  }, [loadRoot, loadGitStatus])
 
   useEffect(() => {
     setFiles([])
@@ -509,14 +524,14 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, showHiddenFile
   // triggers (command palette / SSE watcher) to the focused root.
   useEffect(() => {
     register(ws.id, {
-      refresh: () => { void loadRoot(); void loadGitStatus() },
+      refresh: doRefresh,
       newFile: () => { onFocus(); setShowNew('file') },
       newFolder: () => { onFocus(); setShowNew('folder') },
       expandAll: expandOneLevel,
       collapseAll,
     })
     return () => register(ws.id, null)
-  }, [register, ws.id, loadRoot, loadGitStatus, onFocus, expandOneLevel, collapseAll])
+  }, [register, ws.id, doRefresh, onFocus, expandOneLevel, collapseAll])
 
   // handleCreate/confirmAndDelete/submitRename previously had no try/catch,
   // unlike every read (loadRoot/loadGitStatus) and handlePaste in this file —
@@ -647,7 +662,7 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, showHiddenFile
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <IconBtn icon={FilePlus} title="New File" onClick={(e) => { e.stopPropagation(); onFocus(); setShowNew('file') }} />
             <IconBtn icon={FolderPlus} title="New Folder" onClick={(e) => { e.stopPropagation(); onFocus(); setShowNew('folder') }} />
-            <IconBtn icon={RefreshCw} title="Refresh" onClick={(e) => { e.stopPropagation(); void loadRoot(); void loadGitStatus() }} />
+            <IconBtn icon={RefreshCw} title="Refresh" onClick={(e) => { e.stopPropagation(); doRefresh() }} />
             {canClose && <IconBtn icon={XIcon} title="Remove folder from workspace" onClick={(e) => { e.stopPropagation(); onClose() }} />}
           </div>
         </div>
@@ -678,7 +693,7 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, showHiddenFile
               <TreeNode
                 key={entry.path} entry={entry} depth={0} rootId={ws.id}
                 onSelect={selectFromRoot} onToggle={toggleExpand} expanded={expanded}
-                authFetch={wsFetch} onRefresh={() => { void loadRoot() }} selectedPath={selectedPath}
+                authFetch={wsFetch} refreshCount={refreshCount} selectedPath={selectedPath}
                 gitMap={gitMap} presenceMap={presenceMap} clipboard={clipboard} setClipboard={setClipboard}
                 onPaste={(dir) => { void handlePaste(dir) }} onDelete={handleDelete} onRename={handleRename}
                 onFocusDir={setFocusedDir} selectedFiles={selectedFiles} onToggleSelect={onToggleSelect}
