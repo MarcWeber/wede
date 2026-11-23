@@ -138,6 +138,7 @@ func main() {
 	applyConfig := func(c *config.Config) {
 		authHandler.SetCredentials(c.Password, c.Users)
 		authHandler.SetTeachers(c.Teachers)
+		authHandler.SetDebug(c.Debug)
 		wsMgr.SetDefaultTimeout(c.Defaults.Timeout())
 		wsMgr.SetVisibleTabTypes(c.VisibleTabTypes)
 		wsMgr.SetAllowCustomDirectory(c.WorkspaceAllowCustomDirectory)

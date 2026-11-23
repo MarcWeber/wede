@@ -9,6 +9,7 @@ interface AuthCheckResponse {
   teacher?: boolean
   locked?: boolean
   userCount?: number
+  debug?: boolean
 }
 
 interface LoginResponse {
@@ -59,6 +60,7 @@ export function useAuth() {
   // Undefined until the server reports a count, so the login form does not
   // claim a made-up number of attempts remaining before the first try.
   const [remaining, setRemaining] = useState<number | undefined>(undefined)
+  const [debug, setDebug] = useState(false) // server debug mode (server-log + client-log)
 
   // On mount: confirm role from /api/auth/check so a persisted viewer/editor
   // session gets the correct role even after a page reload.
@@ -70,6 +72,7 @@ export function useAuth() {
       .then(r => r.json())
       .then((data: AuthCheckResponse) => {
         setLocked(!!data.locked)
+        setDebug(!!data.debug)
         if (data.authenticated && data.role) {
           setRole(data.role)
           sessionStorage.setItem('wede_role', data.role)
@@ -208,5 +211,5 @@ export function useAuth() {
     } catch { /* ignore */ }
   }, [])
 
-  return { token, username, role, teacher, login, logout, redeem, error, locked, remaining, authFetch, updateUsername }
+  return { token, username, role, teacher, debug, login, logout, redeem, error, locked, remaining, authFetch, updateUsername }
 }

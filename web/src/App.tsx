@@ -18,7 +18,7 @@ interface WorkspaceFolderState {
 }
 
 function App() {
-  const { token, username, role, teacher, login, logout, redeem, error, remaining, authFetch, updateUsername } = useAuth()
+  const { token, username, role, teacher, debug, login, logout, redeem, error, remaining, authFetch, updateUsername } = useAuth()
   const { theme, setTheme } = useTheme()
   const workspacesApi = useWorkspaces(token, authFetch)
   const { createWorkspace, setActiveWorkspaceId, workspaces } = workspacesApi
@@ -222,6 +222,7 @@ function App() {
       onUsernameChange={updateUsername}
       role={role}
       teacher={teacher}
+      debug={debug}
       collabContext={collabContext}
       tabViewState={tabViewState}
     />

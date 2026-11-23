@@ -253,9 +253,11 @@ export interface EditorProps {
   onToggleBreakpoint?: (line: number, lines: number[]) => void
   stopLine?: number | null
   following?: boolean
+  // Initial cursor position from saved tab_content_states.
+  initialCursor?: { line: number; col: number }
 }
 
-export default function Editor({ file, content, onChange, onSave, onCursorChange, settings = {} as EditorSettings, lspExtension = null, onRegisterActions, onDefinition, collab = null, editable = true, breakpoints = [], onToggleBreakpoint, stopLine = null, following = false }: EditorProps) {
+export default function Editor({ file, content, onChange, onSave, onCursorChange, settings = {} as EditorSettings, lspExtension = null, onRegisterActions, onDefinition, collab = null, editable = true, breakpoints = [], onToggleBreakpoint, stopLine = null, following = false, initialCursor }: EditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
@@ -337,6 +339,19 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
       ? [yCollab(yt, aw, { undoManager: new Y.UndoManager(yt) })]
       : []
 
+    // Compute initial cursor position from saved tab_content_states.
+    let initialSelection: { anchor: number; head?: number } | undefined
+    if (initialCursor && initialCursor.line > 0 && !collabOn) {
+      const docText = content || ''
+      const lines = docText.split('\n')
+      const line = Math.min(initialCursor.line, lines.length)
+      const col = Math.max(1, Math.min(initialCursor.col, lines[line - 1].length + 1))
+      // Convert 1-based line/col to 0-based position.
+      let pos = 0
+      for (let i = 0; i < line - 1; i++) pos += lines[i].length + 1
+      initialSelection = { anchor: pos + col - 1, head: pos + col - 1 }
+    }
+
     const state = EditorState.create({
       // yjs's shipped .d.ts (types/YText.d.ts) declares toJSON() but omits
       // toString() from Y.Text's declarations, even though yjs/src/types/YText.js
@@ -345,6 +360,7 @@ export default function Editor({ file, content, onChange, onSave, onCursorChange
       // assumes Object.prototype's default — this is the real, intended call.
       // eslint-disable-next-line @typescript-eslint/no-base-to-string
       doc: collabOn ? yt.toString() : (content || ''),
+      selection: initialSelection,
       extensions: [
         ...collabExt,
         lineNumComp.of(numberingGutter(settings.numbering ?? 'smart')),

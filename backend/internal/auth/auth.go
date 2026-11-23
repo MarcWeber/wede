@@ -103,6 +103,7 @@ type Handler struct {
 	password      string
 	users         map[string]string // username -> password (plain or "sha256:hex")
 	teachers      map[string]bool   // set of teacher usernames
+	debug         bool              // when true, server-log and client-log are available
 	mu            sync.Mutex
 	attempts      map[string]clientAttempt // client address -> failures
 	maxAttempts   int
@@ -567,6 +568,7 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 		"role":          string(role),
 		"teacher":       isTeacher,
 		"userCount":     userCount,
+		"debug":         h.debug,
 	})
 }
 
@@ -667,6 +669,13 @@ func (h *Handler) IsTeacher(username string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.teachers != nil && h.teachers[username]
+}
+
+// SetDebug enables or disables debug mode (server-log and client-log availability).
+func (h *Handler) SetDebug(debug bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.debug = debug
 }
 
 // SetUsers updates the per-user password map and revokes sessions for users

@@ -52,6 +52,7 @@ import { decodeCollabPointer, encodeCollabPointer } from '../lib/collabPointerDo
 import { elementScale } from '../lib/uiScale'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import { useTabSession } from '../hooks/useTabSession'
+import { logLayoutSave, logLayoutRestore, logCursorMove } from '../lib/clientLog'
 import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo, CollabPointer } from '../types'
 
 // colorFromName derives a stable per-user color for collaboration cursors.
@@ -83,6 +84,7 @@ export interface IDEProps {
   onUsernameChange: (name: string) => void
   role: string
   teacher?: boolean
+  debug?: boolean
   collabContext?: string | null
   tabViewState?: string | null
 }
@@ -108,7 +110,7 @@ type ViewKind = 'files' | 'search' | 'code' | 'web' | 'git' | 'api' | 'settings'
 const DEFAULT_VISIBLE: Record<ViewKind, boolean> = {
   files: true, search: false, code: true, web: false, git: false, api: false,
   settings: false, log: false, help: false, terminals: false, chat: false,
-  'session-tabs': true,
+  'session-tabs': false,
 }
 
 // Geometry of a `float` tab: it stays on top of the main container and is moved
@@ -126,9 +128,10 @@ interface FloatWindowProps {
   onChange: (g: FloatGeom) => void
   onRaise: () => void
   children: ReactNode
+  disabled?: boolean // when true, ignore pointer events (e.g. during mode drag)
 }
 
-function FloatWindow({ geom, onChange, onRaise, children }: FloatWindowProps) {
+function FloatWindow({ geom, onChange, onRaise, children, disabled = false }: FloatWindowProps) {
   const ref = useRef<HTMLDivElement>(null)
   const drag = useRef<{ dx: number; dy: number; rect: DOMRect; scaleX: number; scaleY: number } | null>(null)
 
@@ -217,7 +220,7 @@ function FloatWindow({ geom, onChange, onRaise, children }: FloatWindowProps) {
       ref={ref}
       data-float
       onPointerDown={handlePointerDown}
-      style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h, zIndex: geom.z, maxWidth: 'calc(100% - 16px)', maxHeight: 'calc(100% - 16px)' }}
+      style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h, zIndex: geom.z, maxWidth: 'calc(100% - 16px)', maxHeight: 'calc(100% - 16px)', pointerEvents: disabled ? 'none' : 'auto' }}
       className="absolute flex flex-col rounded-lg border border-border shadow-2xl overflow-hidden bg-bg-primary"
     >
       <div className="flex-1 min-h-0">{children}</div>
@@ -240,25 +243,16 @@ interface FileReadResponse {
   size?: number
 }
 
-export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false, collabContext = null, tabViewState = null }: IDEProps) {
+export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false, debug = false, collabContext = null, tabViewState = null }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
   const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, isSet: uiScaleIsSet, enabled: uiScaleEnabled, setEnabled: setUiScaleEnabled, updateScale: updateUiScale } = useUiScale()
   const { isDark, toggle: toggleTheme } = useTheme()
 
-  const [tabs, setTabs] = useState<Tab[]>(() => {
-    try {
-      const saved = localStorage.getItem('wede_tabs')
-      const parsed: unknown = saved ? JSON.parse(saved) : []
-      // Upgrade tabs persisted before multi-root composite keys (fills
-      // rel/workspaceId so save/format don't POST to /workspaces/undefined/...).
-      return Array.isArray(parsed) ? (parsed as Partial<Tab>[]).map((t) => normalizeTabIdentity(t, workspaceId) as Tab) : []
-    } catch { return [] }
-  })
-  const [activeTab, setActiveTab] = useState<string | null>(() => {
-    const saved = localStorage.getItem('wede_activeTab')
-    return saved ? (normalizeTabIdentity({ path: saved }, workspaceId)?.path ?? null) : null
-  })
+  // Layout state is stored on the server only. These defaults are used until
+  // the server layout hydrates — no localStorage fallback.
+  const [tabs, setTabs] = useState<Tab[]>([])
+  const [activeTab, setActiveTab] = useState<string | null>(null)
 
   const tabSession = useTabSession({ workspaceId, authFetch, username, collabContext, tabViewState })
   const { saveLayout, stopSaving, layout: savedLayout, loading: savedLayoutLoading } = tabSession
@@ -312,120 +306,135 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     { kind: 'session-tabs', label: 'Session tabs', icon: Users },
     { kind: 'settings', label: 'Settings', icon: SettingsIcon },
   ]
-  const [visible, setVisible] = useState<Record<ViewKind, boolean>>(() => {
-    try {
-      const saved = localStorage.getItem('wede_visible')
-      if (saved) return { ...DEFAULT_VISIBLE, ...(JSON.parse(saved) as Partial<Record<ViewKind, boolean>>) }
-    } catch { /* ignore */ }
-    return DEFAULT_VISIBLE
-  })
-  const [tabOrder, setTabOrder] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('wede_tab_order')
-      if (saved) return JSON.parse(saved) as string[]
-    } catch { /* ignore */ }
-    return []
-  })
-  const [fileIds, setFileIds] = useState<number[]>(() => {
-    try {
-      const saved = localStorage.getItem('wede_file_ids')
-      if (saved) {
-        const ids = JSON.parse(saved) as number[]
-        if (Array.isArray(ids) && ids.length) return ids
-      }
-    } catch { /* ignore */ }
-    return [1]
-  })
-  const [activeFileId, setActiveFileId] = useState<number>(() => {
-    const saved = Number(localStorage.getItem('wede_active_file_id'))
-    return Number.isFinite(saved) && saved > 0 ? saved : 1
-  })
+  const [visible, setVisible] = useState<Record<ViewKind, boolean>>(DEFAULT_VISIBLE)
+  const [tabOrder, setTabOrder] = useState<string[]>([])
+  const [fileIds, setFileIds] = useState<number[]>([1])
+  const [activeFileId, setActiveFileId] = useState<number>(1)
   const nextFileId = useRef((fileIds[fileIds.length - 1] || 0) + 1)
-  const [activeShell, setActiveShell] = useState<string>(() => {
-    const saved = localStorage.getItem('wede_active_shell')
-    if (!saved || saved === 'view:files') return 'files:1'
-    return saved
-  })
+  const [activeShell, setActiveShell] = useState<string>('files:1')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [menuPlacement, setMenuPlacement] = useState<MenuPlacement>(() => {
-    const saved = localStorage.getItem('wede_menu_placement') as MenuPlacement | null
-    return saved || (desktopMode ? 'left-icons-and-text' : 'left-of-tabs')
-  })
-  const [containers, setContainers] = useState<ContainerInfo[]>(() => {
-    try {
-      const saved = localStorage.getItem('wede_containers')
-      if (saved) return JSON.parse(saved) as ContainerInfo[]
-    } catch { /* ignore */ }
-    return [{ id: 1, visible: false }]
-  })
+  const [menuPlacement, setMenuPlacement] = useState<MenuPlacement>(desktopMode ? 'left-icons-and-text' : 'left-of-tabs')
+  const [containers, setContainers] = useState<ContainerInfo[]>([{ id: 1, visible: false }])
   // Which container (if any) owns each shell tab. Values are container ids
   // such as `container:2`; missing/empty means the root container. Containers
   // are tabs too, so this mapping supports nesting.
-  const [containerOf, setContainerOf] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem('wede_container_of')
-      if (saved) return JSON.parse(saved) as Record<string, string>
-    } catch { /* ignore */ }
-    return {}
-  })
-  const [containerActive, setContainerActive] = useState<Record<number, string>>(() => {
-    try {
-      const saved = localStorage.getItem('wede_container_active')
-      if (saved) return JSON.parse(saved) as Record<number, string>
-    } catch { /* ignore */ }
-    return {}
-  })
-  const containerIdRef = useRef((containers[containers.length - 1]?.id || 0) + 1)
-  const [lockedShells, setLockedShells] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('wede_locked_shells')
-      if (saved) return JSON.parse(saved) as string[]
-    } catch { /* ignore */ }
-    return []
-  })
-  const [viewModes, setViewModes] = useState<Record<string, ViewMode>>(() => {
-    // Default dock positions for view-only tabs so they get a proper tab strip
-    // with middle-click close and right-click menu support.
-    const defaults: Record<string, ViewMode> = {
-      'view:session-tabs': 'docked-right',
-    }
-    try {
-      const saved = localStorage.getItem('wede_view_modes')
-      if (saved) {
-        const raw = JSON.parse(saved) as Record<string, string>
-        const next: Record<string, ViewMode> = { ...defaults }
-        for (const [id, mode] of Object.entries(raw)) {
-          next[id] = (
-            mode === 'float-left' ? 'docked-left'
-              : mode === 'float-right' ? 'docked-right'
-                : mode === 'float-bottom' ? 'docked-bottom'
-                  : mode
-          ) as ViewMode
-        }
-        return next
-      }
-    } catch { /* ignore */ }
-    return defaults
-  })
-  const [floatGeom, setFloatGeom] = useState<Record<string, FloatGeom>>(() => {
-    try {
-      const saved = localStorage.getItem('wede_float_geom')
-      if (saved) return JSON.parse(saved) as Record<string, FloatGeom>
-    } catch { /* ignore */ }
-    return {}
-  })
+  const [containerOf, setContainerOf] = useState<Record<string, string>>({})
+  const [containerActive, setContainerActive] = useState<Record<number, string>>({})
+  const containerIdRef = useRef(2)
+  const [lockedShells, setLockedShells] = useState<string[]>([])
+  // Default positions for view-only tabs. SessionTabs floats in the top-right
+  // corner so the main content area starts top-left without wasting space
+  // (mobile-optimized layout). Server state overrides these on hydration.
+  const defaultViewModes: Record<string, ViewMode> = {
+    'view:session-tabs': 'float',
+  }
+  const [viewModes, setViewModes] = useState<Record<string, ViewMode>>(defaultViewModes)
+  // Default floating position for SessionTabs — top-right corner, compact size.
+  // Server state overrides these on hydration.
+  const defaultFloatGeom: Record<string, FloatGeom> = {
+    'view:session-tabs': { x: 700, y: 4, w: 220, h: 180, z: 30 },
+  }
+  const [floatGeom, setFloatGeom] = useState<Record<string, FloatGeom>>(defaultFloatGeom)
   const floatZ = useRef(30)
-  const [dockSizes, setDockSizes] = useState<{ left: number; right: number; bottom: number }>(() => {
-    try {
-      const saved = localStorage.getItem('wede_dock_sizes')
-      if (saved) return JSON.parse(saved) as { left: number; right: number; bottom: number }
-    } catch { /* ignore */ }
-    return { left: 32, right: 32, bottom: 30 }
+  const [dockSizes, setDockSizes] = useState<{ left: number; right: number; bottom: number }>({ left: 32, right: 32, bottom: 30 })
+  // Per-tab cursor positions — spec's tab_content_states. Keyed by tab path.
+  const [tabContentStates, setTabContentStates] = useState<Record<string, { line: number; col: number }>>({})
+  // initializeWorkspace runs once: either restore from server or reset to defaults.
+  const initialized = useRef(false)
+
+  // layoutRef always holds the current layout state for saving.
+  // It is updated synchronously whenever any layout state changes,
+  // so saveLayout always reads current values — no stale closures.
+  const layoutRef = useRef<{
+    tabs: Tab[]
+    activeTab: string | null
+    visible: Record<ViewKind, boolean>
+    tabOrder: string[]
+    fileIds: number[]
+    activeFileId: number
+    activeShell: string
+    menuPlacement: MenuPlacement
+    containers: { id: number; visible: boolean; ownTab?: boolean }[]
+    containerOf: Record<string, string>
+    containerActive: Record<number, string>
+    lockedShells: string[]
+    viewModes: Record<string, ViewMode>
+    floatGeom: Record<string, FloatGeom>
+    dockSizes: { left: number; right: number; bottom: number }
+    tabContentStates: Record<string, { line: number; col: number }>
+  }>({
+    tabs: [], activeTab: null, visible: DEFAULT_VISIBLE, tabOrder: [],
+    fileIds: [], activeFileId: 0, activeShell: '', menuPlacement: 'bottom-left',
+    containers: [], containerOf: {}, containerActive: {}, lockedShells: [],
+    viewModes: defaultViewModes, floatGeom: defaultFloatGeom,
+    dockSizes: { left: 32, right: 32, bottom: 30 }, tabContentStates: {},
   })
-  // Server tab_view_state wins over localStorage once; the save effect waits
-  // until this is set so the local/default layout cannot overwrite a joined
-  // state before hydration finishes.
-  const hydratedLayoutRef = useRef(false)
+
+  // Sync layoutRef whenever any layout state changes. Lightweight — no I/O.
+  useEffect(() => {
+    layoutRef.current = {
+      tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement,
+      containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates,
+    }
+  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates])
+
+  // Debounced save that reads from layoutRef (always current, never stale).
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleSave = useCallback(() => {
+    if (!initialized.current || savedLayoutLoading) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null
+      const l = layoutRef.current
+      // Wrap floating view tabs in containers for reconstructability
+      const savedContainers = [...l.containers]
+      const savedContainerOf = { ...l.containerOf }
+      const savedContainerActive = { ...l.containerActive }
+      const savedViewModes = { ...l.viewModes }
+      const savedFloatGeom = { ...l.floatGeom }
+      let maxCid = l.containers.reduce((m, c) => Math.max(m, c.id), 0)
+
+      const floatingViewTabs = Object.keys(savedViewModes)
+        .filter((k) => k.startsWith('view:'))
+        .filter((id) => savedViewModes[id] === 'float' && !savedContainerOf[id])
+
+      for (const viewId of floatingViewTabs) {
+        maxCid++
+        savedContainers.push({ id: maxCid, visible: true, ownTab: true })
+        savedContainerOf[viewId] = `container:${maxCid}`
+        savedContainerActive[maxCid] = viewId
+        delete savedViewModes[viewId]
+        savedViewModes[`container:${maxCid}`] = 'float'
+        if (savedFloatGeom[viewId]) {
+          savedFloatGeom[`container:${maxCid}`] = savedFloatGeom[viewId]
+          delete savedFloatGeom[viewId]
+        }
+      }
+
+      for (const viewId of Object.keys(savedViewModes).filter((k) => k.startsWith('view:'))) {
+        const cKey = savedContainerOf[viewId]
+        if (cKey && cKey.startsWith('container:')) {
+          if (savedViewModes[cKey] && savedViewModes[cKey] !== 'float') {
+            delete savedViewModes[viewId]
+          }
+        } else if (savedViewModes[viewId] === 'center') {
+          delete savedViewModes[viewId]
+        }
+      }
+
+      if (debug) {
+        logLayoutSave('full', { tabs: l.tabs.length, activeTab: l.activeTab, containers: savedContainers.length })
+      }
+      saveLayout({
+        tabs: l.tabs.map((t) => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url, hidden: t.hidden })),
+        activeTab: l.activeTab, visible: l.visible, tabOrder: l.tabOrder, fileIds: l.fileIds,
+        activeFileId: l.activeFileId, activeShell: l.activeShell, menuPlacement: l.menuPlacement,
+        containers: savedContainers, containerOf: savedContainerOf, containerActive: savedContainerActive,
+        lockedShells: l.lockedShells, viewModes: savedViewModes, floatGeom: savedFloatGeom,
+        dockSizes: l.dockSizes, tabContentStates: l.tabContentStates,
+      })
+    }, 500)
+  }, [initialized, savedLayoutLoading, saveLayout, debug])
   const [modeDrag, setModeDrag] = useState<string | null>(null)
   const [dockActive, setDockActive] = useState<{ left: string | null; right: string | null; bottom: string | null }>({ left: null, right: null, bottom: null })
   const [nestedDockActive, setNestedDockActive] = useState<Record<string, string>>({})
@@ -647,6 +656,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   const mainTabs = rootEntries.filter((e) => !isDockedMode(shellMode(e.id)) && shellMode(e.id) !== 'float')
   const mainActive = activeRootEntry && mainTabs.some((e) => e.id === activeRootEntry.id) ? activeRootEntry.id : centerEntry?.id ?? ''
 
+  // When entries change and activeShell is not in the list, pick the first
+  // available entry so the UI always has something active.
   useEffect(() => {
     if (!entries.length || entries.some((e) => e.id === activeShell)) return
     const e = entries[0]
@@ -658,109 +669,178 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     else if (e.termId != null) terminalsApi.setActiveId(e.termId)
     else setActiveTab(null)
   }, [entries, activeShell, setActiveTab, terminalsApi])
-  useEffect(() => { try { localStorage.setItem('wede_visible', JSON.stringify(visible)) } catch { /* ignore */ } }, [visible])
-  useEffect(() => { try { localStorage.setItem('wede_tab_order', JSON.stringify(tabOrder)) } catch { /* ignore */ } }, [tabOrder])
-  useEffect(() => { try { localStorage.setItem('wede_active_shell', activeShell) } catch { /* ignore */ } }, [activeShell])
-  useEffect(() => { try { localStorage.setItem('wede_file_ids', JSON.stringify(fileIds)) } catch { /* ignore */ } }, [fileIds])
-  useEffect(() => { try { localStorage.setItem('wede_active_file_id', String(activeFileId)) } catch { /* ignore */ } }, [activeFileId])
-  useEffect(() => { try { localStorage.setItem('wede_menu_placement', menuPlacement) } catch { /* ignore */ } }, [menuPlacement])
-  useEffect(() => { try { localStorage.setItem('wede_containers', JSON.stringify(containers)) } catch { /* ignore */ } }, [containers])
-  useEffect(() => { try { localStorage.setItem('wede_container_of', JSON.stringify(containerOf)) } catch { /* ignore */ } }, [containerOf])
-  useEffect(() => { try { localStorage.setItem('wede_container_active', JSON.stringify(containerActive)) } catch { /* ignore */ } }, [containerActive])
-  useEffect(() => { try { localStorage.setItem('wede_locked_shells', JSON.stringify(lockedShells)) } catch { /* ignore */ } }, [lockedShells])
-  useEffect(() => { try { localStorage.setItem('wede_view_modes', JSON.stringify(viewModes)) } catch { /* ignore */ } }, [viewModes])
-  useEffect(() => { try { localStorage.setItem('wede_float_geom', JSON.stringify(floatGeom)) } catch { /* ignore */ } }, [floatGeom])
-  useEffect(() => { try { localStorage.setItem('wede_dock_sizes', JSON.stringify(dockSizes)) } catch { /* ignore */ } }, [dockSizes])
 
+  // ── initialize_client_ide_workspace_state ──
+  // Two clear paths: restore from server or reset to defaults.
+  // Runs once. After setState calls, defer unlocking so the save effect
+  // sees the restored state in its closure, not the default state.
   useEffect(() => {
-    if (savedLayoutLoading || !hydratedLayoutRef.current) return
+    if (initialized.current || savedLayoutLoading) return
+
+    const l = savedLayout
+    if (l) {
+      // PATH 1: Restore from server — single batch of setState calls
+      if (debug) {
+        logLayoutRestore('initialize', true)
+      }
+
+      // Wrap any floating view tab without a container so the layout is
+      // reconstructable after reload.
+      const restoredContainers = Array.isArray(l.containers) ? [...l.containers] : []
+      const restoredContainerOf = { ...(l.containerOf || {}) }
+      const restoredViewModes = { ...(l.viewModes || {}) } as Record<string, ViewMode>
+      const restoredContainerActive = { ...(l.containerActive || {}) }
+      const restoredFloatGeom = { ...(l.floatGeom || {}) }
+
+      const floatingViewTabs = Object.keys(restoredViewModes)
+        .filter((k) => k.startsWith('view:'))
+        .filter((id) => restoredViewModes[id] === 'float' && !restoredContainerOf[id])
+
+      let maxCid = restoredContainers.reduce((m, c) => Math.max(m, c.id), 0)
+      for (const viewId of floatingViewTabs) {
+        maxCid++
+        restoredContainers.push({ id: maxCid, visible: true, ownTab: true })
+        restoredContainerOf[viewId] = `container:${maxCid}`
+        restoredContainerActive[maxCid] = viewId
+        delete restoredViewModes[viewId]
+        restoredViewModes[`container:${maxCid}`] = 'float'
+        if (restoredFloatGeom[viewId]) {
+          restoredFloatGeom[`container:${maxCid}`] = restoredFloatGeom[viewId]
+          delete restoredFloatGeom[viewId]
+        }
+        containerIdRef.current = Math.max(containerIdRef.current, maxCid + 1)
+      }
+
+      // Ensure floating container children are visible so entries includes them
+      for (const [ck, mode] of Object.entries(restoredViewModes)) {
+        if (ck.startsWith('container:') && mode === 'float') {
+          const cid = Number(ck.slice('container:'.length))
+          for (const [child, parent] of Object.entries(restoredContainerOf)) {
+            if (parent === ck) {
+              const kind = child.split(':')[0]
+              if (typeof l.visible === 'object' && l.visible) {
+                (l.visible as Record<string, boolean>)[kind] = true
+              }
+            }
+          }
+          const ac = restoredContainerActive[cid]
+          if (ac && typeof l.visible === 'object' && l.visible) {
+            (l.visible as Record<string, boolean>)[ac.split(':')[0]] = true
+          }
+        }
+      }
+
+      // Clean up stale viewMode entries for view tabs inside non-float containers
+      for (const viewId of Object.keys(restoredViewModes).filter((k) => k.startsWith('view:'))) {
+        const cKey = restoredContainerOf[viewId]
+        if (cKey && cKey.startsWith('container:')) {
+          if (restoredViewModes[cKey] && restoredViewModes[cKey] !== 'float') {
+            delete restoredViewModes[viewId]
+          }
+        } else if (restoredViewModes[viewId] === 'center') {
+          delete restoredViewModes[viewId]
+        }
+      }
+
+      // Apply all state in one batch
+      if (Array.isArray(l.tabs)) {
+        setTabs(l.tabs.map((t) => normalizeTabIdentity(t, workspaceId)).filter((t): t is Tab => !!t))
+      }
+      if (l.activeTab !== undefined) setActiveTab(l.activeTab ?? null)
+      if (l.visible) setVisible({ ...DEFAULT_VISIBLE, ...(l.visible as Partial<Record<ViewKind, boolean>>) })
+      if (Array.isArray(l.tabOrder)) setTabOrder(l.tabOrder)
+      if (Array.isArray(l.fileIds) && l.fileIds.length) {
+        setFileIds(l.fileIds)
+        nextFileId.current = Math.max(nextFileId.current, ...l.fileIds.map((id) => id + 1))
+      }
+      if (typeof l.activeFileId === 'number') setActiveFileId(l.activeFileId)
+      if (typeof l.activeShell === 'string') setActiveShell(l.activeShell)
+      if (typeof l.menuPlacement === 'string') setMenuPlacement(l.menuPlacement as MenuPlacement)
+      setContainers(restoredContainers)
+      setContainerOf(restoredContainerOf)
+      setContainerActive(restoredContainerActive)
+      if (Array.isArray(l.lockedShells)) setLockedShells(l.lockedShells)
+      setViewModes(restoredViewModes)
+      setFloatGeom(restoredFloatGeom)
+      if (l.dockSizes) setDockSizes(l.dockSizes)
+      if (l.tabContentStates) setTabContentStates(l.tabContentStates as Record<string, { line: number; col: number }>)
+      // Defer unlocking until after React applies all setState calls above.
+      // Without this, the save effect runs in the same render cycle with
+      // default state in its closure, overwriting the server with empty data.
+      queueMicrotask(() => { initialized.current = true })
+    } else {
+      // PATH 2: No server state — defaults from useState are correct, unlock immediately
+      initialized.current = true
+    }
+  }, [savedLayoutLoading, savedLayout, workspaceId, debug])
+
+  // Save the full layout to the server after initialization is complete.
+  // Floating view tabs are wrapped in containers so the saved state is
+  // reconstructable after reload.
+  useEffect(() => {
+    if (!initialized.current || savedLayoutLoading) return
+
+    const savedContainers = [...containers]
+    const savedContainerOf = { ...containerOf }
+    const savedContainerActive = { ...containerActive }
+    const savedViewModes = { ...viewModes }
+    const savedFloatGeom = { ...floatGeom }
+    let maxCid = containers.reduce((m, c) => Math.max(m, c.id), 0)
+
+    const floatingViewTabs = Object.keys(savedViewModes)
+      .filter((k) => k.startsWith('view:'))
+      .filter((id) => savedViewModes[id] === 'float' && !savedContainerOf[id])
+
+    for (const viewId of floatingViewTabs) {
+      maxCid++
+      savedContainers.push({ id: maxCid, visible: true, ownTab: true })
+      savedContainerOf[viewId] = `container:${maxCid}`
+      savedContainerActive[maxCid] = viewId
+      delete savedViewModes[viewId]
+      savedViewModes[`container:${maxCid}`] = 'float'
+      if (savedFloatGeom[viewId]) {
+        savedFloatGeom[`container:${maxCid}`] = savedFloatGeom[viewId]
+        delete savedFloatGeom[viewId]
+      }
+    }
+
+    for (const viewId of Object.keys(savedViewModes).filter((k) => k.startsWith('view:'))) {
+      const cKey = savedContainerOf[viewId]
+      if (cKey && cKey.startsWith('container:')) {
+        if (savedViewModes[cKey] && savedViewModes[cKey] !== 'float') {
+          delete savedViewModes[viewId]
+        }
+      } else if (savedViewModes[viewId] === 'center') {
+        delete savedViewModes[viewId]
+      }
+    }
+
+    if (debug) {
+      logLayoutSave('full', { tabs: tabs.length, activeTab, containers: savedContainers.length })
+    }
     saveLayout({
       tabs: tabs.map((t) => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url, hidden: t.hidden })),
-      activeTab,
-      visible,
-      tabOrder,
-      fileIds,
-      activeFileId,
-      activeShell,
-      menuPlacement,
-      containers,
-      containerOf,
-      containerActive,
-      lockedShells,
-      viewModes,
-      floatGeom,
-      dockSizes,
+      activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement,
+      containers: savedContainers, containerOf: savedContainerOf, containerActive: savedContainerActive,
+      lockedShells, viewModes: savedViewModes, floatGeom: savedFloatGeom, dockSizes, tabContentStates,
     })
-  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, saveLayout, savedLayoutLoading])
+  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates, saveLayout, debug])
 
-  // Hydrate this tab view from the server exactly once. localStorage stays the
-  // crash fallback, but a state selected in the chooser/session-tabs (including
-  // one owned by another device) must win so joining really shows that layout.
+  // Every visible container with no children is removed so no ghost strip
+  // or window remains. Floating containers with a saved child are not empty —
+  // the child may be hidden but the container preserves its position.
   useEffect(() => {
-    if (savedLayoutLoading || hydratedLayoutRef.current) return
-    hydratedLayoutRef.current = true
-    const l = savedLayout
-    if (!l) return
-    if (Array.isArray(l.tabs)) {
-      const next = l.tabs
-        .map((t) => normalizeTabIdentity(t, workspaceId))
-        .filter((t): t is Tab => !!t)
-      setTabs(next)
-    }
-    if (l.activeTab !== undefined) setActiveTab(l.activeTab ?? null)
-    if (l.visible) setVisible({ ...DEFAULT_VISIBLE, ...(l.visible as Partial<Record<ViewKind, boolean>>) })
-    if (Array.isArray(l.tabOrder)) setTabOrder(l.tabOrder)
-    if (Array.isArray(l.fileIds) && l.fileIds.length) {
-      setFileIds(l.fileIds)
-      nextFileId.current = Math.max(nextFileId.current, ...l.fileIds.map((id) => id + 1))
-    }
-    if (typeof l.activeFileId === 'number') setActiveFileId(l.activeFileId)
-    if (typeof l.activeShell === 'string') setActiveShell(l.activeShell)
-    if (typeof l.menuPlacement === 'string') setMenuPlacement(l.menuPlacement as MenuPlacement)
-    if (Array.isArray(l.containers)) {
-      setContainers(l.containers)
-      const maxId = l.containers.reduce((max, c) => Math.max(max, c.id), 0)
-      containerIdRef.current = Math.max(containerIdRef.current, maxId + 1)
-    }
-    if (l.containerOf) setContainerOf(l.containerOf)
-    if (l.containerActive) setContainerActive(l.containerActive)
-    if (Array.isArray(l.lockedShells)) setLockedShells(l.lockedShells)
-    if (l.viewModes) setViewModes(l.viewModes as Record<string, ViewMode>)
-    if (l.floatGeom) setFloatGeom(l.floatGeom)
-    if (l.dockSizes) setDockSizes(l.dockSizes)
-  }, [savedLayoutLoading, savedLayout, workspaceId])
-
-  // Upgrade any legacy raw floating tab into a floating container so every
-  // float keeps a draggable container tab.
-  useEffect(() => {
-    const loose = rootEntries.filter((e) => !e.id.startsWith('container:') && (viewModes[e.id] || 'center') === 'float')
-    if (loose.length === 0) return
-    const wrapped = loose.map((e) => ({ id: containerIdRef.current++, child: e.id, mode: 'float' as ViewMode }))
-    setContainers((prev) => [...prev, ...wrapped.map((c) => ({ id: c.id, visible: true, ownTab: true }))])
-    setContainerOf((prev) => {
-      const next = { ...prev }
-      for (const c of wrapped) next[c.child] = `container:${c.id}`
-      return next
-    })
-    setContainerActive((prev) => {
-      const next = { ...prev }
-      for (const c of wrapped) next[c.id] = c.child
-      return next
-    })
-    setViewModes((prev) => {
-      const next = { ...prev }
-      for (const c of wrapped) {
-        delete next[c.child]
-        next[`container:${c.id}`] = c.mode
+    if (!initialized.current) return
+    const empty = containers.filter((c) => {
+      if (!c.visible) return false
+      if (entries.some((e) => containerOf[e.id] === `container:${c.id}`)) return false
+      const cm = viewModes[`container:${c.id}`]
+      if (cm === 'float') {
+        if (containerActive[c.id]) return false
+        if (Object.values(containerOf).some((v) => v === `container:${c.id}`)) return false
       }
-      return next
+      return true
     })
-  }, [rootEntries, viewModes])
-
-  // Every container is disposable when empty — root, nested, docked, floating,
-  // or centered. Remove it immediately so no ghost strip/window remains.
-  useEffect(() => {
-    const empty = containers.filter((c) => c.visible && !entries.some((e) => containerOf[e.id] === `container:${c.id}`))
     if (empty.length === 0) return
     const ids = new Set(empty.map((c) => c.id))
     const keys = new Set(empty.map((c) => `container:${c.id}`))
@@ -984,20 +1064,35 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     const headLine = hasSel ? (cursor.headLine || 0) : 0
     const headCol = hasSel ? (cursor.headCol || 0) : 0
     setCollabViewing(rel, rel ? cursor.line : 0, anchorLine, anchorCol, headLine, headCol)
-  }, [activeTab, cursor.line, cursor.anchorLine, cursor.anchorCol, cursor.headLine, cursor.headCol, setCollabViewing, selfId])
+    // Also track per-tab cursor position for tab_content_states persistence.
+    if (activeTab && rel) {
+      setTabContentStates((prev) => {
+        const existing = prev[activeTab]
+        if (existing && existing.line === cursor.line && existing.col === cursor.col) return prev
+        if (debug) {
+          logCursorMove(rel, cursor.line, cursor.col)
+        }
+        return { ...prev, [activeTab]: { line: cursor.line, col: cursor.col } }
+      })
+    }
+  }, [activeTab, cursor.line, cursor.anchorLine, cursor.anchorCol, cursor.headLine, cursor.headCol, setCollabViewing, selfId, debug])
 
-  // Publish the open file tabs for this workspace so peers can follow-open.
+  // Publish the open file tabs + terminal IDs for this workspace so peers can
+  // see who has which files and terminals open (used by SessionTabs).
   const lastSentTabsRef = useRef('')
   useEffect(() => {
     const fileTabs = tabs.filter((t) => t.workspaceId === workspaceId && t.rel && !t.type)
-    const list = fileTabs.map((t) => t.rel as string)
+    const fileRelPaths = fileTabs.map((t) => t.rel as string)
+    // Include terminal IDs so peers know which terminals this user has open.
+    const termIds = terminalsApi.terminals.map((t) => `term-${t.id}`)
+    const list = [...fileRelPaths, ...termIds]
     // Include selfId so the inventory is re-sent after a reconnect, while
     // ordinary keystrokes (which replace the tabs array) stay quiet.
     const key = `${selfId}:${JSON.stringify(list)}`
     if (lastSentTabsRef.current === key) return
     lastSentTabsRef.current = key
     setCollabTabs(list)
-  }, [tabs, workspaceId, setCollabTabs, selfId])
+  }, [tabs, terminalsApi.terminals, workspaceId, setCollabTabs, selfId])
 
   // Tell the server whether this client wants its tab changes broadcast to peers.
   // When off (default), the user's tabs are stored but not pushed — peers only
@@ -1019,19 +1114,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   const effectiveFollowId = forcedPresenter ? forcedPresenter.id : presenterIsMe ? null : followTargetId
   const effectiveFollowMode = forcedPresenter ? 'live' : presenterIsMe ? null : followMode
 
-  // Persist open tabs to localStorage (rel + workspaceId let multi-root tabs be
-  // restored against their own workspace, not just the active one).
-  useEffect(() => {
-    try {
-      const toSave = tabs.map(t => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url, hidden: t.hidden }))
-      localStorage.setItem('wede_tabs', JSON.stringify(toSave))
-    } catch { /* ignore */ }
-  }, [tabs])
-
-  useEffect(() => {
-    if (activeTab) localStorage.setItem('wede_activeTab', activeTab)
-    else localStorage.removeItem('wede_activeTab')
-  }, [activeTab])
+  // Layout state (tabs, activeTab, etc.) is saved to the server only via saveLayout.
+  // No localStorage persistence — the server is the single source of truth.
 
   // Re-fetch content for restored tabs on mount
   useEffect(() => {
@@ -1528,6 +1612,26 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       cleanup()
       if (!active) return
       const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
+
+      // Check if dropped on an individual tab — allows inserting at a specific
+      // position within another container's tab strip.
+      const tabEl = el?.closest('[data-reorder-id]') as HTMLElement | null
+      if (tabEl) {
+        const nearId = tabEl.dataset.reorderId
+        // Find the parent container's drop mode (e.g. "container:1", "center", etc.)
+        const dropModeEl = tabEl.closest('[data-drop-mode]') as HTMLElement | null
+        const mode = dropModeEl?.getAttribute('data-drop-mode') || null
+        if (mode && nearId) {
+          // Determine whether to insert before or after the target tab
+          // based on mouse position relative to the tab's center.
+          const rect = tabEl.getBoundingClientRect()
+          const after = ev.clientX > rect.left + rect.width / 2
+          dropViewMode(id, mode, nearId, after)
+          return
+        }
+      }
+
+      // Otherwise check for container boundary drop handles.
       const mode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode') || null
       if (mode) dropViewMode(id, mode)
       else setModeDrag(null)
@@ -2364,6 +2468,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         onChange={(c) => updateContent(tab.path, c)}
         onSave={() => { void saveFile(tab.path) }}
         onCursorChange={isActive ? setCursor : undefined}
+        initialCursor={tabContentStates[tab.path]}
         settings={editorSettings}
         lspExtension={isActive ? lspExtension : null}
         onRegisterActions={isActive ? handleRegisterEditorActions : undefined}
@@ -2513,9 +2618,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
             activeTab={activeTab}
             collabRoster={collabRoster}
             autoRefresh={editorSettings.sessionTabAutoRefresh ?? false}
-            terminals={terminalsApi.terminals}
             onOpenTab={(path: string) => openTabFromSessionPanel({ rel: path, path })}
             onActivateTerminal={(id: number) => {
+              // If terminals container is hidden, show it first.
+              setVisible((v) => (v.terminals ? v : { ...v, terminals: true }))
               terminalsApi.setActiveId(id)
               setActiveShell(`term:${id}`)
             }}
@@ -2533,7 +2639,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       case 'api':
         return <ApiInstance key={e.apiId} workspaceId={workspaceId} authFetch={authFetch} readOnly={role === 'viewer'} />
       case 'log':
-        return <LogView key={e.logId} authFetch={authFetch} workspaceId={workspaceId} />
+        return <LogView key={e.logId} authFetch={authFetch} workspaceId={workspaceId} debug={debug} />
       case 'container': {
         const cid = e.containerId as number
         const ckey = `container:${cid}`
@@ -2943,11 +3049,15 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
                   <>
                     <div
                       data-dock-side="left"
-                      className="min-w-[180px] max-w-[65%] shrink-0 flex flex-col bg-bg-primary"
+                      data-drop-mode="docked-left"
+                      className="min-w-[180px] max-w-[65%] shrink-0 flex flex-col bg-bg-primary relative"
                       style={{ width: `${dockSizes.left}%` }}>
                       {dockedLeft.length === 1 && dockedLeft[0].kind === 'container'
                         ? renderEntry(dockedLeft[0])
                         : dockArea('left', dockedLeft)}
+                      {modeDrag && (
+                        <div className="absolute inset-0 pointer-events-none z-20 outline outline-2 outline-dashed outline-accent/60 -outline-offset-1 rounded-sm" />
+                      )}
                     </div>
                     <div
                       data-dock-resize="left"
@@ -2957,7 +3067,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
                   </>
                 ) : modeDrag ? dropSlot(null, 'docked-left') : null}
 
-                <div className="flex-1 min-w-0 min-h-0 relative bg-bg-primary">
+                <div className="flex-1 min-w-0 min-h-0 relative bg-bg-primary" data-drop-mode="center">
+                  {modeDrag && (
+                    <div className="absolute inset-0 pointer-events-none z-20 outline outline-2 outline-dashed outline-accent/60 -outline-offset-1 rounded-sm" />
+                  )}
                   {/* Keep panels with local UI state mounted while another center
                       tab is active. Search keeps results/scroll; Files keeps the
                       expanded-folder set and scroll position. */}
@@ -2984,11 +3097,15 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
                       title="Resize right container" />
                     <div
                       data-dock-side="right"
-                      className="min-w-[180px] max-w-[65%] shrink-0 flex flex-col bg-bg-primary"
+                      data-drop-mode="docked-right"
+                      className="min-w-[180px] max-w-[65%] shrink-0 flex flex-col bg-bg-primary relative"
                       style={{ width: `${dockSizes.right}%` }}>
                       {dockedRight.length === 1 && dockedRight[0].kind === 'container'
                         ? renderEntry(dockedRight[0])
                         : dockArea('right', dockedRight)}
+                      {modeDrag && (
+                        <div className="absolute inset-0 pointer-events-none z-20 outline outline-2 outline-dashed outline-accent/60 -outline-offset-1 rounded-sm" />
+                      )}
                     </div>
                   </>
                 ) : modeDrag ? dropSlot(null, 'docked-right') : null}
@@ -3003,11 +3120,15 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
                     title="Resize bottom container" />
                   <div
                     data-dock-side="bottom"
-                    className="min-h-[100px] max-h-[70%] shrink-0 flex flex-col bg-bg-primary"
+                    data-drop-mode="docked-bottom"
+                    className="min-h-[100px] max-h-[70%] shrink-0 flex flex-col bg-bg-primary relative"
                     style={{ height: `${dockSizes.bottom}%` }}>
                     {dockedBottom.length === 1 && dockedBottom[0].kind === 'container'
                       ? renderEntry(dockedBottom[0])
                       : dockArea('bottom', dockedBottom)}
+                    {modeDrag && (
+                      <div className="absolute inset-0 pointer-events-none z-20 outline outline-2 outline-dashed outline-accent/60 -outline-offset-1 rounded-sm" />
+                    )}
                   </div>
                 </>
               ) : modeDrag ? dropSlot(null, 'docked-bottom') : null}
@@ -3021,6 +3142,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
               <FloatWindow
                 key={e.id}
                 geom={g}
+                disabled={!!modeDrag}
                 onChange={(ng) => setFloatGeom((prev) => ({ ...prev, [e.id]: ng }))}
                 onRaise={() => {
                   const z = ++floatZ.current

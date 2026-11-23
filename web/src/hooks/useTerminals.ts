@@ -32,21 +32,11 @@ function loadTerminals(): TerminalSession[] | null {
   return null
 }
 
-// Generate a unique terminal id that won't collide across browser tabs.
-// Each new terminal gets a random base (multiple of 1000) so two users in different
-// tabs get distinct ranges: e.g. 1000, 1001, 1002... vs 4000, 4001, 4002...
-// This keeps IDs short and readable (easy to say over the phone) while
-// preventing collisions on the server where PTY sessions are keyed by term-<id>.
-let termBase: number | null = null
-let termNext: number = 0
+// The server is the single source of truth for terminal IDs.
+// genId is a fallback only when the server is unreachable.
+let fallbackId = 10000
 function genId(): number {
-  if (termBase === null) {
-    // Pick a random base between 1000 and 999000 (step 1000) so each tab
-    // gets its own range. 1000 possible bases → collisions are very rare.
-    termBase = 1000 + Math.floor(Math.random() * 999) * 1000
-    termNext = 0
-  }
-  return termBase + termNext++
+  return fallbackId++
 }
 
 // Format a terminal ID as a zero-padded 2-digit name: 1 → "Term 01", 10 → "Term 10".
@@ -56,7 +46,14 @@ function termName(id: number): string {
 
 export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceId: string | null | undefined, sync: UseTerminalsSync = {}) {
   const { sendTerminals, onTerminals } = sync
-  const [terminals, setTerminals] = useState<TerminalSession[]>(() => loadTerminals() || [{ id: genId(), name: termName(1) }])
+  const [terminals, setTerminals] = useState<TerminalSession[]>(() => {
+    const saved = loadTerminals()
+    if (saved) return saved
+    // Start with an empty list — the server reconciliation will import the
+    // real terminal sessions. A placeholder is added only if the server
+    // is unreachable after reconciliation.
+    return []
+  })
   const [activeId, setActiveId] = useState<number>(() => {
     const saved = sessionStorage.getItem('wede_terminal_active')
     return saved ? Number(saved) : (loadTerminals()?.[0]?.id || 1)
@@ -64,6 +61,9 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   const reconciledRef = useRef(false)
   const applyingRemoteRef = useRef(false)
   const termRefs = useRef<Record<number, TerminalHandle>>({})
+  // Track the most recently added terminal ID to avoid a race where the
+  // WebSocket echo arrives before React has flushed the local setTerminals.
+  const lastAddedIdRef = useRef<number | null>(null)
 
   // Sync the terminal list across collaborators: broadcast on local change, and
   // union in peers' terminals (additive merge → converges; same ids map to the
@@ -73,6 +73,10 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     return onTerminals((list) => {
       setTerminals((prev) => {
         const ids = new Set(prev.map((t) => t.id))
+        // Also exclude the most recently added terminal ID to avoid a race
+        // where the WebSocket echo arrives before React has flushed the local
+        // setTerminals from addTerminal.
+        if (lastAddedIdRef.current != null) ids.add(lastAddedIdRef.current)
         const filtered = (list || []).filter((t) => t && typeof t.id === 'number' && !ids.has(t.id))
         if (filtered.length === 0) return prev
         // Assign position-based names for imported peer terminals so they show
@@ -109,15 +113,26 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
           const alive = prev.filter((t) => serverIds.has(`term-${t.id}`))
           // Import server sessions not already in the local list.
           const localIds = new Set(prev.map((t) => `term-${t.id}`))
+          // Also exclude the most recently added terminal to avoid importing
+          // a terminal that was just created by addTerminal.
+          if (lastAddedIdRef.current != null) {
+            localIds.add(`term-${lastAddedIdRef.current}`)
+          }
           const additions: TerminalSession[] = []
+          let maxServerId = 0
           for (const sess of serverSessions) {
-            if (!localIds.has(sess)) {
-              const m = sess.match(/^term-(\d+)$/)
-              if (m) {
-                const id = parseInt(m[1], 10)
+            const m = sess.match(/^term-(\d+)$/)
+            if (m) {
+              const id = parseInt(m[1], 10)
+              if (id > maxServerId) maxServerId = id
+              if (!localIds.has(sess)) {
                 additions.push({ id, name: termName(id) })
               }
             }
+          }
+          // Update fallback to be above the highest server ID so we never collide.
+          if (maxServerId >= fallbackId) {
+            fallbackId = maxServerId + 1
           }
           // If nothing was loaded from storage and the server has sessions,
           // use the server list as the source of truth.
@@ -125,10 +140,18 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
             return additions.sort((a, b) => a.id - b.id)
           }
           const merged = [...alive, ...additions].sort((a, b) => a.id - b.id)
-          return merged.length ? merged : prev
+          // If reconciliation results in no terminals and the user just created
+          // one (prev.length > 0), keep the local list — the server may not have
+          // registered the PTY yet. Otherwise return the empty merged list.
+          if (merged.length === 0 && prev.length > 0) {
+            return prev
+          }
+          return merged
         })
       })
-      .catch(() => {})
+      .catch(() => {
+        // Server unreachable — keep whatever is in the local list.
+      })
   }, [authFetch, workspaceId])
 
   useEffect(() => {
@@ -159,6 +182,8 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
     } else {
       id = genId()
     }
+    // Mark this ID so the WebSocket echo callback skips it (avoids race).
+    lastAddedIdRef.current = id
     setTerminals((prev) => [...prev, { id, name: name || termName(id), initial: initial || undefined }])
     setActiveId(id)
     return id

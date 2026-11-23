@@ -376,10 +376,29 @@ func (h *Handler) HandleClose(w http.ResponseWriter, r *http.Request) {
 
 // NextTermID returns the next sequential terminal ID. The ID is 1-based and
 // increments atomically so two users in different browser tabs never get the
-// same ID. The returned ID is used as the PTY session key "term-<id>".
+// same ID. Before incrementing, it scans existing sessions to ensure the counter
+// is at least as high as any existing session ID (handles server restarts).
+// The returned ID is used as the PTY session key "term-<id>".
 func (h *Handler) NextTermID() int {
 	h.mu.Lock()
-	h.termNextId++
+	// Scan existing sessions to find the max ID — this ensures the counter
+	// never goes backward after a server restart.
+	maxId := h.termNextId
+	for id := range h.sessions {
+		// id is "term-N"
+		if strings.HasPrefix(id, "term-") {
+			n := 0
+			for _, c := range id[5:] {
+				if c >= '0' && c <= '9' {
+					n = n*10 + int(c-'0')
+				}
+			}
+			if n > maxId {
+				maxId = n
+			}
+		}
+	}
+	h.termNextId = maxId + 1
 	id := h.termNextId
 	h.mu.Unlock()
 	return id

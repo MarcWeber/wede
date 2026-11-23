@@ -93,6 +93,9 @@ func (m *Manager) HandleSessionsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleSessionCreate serves POST /api/sessions with body {template, name?}.
+// If a session for the template already exists, it returns that session instead
+// of creating a duplicate — making the call idempotent so two users connecting
+// after a server restart both join the same session.
 func (m *Manager) HandleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Template string `json:"template"`
@@ -102,6 +105,20 @@ func (m *Manager) HandleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "template required"})
 		return
 	}
+	// Check if a session for this template already exists — return it instead
+	// of creating a duplicate. This prevents two users from creating separate
+	// sessions (e.g. "shared" and "shared-2") after a server restart.
+	m.mu.RLock()
+	for _, ws := range m.workspaces {
+		if ws.Template == body.Template {
+			rm := ws
+			m.mu.RUnlock()
+			writeJSON(w, http.StatusOK, toDTO(rm))
+			return
+		}
+	}
+	m.mu.RUnlock()
+
 	rm, err := m.CreateFromTemplate(body.Template, body.Name)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

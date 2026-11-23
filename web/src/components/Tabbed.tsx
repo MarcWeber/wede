@@ -94,16 +94,19 @@ export default function Tabbed({
       return
     }
 
-    // Drop into a view mode area (dock slot, center, etc.)
+    // Drop into a different view mode area (dock slot, another container, center).
+    const sourceDropMode = info.target?.closest('[data-drop-mode]') as HTMLElement | null
+    const sourceDropModeVal = sourceDropMode?.getAttribute('data-drop-mode')
     const dropModeEl = info.dropTarget?.closest('[data-drop-mode]') as HTMLElement | null
-    if (dropModeEl) {
-      const mode = dropModeEl.getAttribute('data-drop-mode') || 'center'
-      onDropViewMode?.(tabId, mode)
+    const dropModeVal = dropModeEl?.getAttribute('data-drop-mode')
+    if (dropModeVal && dropModeVal !== sourceDropModeVal) {
+      onDropViewMode?.(tabId, dropModeVal)
       return
     }
 
-    // Drag away: dropped outside the tab strip — float it
-    if (info.outsideGroup) {
+    // Dropped outside the strip, on the same strip without a target tab,
+    // or on the same view mode area — float it.
+    if (info.outsideGroup || !dropModeVal || dropModeVal === sourceDropModeVal) {
       onDragAway?.(tabId, { x: info.clientX, y: info.clientY })
       return
     }

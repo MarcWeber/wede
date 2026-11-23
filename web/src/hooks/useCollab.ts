@@ -17,6 +17,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { basePath } from '../api'
 import type { PresenceMember, CollabPointer, TerminalSession, CollabPresenter } from '../types'
 import { isCollabPointer } from '../lib/collabPointer'
+import { logWebSocketSend, logWebSocketReceive } from '../lib/clientLog'
 
 function buildWsUrl(workspaceId: string, token: string, username: string | null | undefined, tabViewState?: string | null, collabContext?: string | null): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -114,6 +115,7 @@ export function useCollab(
       ws.onmessage = (ev: MessageEvent) => {
         try {
           const msg: CollabMessage = JSON.parse(ev.data)
+          logWebSocketReceive(JSON.stringify(msg))
           if (!msg) return
           if (msg.type === 'kicked') {
             kickedRef.current?.()
@@ -176,7 +178,9 @@ export function useCollab(
   const send = useCallback((obj: unknown) => {
     const ws = wsRef.current
     if (ws && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify(obj)) } catch { /* ignore */ }
+      const json = JSON.stringify(obj)
+      logWebSocketSend(json)
+      try { ws.send(json) } catch { /* ignore */ }
     }
   }, [])
 
