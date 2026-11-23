@@ -126,11 +126,11 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
-		if file, line, anchorLine, anchorCol, headLine, headCol, ok := parseCursor(msg); ok {
-			h.hub.Update(id, file, line, anchorLine, anchorCol, headLine, headCol)
+		if file, tabID, line, anchorLine, anchorCol, headLine, headCol, ok := parseCursor(msg); ok {
+			h.hub.Update(id, file, tabID, line, anchorLine, anchorCol, headLine, headCol)
 			if isDebug() {
-				log.Printf("[collab-debug] cursor from %s (%s): file=%q line=%d anchorLine=%d anchorCol=%d headLine=%d headCol=%d",
-					username, id, file, line, anchorLine, anchorCol, headLine, headCol)
+				log.Printf("[collab-debug] cursor from %s (%s): file=%q tabId=%d line=%d anchorLine=%d anchorCol=%d headLine=%d headCol=%d",
+					username, id, file, tabID, line, anchorLine, anchorCol, headLine, headCol)
 			}
 			continue
 		}
@@ -192,6 +192,7 @@ func writePump(conn *websocket.Conn, out <-chan []byte, stop <-chan struct{}) {
 type inbound struct {
 	Type       string   `json:"type"`
 	File       string   `json:"file"`
+	TabID      int      `json:"tabId"`
 	Line       int      `json:"line"`
 	AnchorLine int      `json:"anchorLine"`
 	AnchorCol  int      `json:"anchorCol"`
@@ -204,15 +205,15 @@ type inbound struct {
 
 // parseCursor extracts a cursor update from a raw message. Returns ok=false for
 // malformed JSON or any non-cursor message type.
-func parseCursor(msg []byte) (file string, line, anchorLine, anchorCol, headLine, headCol int, ok bool) {
+func parseCursor(msg []byte) (file string, tabID, line, anchorLine, anchorCol, headLine, headCol int, ok bool) {
 	var in inbound
 	if err := json.Unmarshal(msg, &in); err != nil {
-		return "", 0, 0, 0, 0, 0, false
+		return "", 0, 0, 0, 0, 0, 0, false
 	}
 	if in.Type != "cursor" {
-		return "", 0, 0, 0, 0, 0, false
+		return "", 0, 0, 0, 0, 0, 0, false
 	}
-	return in.File, in.Line, in.AnchorLine, in.AnchorCol, in.HeadLine, in.HeadCol, true
+	return in.File, in.TabID, in.Line, in.AnchorLine, in.AnchorCol, in.HeadLine, in.HeadCol, true
 }
 
 // parseLead extracts a lead start/stop request. Returns ok=false for any other

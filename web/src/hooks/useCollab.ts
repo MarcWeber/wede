@@ -70,7 +70,7 @@ export interface UseCollabResult {
   visibleTabTypes: Record<string, boolean> | null
   startLead: () => void
   stopLead: () => void
-  setViewing: (file: string | null | undefined, line?: number, anchorLine?: number, anchorCol?: number, headLine?: number, headCol?: number) => void
+  setViewing: (file: string | null | undefined, tabId?: number, line?: number, anchorLine?: number, anchorCol?: number, headLine?: number, headCol?: number) => void
   setTabs: (tabs: string[]) => void
   pointers: Record<string, CollabPointer>
   sendPointer: (target: CollabPointer | null) => void
@@ -97,8 +97,8 @@ export function useCollab(
   const wsRef = useRef<WebSocket | null>(null)
   const kickedRef = useRef(onKicked)
   useEffect(() => { kickedRef.current = onKicked }, [onKicked])
-  const lastSentRef = useRef<{ file: string | null; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number }>({ file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 })
-  const pendingRef = useRef<{ file: string; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number } | null>(null)
+  const lastSentRef = useRef<{ file: string | null; tabId: number; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number }>({ file: null, tabId: 0, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 })
+  const pendingRef = useRef<{ file: string; tabId: number; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pointerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingPointerRef = useRef<CollabPointer | null | undefined>(undefined)
@@ -167,7 +167,7 @@ export function useCollab(
     return () => {
       disposed = true
       setRoster([]); setPresenter(null); setPointers({}); setSelfId(null); setVisibleTabTypes(null)
-      lastSentRef.current = { file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 }
+      lastSentRef.current = { file: null, tabId: 0, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 }
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
       if (pointerTimerRef.current) { clearTimeout(pointerTimerRef.current); pointerTimerRef.current = null }
       try { if (ws) ws.close() } catch { /* ignore */ }
@@ -186,18 +186,18 @@ export function useCollab(
 
   // setViewing publishes the local cursor + selection range, throttled (leading + trailing) so
   // rapid tab/cursor changes don't flood the socket.
-  const setViewing = useCallback((file: string | null | undefined, line = 0, anchorLine = 0, anchorCol = 0, headLine = 0, headCol = 0) => {
-    pendingRef.current = { file: file || '', line: line || 0, anchorLine: anchorLine || 0, anchorCol: anchorCol || 0, headLine: headLine || 0, headCol: headCol || 0 }
+  const setViewing = useCallback((file: string | null | undefined, tabId = 0, line = 0, anchorLine = 0, anchorCol = 0, headLine = 0, headCol = 0) => {
+    pendingRef.current = { file: file || '', tabId: tabId || 0, line: line || 0, anchorLine: anchorLine || 0, anchorCol: anchorCol || 0, headLine: headLine || 0, headCol: headCol || 0 }
     const flush = () => {
       timerRef.current = null
       const p = pendingRef.current
       const ws = wsRef.current
       if (!p || !ws || ws.readyState !== WebSocket.OPEN) return
-      if (p.file === lastSentRef.current.file && p.line === lastSentRef.current.line &&
+      if (p.file === lastSentRef.current.file && p.tabId === lastSentRef.current.tabId && p.line === lastSentRef.current.line &&
           p.anchorLine === lastSentRef.current.anchorLine && p.anchorCol === lastSentRef.current.anchorCol &&
           p.headLine === lastSentRef.current.headLine && p.headCol === lastSentRef.current.headCol) return
       lastSentRef.current = p
-      try { ws.send(JSON.stringify({ type: 'cursor', file: p.file, line: p.line, anchorLine: p.anchorLine, anchorCol: p.anchorCol, headLine: p.headLine, headCol: p.headCol })) } catch { /* ignore */ }
+      try { ws.send(JSON.stringify({ type: 'cursor', file: p.file, tabId: p.tabId, line: p.line, anchorLine: p.anchorLine, anchorCol: p.anchorCol, headLine: p.headLine, headCol: p.headCol })) } catch { /* ignore */ }
     }
     if (timerRef.current) return
     flush()

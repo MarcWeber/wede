@@ -48,18 +48,6 @@ export default function HelpView() {
 
         <Section title="Tab types">
           <P className="mb-2">In the hamburger menu, swipe right to add a new tab for most types. Swipe files or search left to see every tab other people have open.</P>
-          <List items={[
-            <Item label="Files">directory tree; open files, long-press to open/rename/remove</Item>,
-            <Item label="Search">search file contents and names</Item>,
-            <Item label="Code">show/hide code file tabs</Item>,
-            <Item label="Web view">show/hide embedded web views; many external sites disallow embedding</Item>,
-            <Item label="Git">stage and commit files</Item>,
-            <Item label="API">test APIs</Item>,
-            <Item label="Settings">configure collaborative features, visible tabs, and x/y shrink</Item>,
-            <Item label="Session tabs">list this view's tabs (including hidden) and other people's tab views; join one or open its files here</Item>,
-            <Item label="Log">watch log files</Item>,
-            <Item label="Help">this page; terminal help is under terminal &gt; settings &gt; help</Item>,
-          ]} />
         </Section>
 
         <Section title="Files">
@@ -128,6 +116,23 @@ export default function HelpView() {
             ['Keyboard layout', 'Terminal > settings > eye: Off, Follow cursor, Shrink & maximize, or Zoom (distort) when the keyboard opens.'],
             ['Terminal buttons', 'Terminal > settings > configure behavior: assign tap, swipe and long-press actions to each grid cell.'],
             ['1/2-finger swipe', 'Terminal > settings > single/two-finger swipe: cursor movement, PgUp/PgDn, Vim/Emacs paging, scroll events or native scrollback.'],
+          ]} />
+        </Section>
+
+
+        <Section title="glossary">
+          <P className="mb-2">#collab: opening scroll cursor location following etc implemented</P>
+          <List items={[
+            <Item label="Files">directory tree; open files, long-press to open/rename/remove</Item>,
+            <Item label="Search">search file contents and names</Item>,
+            <Item label="Code">show/hide code file tabs #collab</Item>,
+            <Item label="Web view">show/hide embedded web views; many external sites disallow embedding</Item>,
+            <Item label="Git">stage and commit files</Item>,
+            <Item label="API">test APIs</Item>,
+            <Item label="Settings">configure collaborative features, visible tabs, and x/y shrink</Item>,
+            <Item label="Session tabs">list this view's tabs (including hidden) and other people's tab views; join one or open its files here</Item>,
+            <Item label="Log">watch log files</Item>,
+            <Item label="Help">this page; terminal help is under terminal &gt; settings &gt; help</Item>,
           ]} />
         </Section>
 

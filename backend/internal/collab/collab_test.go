@@ -7,6 +7,7 @@ func TestParseCursor(t *testing.T) {
 		name       string
 		in         string
 		file       string
+		tabID      int
 		line       int
 		anchorLine int
 		anchorCol  int
@@ -14,20 +15,21 @@ func TestParseCursor(t *testing.T) {
 		headCol    int
 		ok         bool
 	}{
-		{"full", `{"type":"cursor","file":"src/a.go","line":42}`, "src/a.go", 42, 0, 0, 0, 0, true},
-		{"with selection", `{"type":"cursor","file":"src/a.go","line":10,"anchorLine":5,"anchorCol":3,"headLine":10,"headCol":8}`, "src/a.go", 10, 5, 3, 10, 8, true},
-		{"no line", `{"type":"cursor","file":"x"}`, "x", 0, 0, 0, 0, 0, true},
-		{"wrong type", `{"type":"presence"}`, "", 0, 0, 0, 0, 0, false},
-		{"ping type", `{"type":"ping"}`, "", 0, 0, 0, 0, 0, false},
-		{"malformed", `not-json`, "", 0, 0, 0, 0, 0, false},
-		{"empty", ``, "", 0, 0, 0, 0, 0, false},
+		{"full", `{"type":"cursor","file":"src/a.go","line":42}`, "src/a.go", 0, 42, 0, 0, 0, 0, true},
+		{"with selection", `{"type":"cursor","file":"src/a.go","line":10,"anchorLine":5,"anchorCol":3,"headLine":10,"headCol":8}`, "src/a.go", 0, 10, 5, 3, 10, 8, true},
+		{"no line", `{"type":"cursor","file":"x"}`, "x", 0, 0, 0, 0, 0, 0, true},
+		{"with tabId", `{"type":"cursor","file":"src/a.go","tabId":5,"line":42}`, "src/a.go", 5, 42, 0, 0, 0, 0, true},
+		{"wrong type", `{"type":"presence"}`, "", 0, 0, 0, 0, 0, 0, false},
+		{"ping type", `{"type":"ping"}`, "", 0, 0, 0, 0, 0, 0, false},
+		{"malformed", `not-json`, "", 0, 0, 0, 0, 0, 0, false},
+		{"empty", ``, "", 0, 0, 0, 0, 0, 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			file, line, anchorLine, anchorCol, headLine, headCol, ok := parseCursor([]byte(c.in))
-			if ok != c.ok || file != c.file || line != c.line || anchorLine != c.anchorLine || anchorCol != c.anchorCol || headLine != c.headLine || headCol != c.headCol {
-				t.Errorf("parseCursor(%q) = (%q, %d, %d, %d, %d, %d, %v), want (%q, %d, %d, %d, %d, %d, %v)",
-					c.in, file, line, anchorLine, anchorCol, headLine, headCol, ok, c.file, c.line, c.anchorLine, c.anchorCol, c.headLine, c.headCol, c.ok)
+			file, tabID, line, anchorLine, anchorCol, headLine, headCol, ok := parseCursor([]byte(c.in))
+			if ok != c.ok || file != c.file || tabID != c.tabID || line != c.line || anchorLine != c.anchorLine || anchorCol != c.anchorCol || headLine != c.headLine || headCol != c.headCol {
+				t.Errorf("parseCursor(%q) = (%q, %d, %d, %d, %d, %d, %d, %v), want (%q, %d, %d, %d, %d, %d, %d, %v)",
+					c.in, file, tabID, line, anchorLine, anchorCol, headLine, headCol, ok, c.file, c.tabID, c.line, c.anchorLine, c.anchorCol, c.headLine, c.headCol, c.ok)
 			}
 		})
 	}

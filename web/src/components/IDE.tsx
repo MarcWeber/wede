@@ -51,8 +51,8 @@ import { followTargetFromPeer, targetSelectionKey } from '../lib/followSelection
 import { decodeCollabPointer, encodeCollabPointer } from '../lib/collabPointerDom'
 import { elementScale } from '../lib/uiScale'
 import { useWorkspaces } from '../hooks/useWorkspaces'
-import { useTabSession } from '../hooks/useTabSession'
-import { logLayoutSave, logLayoutRestore, logCursorMove } from '../lib/clientLog'
+import { useTabSession, type LayoutRoot, type LayoutContainer, type LayoutTab, type AttachedSide } from '../hooks/useTabSession'
+import { logLayoutSave, logLayoutRestore, logInitPath, logInitRestore, logSaveEffect, logCursorMove } from '../lib/clientLog'
 import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo, CollabPointer } from '../types'
 
 // colorFromName derives a stable per-user color for collaboration cursors.
@@ -341,112 +341,147 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   const [tabContentStates, setTabContentStates] = useState<Record<string, { line: number; col: number }>>({})
   // initializeWorkspace runs once: either restore from server or reset to defaults.
   const initialized = useRef(false)
+  // Prevent the save effect from running during the first render after hydration.
+  // The restore effect sets state via setState, but React batches those calls.
+  // The save effect must wait until after React applies the restored state.
+  const hydrationLock = useRef(true)
 
-  // layoutRef always holds the current layout state for saving.
-  // It is updated synchronously whenever any layout state changes,
-  // so saveLayout always reads current values — no stale closures.
-  const layoutRef = useRef<{
-    tabs: Tab[]
-    activeTab: string | null
-    visible: Record<ViewKind, boolean>
-    tabOrder: string[]
-    fileIds: number[]
-    activeFileId: number
-    activeShell: string
-    menuPlacement: MenuPlacement
-    containers: { id: number; visible: boolean; ownTab?: boolean }[]
-    containerOf: Record<string, string>
-    containerActive: Record<number, string>
-    lockedShells: string[]
-    viewModes: Record<string, ViewMode>
-    floatGeom: Record<string, FloatGeom>
-    dockSizes: { left: number; right: number; bottom: number }
-    tabContentStates: Record<string, { line: number; col: number }>
-  }>({
-    tabs: [], activeTab: null, visible: DEFAULT_VISIBLE, tabOrder: [],
-    fileIds: [], activeFileId: 0, activeShell: '', menuPlacement: 'bottom-left',
-    containers: [], containerOf: {}, containerActive: {}, lockedShells: [],
-    viewModes: defaultViewModes, floatGeom: defaultFloatGeom,
-    dockSizes: { left: 32, right: 32, bottom: 30 }, tabContentStates: {},
-  })
-
-  // Sync layoutRef whenever any layout state changes. Lightweight — no I/O.
+  // Build a recursive LayoutRoot tree from the flat state and save to server.
+  // The tree format is the single wire format — no reconciliation needed on restore.
   useEffect(() => {
-    layoutRef.current = {
-      tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement,
-      containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates,
+    if (!initialized.current || savedLayoutLoading || hydrationLock.current) return
+
+    // Global tab ID counter — each tab gets a unique sequential ID
+    let nextTabId = 1
+    // Map entry ID -> assigned tab ID so we can find selected_tab / focused_tab_id
+    const entryIdToTabId = new Map<string, number>()
+
+    function assignTabId(entry: typeof entries[0]): number {
+      const tabId = nextTabId++
+      entryIdToTabId.set(entry.id, tabId)
+      return tabId
     }
-  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates])
 
-  // Debounced save that reads from layoutRef (always current, never stale).
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const scheduleSave = useCallback(() => {
-    if (!initialized.current || savedLayoutLoading) return
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => {
-      saveTimerRef.current = null
-      const l = layoutRef.current
-      // Wrap floating view tabs in containers for reconstructability
-      const savedContainers = [...l.containers]
-      const savedContainerOf = { ...l.containerOf }
-      const savedContainerActive = { ...l.containerActive }
-      const savedViewModes = { ...l.viewModes }
-      const savedFloatGeom = { ...l.floatGeom }
-      let maxCid = l.containers.reduce((m, c) => Math.max(m, c.id), 0)
+    // Convert flat state to recursive LayoutRoot tree
+    function buildContainer(containerId: number): LayoutContainer {
+      const childEntries = entries.filter((e) => containerOf[e.id] === `container:${containerId}`)
+      const activeChild = containerActive[containerId]
 
-      const floatingViewTabs = Object.keys(savedViewModes)
-        .filter((k) => k.startsWith('view:'))
-        .filter((id) => savedViewModes[id] === 'float' && !savedContainerOf[id])
-
-      for (const viewId of floatingViewTabs) {
-        maxCid++
-        savedContainers.push({ id: maxCid, visible: true, ownTab: true })
-        savedContainerOf[viewId] = `container:${maxCid}`
-        savedContainerActive[maxCid] = viewId
-        delete savedViewModes[viewId]
-        savedViewModes[`container:${maxCid}`] = 'float'
-        if (savedFloatGeom[viewId]) {
-          savedFloatGeom[`container:${maxCid}`] = savedFloatGeom[viewId]
-          delete savedFloatGeom[viewId]
-        }
-      }
-
-      for (const viewId of Object.keys(savedViewModes).filter((k) => k.startsWith('view:'))) {
-        const cKey = savedContainerOf[viewId]
-        if (cKey && cKey.startsWith('container:')) {
-          if (savedViewModes[cKey] && savedViewModes[cKey] !== 'float') {
-            delete savedViewModes[viewId]
-          }
-        } else if (savedViewModes[viewId] === 'center') {
-          delete savedViewModes[viewId]
-        }
-      }
-
-      if (debug) {
-        logLayoutSave('full', { tabs: l.tabs.length, activeTab: l.activeTab, containers: savedContainers.length })
-      }
-      saveLayout({
-        tabs: l.tabs.map((t) => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url, hidden: t.hidden })),
-        activeTab: l.activeTab, visible: l.visible, tabOrder: l.tabOrder, fileIds: l.fileIds,
-        activeFileId: l.activeFileId, activeShell: l.activeShell, menuPlacement: l.menuPlacement,
-        containers: savedContainers, containerOf: savedContainerOf, containerActive: savedContainerActive,
-        lockedShells: l.lockedShells, viewModes: savedViewModes, floatGeom: savedFloatGeom,
-        dockSizes: l.dockSizes, tabContentStates: l.tabContentStates,
+      const layoutTabs: LayoutTab[] = childEntries.map((e) => {
+        const tabId = assignTabId(e)
+        if (e.filePath) return { id: tabId, type: 'file', name: e.filePath, path: e.filePath, rel: e.filePath, hidden: false }
+        if (e.termId != null) return { id: tabId, type: 'term', name: `term-${e.termId}` }
+        if (e.fileId != null) return { id: tabId, type: 'files', name: `files:${e.fileId}` }
+        if (e.searchId != null) return { id: tabId, type: 'search', name: `search:${e.searchId}` }
+        if (e.apiId != null) return { id: tabId, type: 'api', name: `api:${e.apiId}` }
+        if (e.logId != null) return { id: tabId, type: 'log', name: `log:${e.logId}` }
+        if (e.webPath) return { id: tabId, type: 'web', name: e.webPath, path: e.webPath, url: e.webPath }
+        if (e.kind === 'settings') return { id: tabId, type: 'settings', name: 'settings' }
+        if (e.kind === 'git') return { id: tabId, type: 'git', name: 'git' }
+        if (e.kind === 'help') return { id: tabId, type: 'help', name: 'help' }
+        if (e.kind === 'chat') return { id: tabId, type: 'chat', name: 'chat' }
+        if (e.kind === 'session-tabs') return { id: tabId, type: 'session-tabs', name: 'session-tabs' }
+        if (e.kind === 'code') return { id: tabId, type: 'code', name: 'code' }
+        return { id: tabId, type: e.kind || 'code', name: e.id }
       })
-    }, 500)
-  }, [initialized, savedLayoutLoading, saveLayout, debug])
+
+      const attached: { left?: AttachedSide; bottom?: AttachedSide; right?: AttachedSide } = {}
+      // Check for nested containers attached to this container
+      const nestedContainers = containers.filter((c) => containerOf[`container:${c.id}`] === `container:${containerId}`)
+      for (const nc of nestedContainers) {
+        const mode = viewModes[`container:${nc.id}`]
+        if (mode === 'docked-left') attached.left = { width: dockSizes.left, container: buildContainer(nc.id) }
+        else if (mode === 'docked-right') attached.right = { width: dockSizes.right, container: buildContainer(nc.id) }
+        else if (mode === 'docked-bottom') attached.bottom = { height: dockSizes.bottom, container: buildContainer(nc.id) }
+      }
+
+      // selected_tab: the entry active in this container
+      const selectedTab = activeChild ? entryIdToTabId.get(activeChild) : undefined
+      const result: LayoutContainer = { next_tab_id: nextTabId, tabs: layoutTabs }
+      if (selectedTab) result.selected_tab = selectedTab
+      if (Object.keys(attached).length > 0) result.attached = attached
+      return result
+    }
+
+    // Build main container (root entries with no parent container)
+    const rootTabs: LayoutTab[] = rootEntries.map((e) => {
+      const tabId = assignTabId(e)
+      if (e.filePath) return { id: tabId, type: 'file', name: e.filePath, path: e.filePath, rel: e.filePath, hidden: false }
+      if (e.termId != null) return { id: tabId, type: 'term', name: `term-${e.termId}` }
+      if (e.fileId != null) return { id: tabId, type: 'files', name: `files:${e.fileId}` }
+      if (e.kind === 'settings') return { id: tabId, type: 'settings', name: 'settings' }
+      if (e.kind === 'git') return { id: tabId, type: 'git', name: 'git' }
+      if (e.kind === 'help') return { id: tabId, type: 'help', name: 'help' }
+      if (e.kind === 'chat') return { id: tabId, type: 'chat', name: 'chat' }
+      if (e.kind === 'session-tabs') return { id: tabId, type: 'session-tabs', name: 'session-tabs' }
+      if (e.kind === 'code') return { id: tabId, type: 'code', name: 'code' }
+      return { id: tabId, type: e.kind || 'code', name: e.id }
+    })
+    const rootActiveEntry = rootEntries.find((e) => e.id === activeTab)
+    const rootSelectedTab = rootActiveEntry ? entryIdToTabId.get(rootActiveEntry) : undefined
+    const rootContainer: LayoutContainer = { next_tab_id: nextTabId, tabs: rootTabs }
+    if (rootSelectedTab) rootContainer.selected_tab = rootSelectedTab
+
+    // Build attached sides for main container
+    const mainAttached: { left?: AttachedSide; bottom?: AttachedSide; right?: AttachedSide } = {}
+    for (const c of containers) {
+      const mode = viewModes[`container:${c.id}`]
+      if (mode === 'docked-left' && !containerOf[`container:${c.id}`]) {
+        mainAttached.left = { width: dockSizes.left, container: buildContainer(c.id) }
+      } else if (mode === 'docked-right' && !containerOf[`container:${c.id}`]) {
+        mainAttached.right = { width: dockSizes.right, container: buildContainer(c.id) }
+      } else if (mode === 'docked-bottom' && !containerOf[`container:${c.id}`]) {
+        mainAttached.bottom = { height: dockSizes.bottom, container: buildContainer(c.id) }
+      }
+    }
+    if (Object.keys(mainAttached).length > 0) rootContainer.attached = mainAttached
+
+    // Build floating windows
+    const floating: Array<{ top: number; left: number; width: number; height: number; container: LayoutContainer }> = []
+    for (const [key, mode] of Object.entries(viewModes)) {
+      if (mode === 'float' && key.startsWith('container:')) {
+        const cid = Number(key.slice('container:'.length))
+        const geom = floatGeom[key]
+        if (geom) {
+          floating.push({
+            top: geom.y,
+            left: geom.x,
+            width: geom.w,
+            height: geom.h,
+            container: buildContainer(cid)
+          })
+        }
+      }
+    }
+
+    const layoutRoot: LayoutRoot = { main: rootContainer }
+    if (floating.length > 0) layoutRoot.floating = floating
+    // focused_tab_id: the globally focused tab across all containers
+    const focusedEntry = entries.find((e) => e.id === activeTab)
+    const focusedTabId = focusedEntry ? entryIdToTabId.get(focusedEntry) : undefined
+    if (focusedTabId) layoutRoot.focused_tab_id = focusedTabId
+
+    if (debug) {
+      logSaveEffect({ tabs: tabs.length, containers: containers.length, activeTab, initialized: initialized.current })
+    }
+    saveLayout({
+      layout: layoutRoot,
+      activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement,
+      lockedShells, dockSizes, tabContentStates,
+    })
+  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates, initialized, savedLayoutLoading, saveLayout, debug])
   const [modeDrag, setModeDrag] = useState<string | null>(null)
   const [dockActive, setDockActive] = useState<{ left: string | null; right: string | null; bottom: string | null }>({ left: null, right: null, bottom: null })
   const [nestedDockActive, setNestedDockActive] = useState<Record<string, string>>({})
-  const [apiIds, setApiIds] = useState<number[]>([1])
-  const [activeApiId, setActiveApiId] = useState(1)
-  const nextApiId = useRef(2)
-  const [searchIds, setSearchIds] = useState<number[]>([1])
-  const [activeSearchId, setActiveSearchId] = useState(1)
-  const nextSearchId = useRef(2)
-  const [logIds, setLogIds] = useState<number[]>([1])
-  const [activeLogId, setActiveLogId] = useState(1)
-  const nextLogId = useRef(2)
+  const [apiIds, setApiIds] = useState<number[]>([])
+  const [activeApiId, setActiveApiId] = useState(0)
+  const nextApiId = useRef(1)
+  const [searchIds, setSearchIds] = useState<number[]>([])
+  const [activeSearchId, setActiveSearchId] = useState(0)
+  const nextSearchId = useRef(1)
+  const [logIds, setLogIds] = useState<number[]>([])
+  const [activeLogId, setActiveLogId] = useState(0)
+  const nextLogId = useRef(1)
 
   const addWeb = useCallback((url = 'https://wede.vulos.org') => {
     const id = `browser:${++browserIdCounter}`
@@ -672,163 +707,237 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
 
   // ── initialize_client_ide_workspace_state ──
   // Two clear paths: restore from server or reset to defaults.
-  // Runs once. After setState calls, defer unlocking so the save effect
-  // sees the restored state in its closure, not the default state.
+  // The server stores a recursive LayoutRoot tree. We parse it back into
+  // flat state (containers, containerOf, viewModes, floatGeom) for rendering.
   useEffect(() => {
     if (initialized.current || savedLayoutLoading) return
 
     const l = savedLayout
     if (l) {
-      // PATH 1: Restore from server — single batch of setState calls
       if (debug) {
         logLayoutRestore('initialize', true)
+        logInitPath('restore-from-server')
       }
 
-      // Wrap any floating view tab without a container so the layout is
-      // reconstructable after reload.
-      const restoredContainers = Array.isArray(l.containers) ? [...l.containers] : []
-      const restoredContainerOf = { ...(l.containerOf || {}) }
-      const restoredViewModes = { ...(l.viewModes || {}) } as Record<string, ViewMode>
-      const restoredContainerActive = { ...(l.containerActive || {}) }
-      const restoredFloatGeom = { ...(l.floatGeom || {}) }
+      // Check if the saved layout uses the new recursive tree format
+      const layoutRoot = l.layout as LayoutRoot | undefined
 
-      const floatingViewTabs = Object.keys(restoredViewModes)
-        .filter((k) => k.startsWith('view:'))
-        .filter((id) => restoredViewModes[id] === 'float' && !restoredContainerOf[id])
+      if (layoutRoot && layoutRoot.main) {
+        // NEW FORMAT: Parse recursive LayoutRoot tree into flat state
+        let nextCid = 1
+        let maxTabId = 0  // track max tab ID for next_tab_id counter
+        const restoredContainers: Array<{ id: number; visible: boolean; ownTab?: boolean }> = []
+        const restoredContainerOf: Record<string, string> = {}
+        const restoredContainerActive: Record<number, string> = {}
+        const restoredViewModes: Record<string, ViewMode> = {}
+        const restoredFloatGeom: Record<string, FloatGeom> = {}
 
-      let maxCid = restoredContainers.reduce((m, c) => Math.max(m, c.id), 0)
-      for (const viewId of floatingViewTabs) {
-        maxCid++
-        restoredContainers.push({ id: maxCid, visible: true, ownTab: true })
-        restoredContainerOf[viewId] = `container:${maxCid}`
-        restoredContainerActive[maxCid] = viewId
-        delete restoredViewModes[viewId]
-        restoredViewModes[`container:${maxCid}`] = 'float'
-        if (restoredFloatGeom[viewId]) {
-          restoredFloatGeom[`container:${maxCid}`] = restoredFloatGeom[viewId]
-          delete restoredFloatGeom[viewId]
-        }
-        containerIdRef.current = Math.max(containerIdRef.current, maxCid + 1)
-      }
+        function flattenContainer(container: LayoutContainer, parentCid: number | null): number {
+          const cid = nextCid++
+          restoredContainers.push({ id: cid, visible: true, ownTab: true })
 
-      // Ensure floating container children are visible so entries includes them
-      for (const [ck, mode] of Object.entries(restoredViewModes)) {
-        if (ck.startsWith('container:') && mode === 'float') {
-          const cid = Number(ck.slice('container:'.length))
-          for (const [child, parent] of Object.entries(restoredContainerOf)) {
-            if (parent === ck) {
-              const kind = child.split(':')[0]
-              if (typeof l.visible === 'object' && l.visible) {
-                (l.visible as Record<string, boolean>)[kind] = true
-              }
+          // Track max tab ID from this container
+          if (container.next_tab_id > maxTabId) maxTabId = container.next_tab_id
+          for (const lt of container.tabs) {
+            if (lt.id > maxTabId) maxTabId = lt.id
+          }
+
+          // Set viewMode for this container
+          if (parentCid === null) {
+            // Root container — no viewMode needed (it's the main area)
+          } else {
+            // Find which side this container is attached to
+            const parentContainer = layoutRoot.main
+            // We'll set viewModes based on the attached structure
+          }
+
+          // Map tabs to entries
+          for (const lt of container.tabs) {
+            const tabId = lt.name
+            restoredContainerOf[tabId] = `container:${cid}`
+          }
+
+          // Set active child from selected_tab, or first tab as fallback
+          if (container.selected_tab) {
+            const sel = container.tabs.find((t) => t.id === container.selected_tab)
+            if (sel) restoredContainerActive[cid] = sel.name
+            else if (container.tabs.length > 0) restoredContainerActive[cid] = container.tabs[0].name
+          } else if (container.tabs.length > 0) {
+            restoredContainerActive[cid] = container.tabs[0].name
+          }
+
+          // Recurse into attached containers
+          if (container.attached) {
+            if (container.attached.left) {
+              const childCid = flattenContainer(container.attached.left.container, cid)
+              restoredViewModes[`container:${childCid}`] = 'docked-left'
+              restoredContainerOf[`container:${childCid}`] = `container:${cid}`
+            }
+            if (container.attached.right) {
+              const childCid = flattenContainer(container.attached.right.container, cid)
+              restoredViewModes[`container:${childCid}`] = 'docked-right'
+              restoredContainerOf[`container:${childCid}`] = `container:${cid}`
+            }
+            if (container.attached.bottom) {
+              const childCid = flattenContainer(container.attached.bottom.container, cid)
+              restoredViewModes[`container:${childCid}`] = 'docked-bottom'
+              restoredContainerOf[`container:${childCid}`] = `container:${cid}`
             }
           }
-          const ac = restoredContainerActive[cid]
-          if (ac && typeof l.visible === 'object' && l.visible) {
-            (l.visible as Record<string, boolean>)[ac.split(':')[0]] = true
+
+          return cid
+        }
+
+        // Flatten main container
+        flattenContainer(layoutRoot.main, null)
+
+        // Flatten floating containers
+        if (layoutRoot.floating) {
+          for (const fw of layoutRoot.floating) {
+            const cid = nextCid++
+            restoredContainers.push({ id: cid, visible: true, ownTab: true })
+            restoredViewModes[`container:${cid}`] = 'float'
+            restoredFloatGeom[`container:${cid}`] = {
+              x: fw.left, y: fw.top, w: fw.width, h: fw.height, z: 30
+            }
+
+            // Track max tab ID from floating container
+            if (fw.container.next_tab_id > maxTabId) maxTabId = fw.container.next_tab_id
+            for (const lt of fw.container.tabs) {
+              if (lt.id > maxTabId) maxTabId = lt.id
+              restoredContainerOf[lt.name] = `container:${cid}`
+            }
+            // Set active child from selected_tab, or first tab as fallback
+            if (fw.container.selected_tab) {
+              const sel = fw.container.tabs.find((t) => t.id === fw.container.selected_tab)
+              if (sel) restoredContainerActive[cid] = sel.name
+              else if (fw.container.tabs.length > 0) restoredContainerActive[cid] = fw.container.tabs[0].name
+            } else if (fw.container.tabs.length > 0) {
+              restoredContainerActive[cid] = fw.container.tabs[0].name
+            }
+
+            // Recurse into attached containers of floating windows
+            function flattenFloatContainer(container: LayoutContainer, parentCid: number): number {
+              const childCid = nextCid++
+              restoredContainers.push({ id: childCid, visible: true, ownTab: true })
+              if (container.next_tab_id > maxTabId) maxTabId = container.next_tab_id
+              for (const lt of container.tabs) {
+                if (lt.id > maxTabId) maxTabId = lt.id
+                restoredContainerOf[lt.name] = `container:${childCid}`
+              }
+              // Set active child from selected_tab, or first tab as fallback
+              if (container.selected_tab) {
+                const sel = container.tabs.find((t) => t.id === container.selected_tab)
+                if (sel) restoredContainerActive[childCid] = sel.name
+                else if (container.tabs.length > 0) restoredContainerActive[childCid] = container.tabs[0].name
+              } else if (container.tabs.length > 0) {
+                restoredContainerActive[childCid] = container.tabs[0].name
+              }
+              if (container.attached) {
+                if (container.attached.left) {
+                  const gc = flattenFloatContainer(container.attached.left.container, childCid)
+                  restoredViewModes[`container:${gc}`] = 'docked-left'
+                  restoredContainerOf[`container:${gc}`] = `container:${childCid}`
+                }
+                if (container.attached.right) {
+                  const gc = flattenFloatContainer(container.attached.right.container, childCid)
+                  restoredViewModes[`container:${gc}`] = 'docked-right'
+                  restoredContainerOf[`container:${gc}`] = `container:${childCid}`
+                }
+                if (container.attached.bottom) {
+                  const gc = flattenFloatContainer(container.attached.bottom.container, childCid)
+                  restoredViewModes[`container:${gc}`] = 'docked-bottom'
+                  restoredContainerOf[`container:${gc}`] = `container:${childCid}`
+                }
+              }
+              return childCid
+            }
+            if (fw.container.attached) {
+              if (fw.container.attached.left) flattenFloatContainer(fw.container.attached.left.container, cid)
+              if (fw.container.attached.right) flattenFloatContainer(fw.container.attached.right.container, cid)
+              if (fw.container.attached.bottom) flattenFloatContainer(fw.container.attached.bottom.container, cid)
+            }
           }
         }
-      }
 
-      // Clean up stale viewMode entries for view tabs inside non-float containers
-      for (const viewId of Object.keys(restoredViewModes).filter((k) => k.startsWith('view:'))) {
-        const cKey = restoredContainerOf[viewId]
-        if (cKey && cKey.startsWith('container:')) {
-          if (restoredViewModes[cKey] && restoredViewModes[cKey] !== 'float') {
-            delete restoredViewModes[viewId]
+        containerIdRef.current = Math.max(containerIdRef.current, nextCid)
+
+        // Build tabs array from layout tree with saved IDs
+        const restoredTabs: Tab[] = []
+        function collectTabs(container: LayoutContainer) {
+          for (const lt of container.tabs) {
+            const tab: Tab = { id: lt.id, path: fileKey(workspaceId, lt.name), name: lt.name, rel: lt.rel || lt.name, workspaceId }
+            if (lt.type === 'files') tab.fileId = Number(lt.name.replace('files:', ''))
+            else if (lt.type === 'search') tab.searchId = Number(lt.name.replace('search:', ''))
+            else if (lt.type === 'api') tab.apiId = Number(lt.name.replace('api:', ''))
+            else if (lt.type === 'log') tab.logId = Number(lt.name.replace('log:', ''))
+            else if (lt.type === 'browser') { tab.type = 'browser'; tab.url = lt.url || lt.name }
+            restoredTabs.push(tab)
           }
-        } else if (restoredViewModes[viewId] === 'center') {
-          delete restoredViewModes[viewId]
+          if (container.attached) {
+            if (container.attached.left) collectTabs(container.attached.left.container)
+            if (container.attached.right) collectTabs(container.attached.right.container)
+            if (container.attached.bottom) collectTabs(container.attached.bottom.container)
+          }
         }
-      }
+        if (layoutRoot && layoutRoot.main) {
+          collectTabs(layoutRoot.main)
+          if (layoutRoot.floating) {
+            for (const fw of layoutRoot.floating) collectTabs(fw.container)
+          }
+        }
+        setTabs(restoredTabs)
 
-      // Apply all state in one batch
-      if (Array.isArray(l.tabs)) {
-        setTabs(l.tabs.map((t) => normalizeTabIdentity(t, workspaceId)).filter((t): t is Tab => !!t))
+        // Apply all state
+        if (debug) {
+          logInitRestore({ tabs: restoredTabs.length, containers: restoredContainers.length, activeTab: l.activeTab ?? null })
+        }
+        if (l.activeTab !== undefined) setActiveTab(l.activeTab ?? null)
+        if (l.visible) setVisible({ ...DEFAULT_VISIBLE, ...(l.visible as Partial<Record<ViewKind, boolean>>) })
+        if (Array.isArray(l.tabOrder)) setTabOrder(l.tabOrder)
+        if (Array.isArray(l.fileIds) && l.fileIds.length) {
+          setFileIds(l.fileIds)
+          nextFileId.current = Math.max(nextFileId.current, ...l.fileIds.map((id) => id + 1))
+        }
+        if (typeof l.activeFileId === 'number') setActiveFileId(l.activeFileId)
+        if (typeof l.activeShell === 'string') setActiveShell(l.activeShell)
+        if (typeof l.menuPlacement === 'string') setMenuPlacement(l.menuPlacement as MenuPlacement)
+        setContainers(restoredContainers)
+        setContainerOf(restoredContainerOf)
+        setContainerActive(restoredContainerActive)
+        if (Array.isArray(l.lockedShells)) setLockedShells(l.lockedShells)
+        setViewModes(restoredViewModes)
+        setFloatGeom(restoredFloatGeom)
+        if (l.dockSizes) setDockSizes(l.dockSizes)
+        if (l.tabContentStates) setTabContentStates(l.tabContentStates as Record<string, { line: number; col: number }>)
+        queueMicrotask(() => {
+          initialized.current = true
+          hydrationLock.current = false
+        })
+      } else {
+        // OLD FORMAT: No layout.main — treat as new session (the old flat format
+        // is no longer supported; the server should only have the new tree format).
+        // Reset to defaults so the save effect creates a proper LayoutRoot tree.
+        if (debug) {
+          logLayoutRestore('initialize', false)
+        }
+        queueMicrotask(() => {
+          initialized.current = true
+          hydrationLock.current = false
+        })
       }
-      if (l.activeTab !== undefined) setActiveTab(l.activeTab ?? null)
-      if (l.visible) setVisible({ ...DEFAULT_VISIBLE, ...(l.visible as Partial<Record<ViewKind, boolean>>) })
-      if (Array.isArray(l.tabOrder)) setTabOrder(l.tabOrder)
-      if (Array.isArray(l.fileIds) && l.fileIds.length) {
-        setFileIds(l.fileIds)
-        nextFileId.current = Math.max(nextFileId.current, ...l.fileIds.map((id) => id + 1))
-      }
-      if (typeof l.activeFileId === 'number') setActiveFileId(l.activeFileId)
-      if (typeof l.activeShell === 'string') setActiveShell(l.activeShell)
-      if (typeof l.menuPlacement === 'string') setMenuPlacement(l.menuPlacement as MenuPlacement)
-      setContainers(restoredContainers)
-      setContainerOf(restoredContainerOf)
-      setContainerActive(restoredContainerActive)
-      if (Array.isArray(l.lockedShells)) setLockedShells(l.lockedShells)
-      setViewModes(restoredViewModes)
-      setFloatGeom(restoredFloatGeom)
-      if (l.dockSizes) setDockSizes(l.dockSizes)
-      if (l.tabContentStates) setTabContentStates(l.tabContentStates as Record<string, { line: number; col: number }>)
-      // Defer unlocking until after React applies all setState calls above.
-      // Without this, the save effect runs in the same render cycle with
-      // default state in its closure, overwriting the server with empty data.
-      queueMicrotask(() => { initialized.current = true })
     } else {
       // PATH 2: No server state — defaults from useState are correct, unlock immediately
+      if (debug) {
+        logInitPath('new-session')
+      }
       initialized.current = true
+      hydrationLock.current = false
     }
   }, [savedLayoutLoading, savedLayout, workspaceId, debug])
 
-  // Save the full layout to the server after initialization is complete.
-  // Floating view tabs are wrapped in containers so the saved state is
-  // reconstructable after reload.
-  useEffect(() => {
-    if (!initialized.current || savedLayoutLoading) return
-
-    const savedContainers = [...containers]
-    const savedContainerOf = { ...containerOf }
-    const savedContainerActive = { ...containerActive }
-    const savedViewModes = { ...viewModes }
-    const savedFloatGeom = { ...floatGeom }
-    let maxCid = containers.reduce((m, c) => Math.max(m, c.id), 0)
-
-    const floatingViewTabs = Object.keys(savedViewModes)
-      .filter((k) => k.startsWith('view:'))
-      .filter((id) => savedViewModes[id] === 'float' && !savedContainerOf[id])
-
-    for (const viewId of floatingViewTabs) {
-      maxCid++
-      savedContainers.push({ id: maxCid, visible: true, ownTab: true })
-      savedContainerOf[viewId] = `container:${maxCid}`
-      savedContainerActive[maxCid] = viewId
-      delete savedViewModes[viewId]
-      savedViewModes[`container:${maxCid}`] = 'float'
-      if (savedFloatGeom[viewId]) {
-        savedFloatGeom[`container:${maxCid}`] = savedFloatGeom[viewId]
-        delete savedFloatGeom[viewId]
-      }
-    }
-
-    for (const viewId of Object.keys(savedViewModes).filter((k) => k.startsWith('view:'))) {
-      const cKey = savedContainerOf[viewId]
-      if (cKey && cKey.startsWith('container:')) {
-        if (savedViewModes[cKey] && savedViewModes[cKey] !== 'float') {
-          delete savedViewModes[viewId]
-        }
-      } else if (savedViewModes[viewId] === 'center') {
-        delete savedViewModes[viewId]
-      }
-    }
-
-    if (debug) {
-      logLayoutSave('full', { tabs: tabs.length, activeTab, containers: savedContainers.length })
-    }
-    saveLayout({
-      tabs: tabs.map((t) => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url, hidden: t.hidden })),
-      activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement,
-      containers: savedContainers, containerOf: savedContainerOf, containerActive: savedContainerActive,
-      lockedShells, viewModes: savedViewModes, floatGeom: savedFloatGeom, dockSizes, tabContentStates,
-    })
-  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabContentStates, saveLayout, debug])
-
-  // Every visible container with no children is removed so no ghost strip
-  // or window remains. Floating containers with a saved child are not empty —
-  // the child may be hidden but the container preserves its position.
+  // Remove empty containers so no ghost strip/window remains.
+  // Floating containers with a saved child are not empty.
   useEffect(() => {
     if (!initialized.current) return
     const empty = containers.filter((c) => {
@@ -1055,27 +1164,32 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
 
   // Publish the local file + cursor line + selection range so peers (and a teacher
   // leading the session) can follow. The collab hook throttles these updates.
+  // Include the active tab's unique ID so the server stores cursor in tab_content_states.
   useEffect(() => {
     const rel = parseFileKey(activeTab || '').rel
+    const activeTabEntry = tabs.find((t) => t.path === activeTab)
+    const activeTabId = activeTabEntry?.id ?? 0
     const hasSel = cursor.anchorLine && cursor.headLine && cursor.anchorLine !== cursor.headLine
       || cursor.anchorLine && cursor.headLine && cursor.anchorLine === cursor.headLine && cursor.anchorCol && cursor.headCol && cursor.anchorCol !== cursor.headCol
     const anchorLine = hasSel ? (cursor.anchorLine || 0) : 0
     const anchorCol = hasSel ? (cursor.anchorCol || 0) : 0
     const headLine = hasSel ? (cursor.headLine || 0) : 0
     const headCol = hasSel ? (cursor.headCol || 0) : 0
-    setCollabViewing(rel, rel ? cursor.line : 0, anchorLine, anchorCol, headLine, headCol)
+    setCollabViewing(rel, activeTabId, rel ? cursor.line : 0, anchorLine, anchorCol, headLine, headCol)
     // Also track per-tab cursor position for tab_content_states persistence.
-    if (activeTab && rel) {
+    // Keyed by tab ID so multiple instances of the same file are distinguished.
+    if (activeTab && rel && activeTabId) {
       setTabContentStates((prev) => {
-        const existing = prev[activeTab]
+        const key = `id:${activeTabId}`
+        const existing = prev[key]
         if (existing && existing.line === cursor.line && existing.col === cursor.col) return prev
         if (debug) {
           logCursorMove(rel, cursor.line, cursor.col)
         }
-        return { ...prev, [activeTab]: { line: cursor.line, col: cursor.col } }
+        return { ...prev, [key]: { line: cursor.line, col: cursor.col } }
       })
     }
-  }, [activeTab, cursor.line, cursor.anchorLine, cursor.anchorCol, cursor.headLine, cursor.headCol, setCollabViewing, selfId, debug])
+  }, [activeTab, cursor.line, cursor.anchorLine, cursor.anchorCol, cursor.headLine, cursor.headCol, setCollabViewing, selfId, debug, tabs])
 
   // Publish the open file tabs + terminal IDs for this workspace so peers can
   // see who has which files and terminals open (used by SessionTabs).
@@ -1661,15 +1775,15 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     setActiveFileId(1)
     nextFileId.current = 2
     setActiveShell('files:1')
-    setApiIds([1])
-    setActiveApiId(1)
-    nextApiId.current = 2
-    setSearchIds([1])
-    setActiveSearchId(1)
-    nextSearchId.current = 2
-    setLogIds([1])
-    setActiveLogId(1)
-    nextLogId.current = 2
+    setApiIds([])
+    setActiveApiId(0)
+    nextApiId.current = 1
+    setSearchIds([])
+    setActiveSearchId(0)
+    nextSearchId.current = 1
+    setLogIds([])
+    setActiveLogId(0)
+    nextLogId.current = 1
     setContainers([{ id: 1, visible: false }])
     setContainerOf({})
     setContainerActive({})
@@ -2468,7 +2582,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         onChange={(c) => updateContent(tab.path, c)}
         onSave={() => { void saveFile(tab.path) }}
         onCursorChange={isActive ? setCursor : undefined}
-        initialCursor={tabContentStates[tab.path]}
+        initialCursor={tab.id ? tabContentStates[`id:${tab.id}`] : tabContentStates[tab.path]}
         settings={editorSettings}
         lspExtension={isActive ? lspExtension : null}
         onRegisterActions={isActive ? handleRegisterEditorActions : undefined}

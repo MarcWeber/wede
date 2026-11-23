@@ -6,6 +6,7 @@
 // composite `path` (see lib/fileKey.ts); "special" tabs (browser/gitgraph/
 // apiclient) use a `type`-prefixed pseudo-id as `path` and no `rel`/`workspaceId`.
 export interface Tab {
+  id?: number  // unique tab ID from the server layout tree (tab_content_states key)
   path: string
   rel?: string
   workspaceId?: string | null
@@ -117,6 +118,7 @@ export interface PresenceMember {
   username?: string
   color?: string
   file?: string
+  tabId?: number    // unique tab ID from layout tree (0 = not set)
   line?: number
   anchorLine?: number // selection start line (1-based, 0 = no selection)
   anchorCol?: number  // selection start column (1-based, 0 = no selection)
@@ -138,8 +140,8 @@ export interface CollabPresenter {
 // own space (line/column for code, page + normalized point for PDFs, image
 // space for images) so they survive desktop/mobile layout and UI-scale changes.
 export type CollabPointer =
-  | { kind: 'code'; tab: string; line: number; col: number }
-  | { kind: 'image'; tab: string; u: number; v: number }
+   | { kind: 'code'; tab: string; tabId?: number; line: number; col: number }
+   | { kind: 'image'; tab: string; u: number; v: number }
   | { kind: 'pdf'; tab: string; page: number; u: number; v: number }
   | { kind: 'terminal'; tab: string; row: number; col: number }
   | { kind: 'browser'; tab: string; url: string; u: number; v: number }

@@ -37,6 +37,7 @@ type Member struct {
 	Username      string   `json:"username"`
 	Color         string   `json:"color"`
 	File          string   `json:"file,omitempty"`          // path currently viewed (relative to room root)
+	TabID         int      `json:"tabId,omitempty"`         // unique tab ID from layout tree
 	Line          int      `json:"line,omitempty"`          // cursor line in that file
 	AnchorLine    int      `json:"anchorLine,omitempty"`    // selection start line (0 = no selection)
 	AnchorCol     int      `json:"anchorCol,omitempty"`     // selection start column (1-based, 0 = no selection)
@@ -255,15 +256,17 @@ func (h *Hub) Presenter() *Presenter {
 	return &p
 }
 
-// Update sets the file + cursor line a member is viewing and rebroadcasts.
+// Update sets the file + tab ID + cursor line a member is viewing and rebroadcasts.
+// tabID is the unique tab ID from the layout tree (0 = not set).
 // anchorLine/anchorCol and headLine/headCol describe the selection range
 // (1-based lines and columns); pass 0 for all four when there is no selection
 // (cursor only).
-func (h *Hub) Update(id, file string, line, anchorLine, anchorCol, headLine, headCol int) {
+func (h *Hub) Update(id, file string, tabID, line, anchorLine, anchorCol, headLine, headCol int) {
 	h.mu.Lock()
 	c, ok := h.clients[id]
 	if ok {
 		c.member.File = file
+		c.member.TabID = tabID
 		c.member.Line = line
 		c.member.AnchorLine = anchorLine
 		c.member.AnchorCol = anchorCol
@@ -272,7 +275,7 @@ func (h *Hub) Update(id, file string, line, anchorLine, anchorCol, headLine, hea
 	}
 	h.mu.Unlock()
 	if ok {
-		debug("[presence-debug] Update id=%s file=%q line=%d sel=[%d:%d–%d:%d]", id, file, line, anchorLine, anchorCol, headLine, headCol)
+		debug("[presence-debug] Update id=%s file=%q tabId=%d line=%d sel=[%d:%d–%d:%d]", id, file, tabID, line, anchorLine, anchorCol, headLine, headCol)
 		h.broadcast()
 	}
 }

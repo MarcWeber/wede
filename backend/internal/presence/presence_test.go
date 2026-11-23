@@ -76,7 +76,7 @@ func TestUpdateReflectsInRoster(t *testing.T) {
 	h := NewHub()
 	id, ch := h.Join("alice")
 
-	h.Update(id, "src/main.go", 42, 10, 5, 42, 20)
+	h.Update(id, "src/main.go", 0, 42, 10, 5, 42, 20)
 
 	got := lastRoster(t, ch)
 	m := find(got, id)

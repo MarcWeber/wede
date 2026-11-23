@@ -56,7 +56,11 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   })
   const [activeId, setActiveId] = useState<number>(() => {
     const saved = sessionStorage.getItem('wede_terminal_active')
-    return saved ? Number(saved) : (loadTerminals()?.[0]?.id || 1)
+    if (saved) return Number(saved)
+    const loaded = loadTerminals()
+    // Only default to first loaded terminal's ID if we actually have terminals.
+    // Don't default to 1 — that creates a phantom "Term 01" expectation.
+    return loaded?.[0]?.id ?? 0
   })
   const reconciledRef = useRef(false)
   const applyingRemoteRef = useRef(false)
@@ -79,15 +83,28 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
         if (lastAddedIdRef.current != null) ids.add(lastAddedIdRef.current)
         const filtered = (list || []).filter((t) => t && typeof t.id === 'number' && !ids.has(t.id))
         if (filtered.length === 0) return prev
-        // Assign position-based names for imported peer terminals so they show
-        // as "Term 04", "Term 05" etc. instead of the internal ID like "Term 1001".
+        // Deduplicate peer list — multiple peers may report the same terminal ID
+        const seen = new Set<number>()
         const additions: TerminalSession[] = []
-        for (let i = 0; i < filtered.length; i++) {
-          const t = filtered[i]
-          additions.push({ id: t.id, name: t.name || termName(t.id) })
+        for (const t of filtered) {
+          if (!seen.has(t.id)) {
+            seen.add(t.id)
+            additions.push({ id: t.id, name: t.name || termName(t.id) })
+          }
         }
+        if (additions.length === 0) return prev
         applyingRemoteRef.current = true
-        return [...prev, ...additions].sort((a, b) => a.id - b.id)
+        // Merge and deduplicate final result
+        const merged = [...prev, ...additions]
+        const finalSeen = new Set<number>()
+        const result: TerminalSession[] = []
+        for (const t of merged.sort((a, b) => a.id - b.id)) {
+          if (!finalSeen.has(t.id)) {
+            finalSeen.add(t.id)
+            result.push(t)
+          }
+        }
+        return result
       })
     })
   }, [onTerminals])
@@ -137,9 +154,24 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
           // If nothing was loaded from storage and the server has sessions,
           // use the server list as the source of truth.
           if (prev.length === 0 && additions.length > 0) {
-            return additions.sort((a, b) => a.id - b.id)
+            // Deduplicate: server may return the same ID multiple times if
+            // multiple users created terminals with the same ID.
+            const seen = new Set<number>()
+            const deduped: TerminalSession[] = []
+            for (const t of additions) {
+              if (!seen.has(t.id)) { seen.add(t.id); deduped.push(t) }
+            }
+            return deduped.sort((a, b) => a.id - b.id)
           }
-          const merged = [...alive, ...additions].sort((a, b) => a.id - b.id)
+          // Deduplicate merged result — alive and additions may overlap
+          const seen = new Set<number>()
+          const merged: TerminalSession[] = []
+          for (const t of [...alive, ...additions].sort((a, b) => a.id - b.id)) {
+            if (!seen.has(t.id)) {
+              seen.add(t.id)
+              merged.push(t)
+            }
+          }
           // If reconciliation results in no terminals and the user just created
           // one (prev.length > 0), keep the local list — the server may not have
           // registered the PTY yet. Otherwise return the empty merged list.
