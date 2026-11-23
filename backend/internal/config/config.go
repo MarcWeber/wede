@@ -98,6 +98,9 @@ type WorkspaceConfig struct {
 	Timeout *int `json:"timeout,omitempty"`
 	// LSP optionally names the language servers enabled for this template.
 	LSP StringList `json:"lsp,omitempty"`
+	// VisibleTo restricts which users can see this workspace in the session
+	// picker. Empty means visible to everyone. Accepts a list of usernames.
+	VisibleTo StringList `json:"visible_to,omitempty"`
 	// VisibleTabTypes overrides which tab types are shown for this workspace.
 	// Merged with global config: workspace-level values override global values.
 	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
@@ -178,7 +181,7 @@ func splitList(s string) []string {
 
 // ── Layered loading ─────────────────────────────────────────────────────────
 
-const configName = "wede.config.json"
+const configName = "wede.config.yaml"
 
 // Layer is one entry from --configs: keys:mode:source.
 type Layer struct {
@@ -283,7 +286,7 @@ func Load() *Config {
 }
 
 // LoadLayers merges the given layers. With no layers it searches for the
-// legacy wede.config.json exactly like the original single-file loader.
+// legacy wede.config.yaml exactly like the original single-file loader.
 func LoadLayers(layers []Layer) (*Store, error) {
 	st := &Store{
 		layers: layers,
@@ -518,7 +521,7 @@ func findLegacy() (string, []byte, error) {
 			return p, d, nil
 		}
 	}
-	return "", nil, fmt.Errorf("wede.config.json not found (searched cwd, parent dirs, ~/.config/wede/, and next to executable)")
+ return "", nil, fmt.Errorf("wede.config.yaml not found (searched cwd, parent dirs, ~/.config/wede/, and next to executable)")
 }
 
 func decodeMap(data []byte, source string) (map[string]any, error) {
@@ -644,11 +647,11 @@ func parse(data []byte) (*Config, error) {
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(cfg); err != nil {
-		return nil, fmt.Errorf("invalid wede.config.json: %w", err)
+ if err := dec.Decode(cfg); err != nil {
+		return nil, fmt.Errorf("invalid wede.config.yaml: %w", err)
 	}
 	if len(cfg.Users) == 0 && cfg.Password == "" {
-		return nil, fmt.Errorf("password is required in wede.config.json")
+		return nil, fmt.Errorf("password is required in wede.config.yaml")
 	}
 	if err := normalizeViewModes(cfg); err != nil {
 		return nil, err

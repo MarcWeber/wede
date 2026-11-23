@@ -248,7 +248,7 @@ export default function Settings({ visible, onClose, workspace, editorSettings, 
             </div>
           </div>
           <p className="text-[10px] text-text-muted mt-1.5 leading-relaxed">
-            Defaults come from <code className="text-text-secondary">wede.config.json</code> (<code className="text-text-secondary">view_image</code>, <code className="text-text-secondary">view_pdf</code>). Changes here apply to this browser.
+            Defaults come from <code className="text-text-secondary">wede.config.yaml</code> (<code className="text-text-secondary">view_image</code>, <code className="text-text-secondary">view_pdf</code>). Changes here apply to this browser.
           </p>
         </div>
 

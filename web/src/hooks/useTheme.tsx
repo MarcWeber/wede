@@ -11,7 +11,7 @@ export const THEME_LEVEL_STOPS = [1, 2, 3, 3.5, 4, 5, 6, 7, 8, 9] as const
 export type ThemeLevel = (typeof THEME_LEVEL_STOPS)[number]
 
 export interface ThemeContextValue {
-  theme: ThemeName | null
+  theme: ThemeName
   level: ThemeLevel
   setTheme: (t: ThemeName) => void
   setLevel: (n: ThemeLevel) => void
@@ -50,10 +50,10 @@ function loadLevel(): ThemeLevel {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeName | null>(() => {
+  const [theme, setThemeState] = useState<ThemeName>(() => {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored === 'dark' || stored === 'light') return stored
-    return null // null = not yet chosen
+    return 'dark' // default to dark on first visit, skip theme picker
   })
   const [level, setLevelState] = useState<ThemeLevel>(loadLevel)
 
@@ -89,7 +89,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setLevel((10 - level) as ThemeLevel)
   }, [level, setLevel])
 
-  const isDark = theme === 'dark' || theme === null
+  const isDark = theme === 'dark'
   const text = LEVEL_TEXT[level]
 
   // Terminal colors vary by level zone

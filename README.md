@@ -149,8 +149,8 @@ Requires Go 1.25+ and Node.js 18+. Then run it against a project:
 ./wede /path/to/your/project
 ```
 
-On first run set a strong password in `wede.config.json` (start from
-[`wede.config.example.json`](wede.config.example.json)), then open
+On first run set a strong password in `wede.config.yaml` (start from
+[`wede.config.example.yaml`](wede.config.example.yaml)), then open
 [http://localhost:9090](http://localhost:9090) and log in.
 
 > **Convenience installer (`install.sh`).** The repo also ships an `install.sh`
@@ -204,7 +204,7 @@ one whose published digest matched.
 
 ## Configuration
 
-wede reads a single `wede.config.json`. It searches, in order: the working
+wede reads a single `wede.config.yaml`. It searches, in order: the working
 directory and its parents, `~/.config/wede/`, then next to the binary. A
 `password` is required; everything else has a safe default.
 
@@ -226,7 +226,7 @@ directory and its parents, `~/.config/wede/`, then next to the binary. A
 | `tunnel_enabled` | `false` | Enables the owner-only public tunnel and **Settings → Public access** panel. Off by default. |
 
 The config file holds your password and is gitignored by default — never commit
-it. Start from [`wede.config.example.json`](wede.config.example.json).
+it. Start from [`wede.config.example.yaml`](wede.config.example.yaml).
 
 ### Remote access
 
@@ -250,8 +250,8 @@ Go embeds it, alpine runtime with git + ripgrep) and a `docker-compose.yml`:
 
 ```sh
 # 1. Set your password — the container requires a non-empty one
-#    The config is read from /home/dev/.config/wede/wede.config.json
-cat > wede.config.json <<'EOF'
+#    The config is read from /home/dev/.config/wede/wede.config.yaml
+cat > wede.config.yaml <<'EOF'
 {
   "password": "your-strong-password-here",
   "port": "9090",
@@ -273,13 +273,13 @@ docker compose up -d --build
 | `WEDE_PORT` | `9090` | Host port to publish |
 | `WEDE_WORKSPACE` | `./projects` | Local dir mounted as the IDE workspace (`/home/dev/work`) |
 
-The login password lives in `wede.config.json` (the compose file mounts it
+The login password lives in `wede.config.yaml` (the compose file mounts it
 read-only into the container, so change it and `docker compose restart` —
 no rebuild needed). Share tokens and chat persist in the `wede-data` volume.
 
 > **Security:** an editor link grants a full login shell inside the container.
 > Bind the compose port to `127.0.0.1` unless you deliberately expose it, and
-> never push `wede.config.json` to a remote. See [DEPLOYMENT.md](docs/DEPLOYMENT.md)
+> never push `wede.config.yaml` to a remote. See [DEPLOYMENT.md](docs/DEPLOYMENT.md)
 > and [SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md).
 
 ---
@@ -368,7 +368,7 @@ npm run screenshots                  # auto-starts wede on scripts/demo-workspac
 
 The screenshotter starts the `./wede` binary pointed at `scripts/demo-workspace/` automatically. See [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) for environment variables and route details.
 
-> **Security reminder:** Always set a strong, unique password in `wede.config.json` before exposing wede over a network. The example config uses a placeholder — **change it before use**. The `install.sh` installer auto-generates a random password; if you configured manually, update `wede.config.json` now.
+> **Security reminder:** Always set a strong, unique password in `wede.config.yaml` before exposing wede over a network. The example config uses a placeholder — **change it before use**. The `install.sh` installer auto-generates a random password; if you configured manually, update `wede.config.yaml` now.
 
 ---
 

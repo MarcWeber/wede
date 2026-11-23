@@ -1,6 +1,6 @@
 # wede Configuration
 
-wede is configured by a JSON file (`wede.config.json`) or by layered JSON/YAML
+wede is configured by a JSON file (`wede.config.yaml`) or by layered JSON/YAML
 files passed with `--configs`. This document covers the config keys, users,
 workspace templates and session timeouts, layered/hot loading, CLI flags, and
 override precedence.
@@ -13,11 +13,11 @@ templates, and hot-reload only the non-secret parts.
 
 ## Config file location
 
-wede searches for `wede.config.json` in this order, using the **first file
+wede searches for `wede.config.yaml` in this order, using the **first file
 found**:
 
 1. The current working directory, then each parent directory up to `/`
-2. `~/.config/wede/wede.config.json`
+2. `~/.config/wede/wede.config.yaml`
 3. The directory containing the `wede` binary
 
 If no file is found in any of these locations, wede logs an error naming all
@@ -346,9 +346,9 @@ exclusively to wede's own loopback port. See
 
 ## Strict parsing: unknown keys are rejected
 
-wede decodes `wede.config.json` with `json.Decoder.DisallowUnknownFields()`.
+wede decodes `wede.config.yaml` with `json.Decoder.DisallowUnknownFields()`.
 Any key not in the table above causes an immediate startup error of the form
-`invalid wede.config.json: json: unknown field "..."`, rather than silently
+`invalid wede.config.yaml: json: unknown field "..."`, rather than silently
 ignoring it. A typo like `"frame_ancestor"` (missing `s`) is caught at
 launch, not swallowed.
 
@@ -369,7 +369,7 @@ you created the config manually, choose a strong password yourself:
 }
 ```
 
-Do not commit `wede.config.json` — it is gitignored by default.
+Do not commit `wede.config.yaml` — it is gitignored by default.
 
 ---
 
@@ -452,7 +452,7 @@ From highest to lowest priority:
 2. **Environment variable** — `WEDE_WORKSPACE_ROOT` overrides `workspace_root`
    from the config file.
 3. **Layered config** — layers in `--configs` order, later winning; see above.
-4. **Legacy config file** (`wede.config.json`) — searched as described above
+4. **Legacy config file** (`wede.config.yaml`) — searched as described above
    and used as the base when no layers are given.
 5. **Built-in defaults** — `port: "9090"`, `host: "127.0.0.1"`,
    `frame_ancestors: ""`, `workspace_root: $HOME`, `serve_landing: false`,
@@ -460,7 +460,7 @@ From highest to lowest priority:
    and is required only when `users` is empty.
 
 Only `port` and `workspace_root` have an override layer above the config
-files. Cached layers/`wede.config.json` require a restart; hot layers reload
+files. Cached layers/`wede.config.yaml` require a restart; hot layers reload
 users, teachers, templates, and defaults at runtime.
 
 ---

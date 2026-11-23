@@ -99,7 +99,8 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// not a client-supplied query param, so presence can't be spoofed.
 	username := auth.GetUsername(r)
 	tabViewState := strings.TrimSpace(r.URL.Query().Get("tab_view_state"))
-	id, out := h.hub.Join(username, tabViewState)
+	collabContext := strings.TrimSpace(r.URL.Query().Get("collab_context"))
+	id, out := h.hub.JoinContext(username, tabViewState, collabContext)
 	if id == "" { // hub already closed (room shutting down)
 		conn.Close()
 		return
@@ -169,6 +170,7 @@ func writePump(conn *websocket.Conn, out <-chan []byte, stop <-chan struct{}) {
 			return
 		case data, ok := <-out:
 			if !ok {
+				_ = conn.Close()
 				return
 			}
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {

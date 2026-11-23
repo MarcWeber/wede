@@ -19,7 +19,7 @@ If your machine has a public IP (or a router with port forwarding) and you're
 comfortable managing TLS yourself, put a reverse proxy in front of wede and
 bind wede itself to loopback — the proxy is the only thing exposed.
 
-`wede.config.json`:
+`wede.config.yaml`:
 
 ```json
 {
@@ -99,7 +99,7 @@ example) could be swapped in via `tunnel.NewWithProvider` without touching
 `main.go` or the HTTP handlers.
 
 The tunnel is disabled by default. Set `"tunnel_enabled": true` in
-`wede.config.json` and restart wede to mount the owner-only routes and the
+`wede.config.yaml` and restart wede to mount the owner-only routes and the
 **Settings → Public access** panel. See
 [GETTING-STARTED.md § Public internet — a sovereign Ephor](GETTING-STARTED.md#3-public-internet--a-sovereign-ephor)
 for the walkthrough (config persisted to `~/.wede/tunnel.json`).

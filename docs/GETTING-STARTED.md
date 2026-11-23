@@ -33,8 +33,8 @@ Requires Go 1.25+ and Node.js 18+. Then run it against a project:
 ./wede /path/to/your/project
 ```
 
-On first run set a strong password in `wede.config.json` (start from
-[`wede.config.example.json`](../wede.config.example.json)), then open
+On first run set a strong password in `wede.config.yaml` (start from
+[`wede.config.example.yaml`](../wede.config.example.yaml)), then open
 [http://localhost:9090](http://localhost:9090) and log in.
 
 ### Convenience installer (prebuilt binary)
@@ -58,7 +58,7 @@ bash install.sh
 What it does: detects your OS/arch, downloads the matching binary from the
 latest GitHub release, installs it to `~/.local/bin` (Linux/macOS —
 `%LOCALAPPDATA%\wede` on Windows), and — unless
-`~/.config/wede/wede.config.json` already exists — generates that config file
+`~/.config/wede/wede.config.yaml` already exists — generates that config file
 with a random 16-character password and `"port": "9090"`, printing the
 password once. **Note it down**; it will not be shown again.
 
@@ -83,7 +83,7 @@ mv wede-linux-amd64 /usr/local/bin/wede
 
 ## Configuration
 
-wede reads a single `wede.config.json` — a `password` is required, everything
+wede reads a single `wede.config.yaml` — a `password` is required, everything
 else has a safe default:
 
 ```json
@@ -357,7 +357,7 @@ mint a bearer token authorizing your chosen public name (`wede`). Point a DNS
 record for the relay (and the name's subdomain, if your relay uses vhost routing)
 at the VPS.
 
-**In wede** — enable the feature in `wede.config.json` first (it is off by
+**In wede** — enable the feature in `wede.config.yaml` first (it is off by
 default), then restart wede:
 
 ```json

@@ -12,7 +12,7 @@ services:
       - wede-data:/home/dev/.wede
       # Config lives in the repo. NOTE: it contains the login password —
       # do NOT push it to a remote, or use a separate secret volume.
-      - ./wede.config.json:/home/dev/.config/wede/wede.config.json:ro
+      - ./wede.config.yaml:/home/dev/.config/wede/wede.config.yaml:ro
     environment:
       - WEDE_WORKSPACE_ROOT=/home/dev/work
     restart: unless-stopped

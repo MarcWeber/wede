@@ -8,7 +8,7 @@ Windows, what state wede keeps on disk and how to back it up, and how to
 upgrade in place.
 
 It assumes you've already read [GETTING-STARTED.md](GETTING-STARTED.md) and
-have a working `wede.config.json`. For TLS / reverse proxies / tunnels, see
+have a working `wede.config.yaml`. For TLS / reverse proxies / tunnels, see
 [PUBLIC-ACCESS.md](PUBLIC-ACCESS.md); for the full config key reference, see
 [CONFIGURATION.md](CONFIGURATION.md).
 
@@ -135,7 +135,7 @@ The dedicated-user boundary above is what actually matters.
 Build the binary first (`npm run build:all`, see the main
 [README](../README.md#quick-start)) and place it somewhere stable, e.g.
 `/usr/local/bin/wede`. Put the config where the dedicated user's config
-search will find it — `~/.config/wede/wede.config.json` under the service
+search will find it — `~/.config/wede/wede.config.yaml` under the service
 user's home is the cleanest choice since it needs no `WorkingDirectory`
 coupling (see [CONFIGURATION.md § Config file location](CONFIGURATION.md#config-file-location)
 for the full search order: cwd and parents, then `~/.config/wede/`, then next
@@ -143,7 +143,7 @@ to the binary).
 
 ```bash
 sudo mkdir -p /srv/wede/.config/wede
-sudo tee /srv/wede/.config/wede/wede.config.json >/dev/null <<'EOF'
+sudo tee /srv/wede/.config/wede/wede.config.yaml >/dev/null <<'EOF'
 {
   "password": "change-me-to-something-strong",
   "port": "9090",
@@ -151,7 +151,7 @@ sudo tee /srv/wede/.config/wede/wede.config.json >/dev/null <<'EOF'
 }
 EOF
 sudo chown -R wede:wede /srv/wede
-sudo chmod 600 /srv/wede/.config/wede/wede.config.json
+sudo chmod 600 /srv/wede/.config/wede/wede.config.yaml
 ```
 
 `/etc/systemd/system/wede.service`:
@@ -333,7 +333,7 @@ wede ships no native Windows service wrapper. To run it unattended:
   action = start `wede.exe` with your workspace path as an argument, and set
   it to run whether or not a user is logged on if you want it to survive
   logout. Config resolution is the same search order as everywhere else
-  (`wede.config.json` next to the `.exe`, or under `%USERPROFILE%\.config\wede\`).
+  (`wede.config.yaml` next to the `.exe`, or under `%USERPROFILE%\.config\wede\`).
 - **NSSM** (the Non-Sucking Service Manager) — wraps `wede.exe` as a proper
   Windows service (`nssm install wede C:\path\to\wede.exe C:\path\to\project`),
   giving you start/stop/restart semantics and Windows Event Log output
@@ -414,7 +414,7 @@ sudo journalctl -u wede -f        # confirm a clean "wede vX.Y.Z running on ..."
 
 **Back up before you upgrade, at minimum:**
 
-- `wede.config.json` — contains your password in plaintext.
+- `wede.config.yaml` — contains your password in plaintext.
 - `~/.wede/tunnel.json` — contains your relay bearer token in plaintext, if
   you use the public tunnel.
 
@@ -429,10 +429,10 @@ shim that does exist in the code is for the session role field: a session
 record with no stored `Role` (from before roles existed) is treated as
 `owner` (`auth.go`) — evidence the project *has* handled at least one schema
 change gracefully, but not a blanket guarantee that every future change will
-be. What **is** guaranteed is that `wede.config.json` parsing is strict
+be. What **is** guaranteed is that `wede.config.yaml` parsing is strict
 (`json.Decoder.DisallowUnknownFields()`): if a future version renames or
 removes a config key you have set, startup **fails loudly** with `invalid
-wede.config.json: json: unknown field "..."` rather than silently ignoring
+wede.config.yaml: json: unknown field "..."` rather than silently ignoring
 your setting — check `journalctl -u wede` for exactly that message first if
 wede won't start after an upgrade. For the JSON state files in `~/.wede/`
 and `<workspace>/.wede/`, the code does a best-effort `json.Unmarshal` and

@@ -2,6 +2,7 @@ package presence
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -213,5 +214,48 @@ found:
 	h.Leave(id1)
 	if h.Presenter() != nil {
 		t.Fatal("presenter should clear when the leader leaves")
+	}
+}
+
+func TestJoinContextTakesOverTabViewState(t *testing.T) {
+	h := NewHub()
+	id1, ch1 := h.JoinContext("alice", "user:sess1", "team")
+	id2, _ := h.JoinContext("bob", "user:sess1", "team")
+
+	if id1 == id2 {
+		t.Fatal("expected distinct ids")
+	}
+	if len(h.Roster()) != 1 {
+		t.Fatalf("roster len = %d, want 1 after takeover", len(h.Roster()))
+	}
+	if find(h.Roster(), id2) == nil {
+		t.Fatal("new owner missing from roster")
+	}
+
+	// The old socket gets a kicked notice before its channel closes.
+	kicked := false
+	for data := range ch1 {
+		if strings.Contains(string(data), `"kicked"`) {
+			kicked = true
+		}
+	}
+	if !kicked {
+		t.Fatal("old owner did not receive a kicked notice")
+	}
+}
+
+func TestTabViewStateIsScopedByCollabContext(t *testing.T) {
+	h := NewHub()
+	h.JoinContext("alice", "user:sess1", "team-a")
+	h.JoinContext("bob", "user:sess1", "team-b")
+	if len(h.Roster()) != 2 {
+		t.Fatalf("roster len = %d, want 2 for different contexts", len(h.Roster()))
+	}
+
+	if n := h.KickTabViewState("team-a", "user:sess1"); n != 1 {
+		t.Fatalf("kick count = %d, want 1", n)
+	}
+	if len(h.Roster()) != 1 {
+		t.Fatalf("roster len = %d, want 1 after kick", len(h.Roster()))
 	}
 }

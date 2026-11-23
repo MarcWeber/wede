@@ -3,7 +3,7 @@ import {
   Files, GitBranch, TerminalSquare, Save, FolderOpen,
   Globe, Settings as SettingsIcon, ChevronLeft, Search as SearchIcon,
   MessageSquare, Webhook, ScrollText, Boxes,
-  HelpCircle, Menu, Code2, Minimize2, GripVertical, Radio,
+  HelpCircle, Menu, Code2, Minimize2, GripVertical, Radio, Users,
 } from 'lucide-react'
 import { useMobile } from '../hooks/useMobile'
 import { useDesktopMode } from '../hooks/useDesktopMode'
@@ -41,6 +41,7 @@ import Tabbed from './Tabbed'
 import { formatTabLocation } from '../lib/tabPath'
 import ViewMenu from './ViewMenu'
 import ChooseWorkspaceAndTabSession from './ChooseWorkspaceAndTabSession'
+import SessionTabs from './SessionTabs'
 import { navigateToSession, type SessionChoice } from '../lib/sessionNav'
 import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
@@ -62,6 +63,12 @@ function colorFromName(name: string | null | undefined): string {
 }
 
 let browserIdCounter = 0
+
+// File/code tabs are the ones that can be hidden. Special tabs (web, git
+// graph, API) use their own view-kind visibility instead.
+function isFileTab(t: Tab): boolean {
+  return !t.type || t.type === 'gitgraph'
+}
 
 export interface IDEProps {
   token: string
@@ -95,12 +102,13 @@ export interface ContainerInfo {
   ownTab?: boolean
 }
 
-type ViewKind = 'files' | 'search' | 'code' | 'web' | 'git' | 'api' | 'settings' | 'log' | 'help' | 'terminals' | 'chat'
+type ViewKind = 'files' | 'search' | 'code' | 'web' | 'git' | 'api' | 'settings' | 'log' | 'help' | 'terminals' | 'chat' | 'session-tabs'
 
 // The layout a fresh install starts with (and what "Reset view" restores).
 const DEFAULT_VISIBLE: Record<ViewKind, boolean> = {
   files: true, search: false, code: true, web: false, git: false, api: false,
   settings: false, log: false, help: false, terminals: false, chat: false,
+  'session-tabs': true,
 }
 
 // Geometry of a `float` tab: it stays on top of the main container and is moved
@@ -253,15 +261,26 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   })
 
   const tabSession = useTabSession({ workspaceId, authFetch, username, collabContext, tabViewState })
-
-  // Collaboration presence: who else is in this workspace and what they're viewing.
-  // The tab view state is advertised so the chooser can mark connected states.
-  const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, pointers: collabPointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username, tabSession.name)
+  const { saveLayout, stopSaving, layout: savedLayout, loading: savedLayoutLoading } = tabSession
 
   // Workspace/session chooser modal. showCancel is only set when there is a
   // previous selection to return to (i.e. a switch, not an initial pick).
   const [sessionPicker, setSessionPicker] = useState<{ showCancel: boolean } | null>(null)
+  const [kicked, setKicked] = useState(false)
   const openSessionPicker = useCallback((showCancel = false) => setSessionPicker({ showCancel }), [])
+
+  // Another device took this tab view state over (or it was removed). Stop the
+  // delayed layout saves immediately and force a new choice; otherwise this tab
+  // would overwrite the new owner's layout.
+  const handleKicked = useCallback(() => {
+    stopSaving()
+    setKicked(true)
+    openSessionPicker(false)
+  }, [stopSaving, openSessionPicker])
+
+  // Collaboration presence: who else is in this workspace and what they're viewing.
+  // The tab view state is advertised so the chooser can mark connected states.
+  const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, pointers: collabPointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username, tabSession.name, collabContext, handleKicked)
 
   const applySessionChoice = useCallback((choice: SessionChoice) => {
     navigateToSession(choice)
@@ -290,6 +309,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     { kind: 'log', label: 'Log', icon: ScrollText },
     { kind: 'help', label: 'Help', icon: HelpCircle },
     { kind: 'chat', label: 'Chat', icon: MessageSquare },
+    { kind: 'session-tabs', label: 'Session tabs', icon: Users },
     { kind: 'settings', label: 'Settings', icon: SettingsIcon },
   ]
   const [visible, setVisible] = useState<Record<ViewKind, boolean>>(() => {
@@ -364,11 +384,16 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     return []
   })
   const [viewModes, setViewModes] = useState<Record<string, ViewMode>>(() => {
+    // Default dock positions for view-only tabs so they get a proper tab strip
+    // with middle-click close and right-click menu support.
+    const defaults: Record<string, ViewMode> = {
+      'view:session-tabs': 'docked-right',
+    }
     try {
       const saved = localStorage.getItem('wede_view_modes')
       if (saved) {
         const raw = JSON.parse(saved) as Record<string, string>
-        const next: Record<string, ViewMode> = {}
+        const next: Record<string, ViewMode> = { ...defaults }
         for (const [id, mode] of Object.entries(raw)) {
           next[id] = (
             mode === 'float-left' ? 'docked-left'
@@ -380,7 +405,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         return next
       }
     } catch { /* ignore */ }
-    return {}
+    return defaults
   })
   const [floatGeom, setFloatGeom] = useState<Record<string, FloatGeom>>(() => {
     try {
@@ -397,6 +422,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     } catch { /* ignore */ }
     return { left: 32, right: 32, bottom: 30 }
   })
+  // Server tab_view_state wins over localStorage once; the save effect waits
+  // until this is set so the local/default layout cannot overwrite a joined
+  // state before hydration finishes.
+  const hydratedLayoutRef = useRef(false)
   const [modeDrag, setModeDrag] = useState<string | null>(null)
   const [dockActive, setDockActive] = useState<{ left: string | null; right: string | null; bottom: string | null }>({ left: null, right: null, bottom: null })
   const [nestedDockActive, setNestedDockActive] = useState<Record<string, string>>({})
@@ -552,7 +581,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     if (visible.files) for (const id of fileIds) list.push({ id: `files:${id}`, kind: 'files', title: id === 1 ? 'Files' : `Files ${id}`, icon: Files, fileId: id })
     if (visible.search) for (const id of searchIds) list.push({ id: `search:${id}`, kind: 'search', title: `Search ${id}`, icon: SearchIcon, searchId: id })
     if (visible.code) {
-      const fileTabs = tabs.filter((t) => !t.type || t.type === 'gitgraph')
+      const fileTabs = tabs.filter((t) => isFileTab(t) && !t.hidden)
       for (const t of fileTabs) list.push({ id: `file:${t.path}`, kind: 'code', title: t.name || 'Editor', icon: Code2, filePath: t.path })
     }
     if (visible.terminals) {
@@ -568,6 +597,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     if (visible.log) for (const id of logIds) list.push({ id: `log:${id}`, kind: 'log', title: `Log ${id}`, icon: ScrollText, logId: id })
     if (visible.help) pushView('help', 'Help', HelpCircle)
     if (visible.chat) pushView('chat', 'Chat', MessageSquare)
+    if (visible['session-tabs']) pushView('session-tabs', 'Session tabs', Users)
     for (const c of containers.filter((x) => x.visible)) {
       list.push({ id: `container:${c.id}`, kind: 'container', title: `Cont ${c.id}`, icon: Boxes, containerId: c.id })
     }
@@ -643,8 +673,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   useEffect(() => { try { localStorage.setItem('wede_dock_sizes', JSON.stringify(dockSizes)) } catch { /* ignore */ } }, [dockSizes])
 
   useEffect(() => {
-    tabSession.saveLayout({
-      tabs: tabs.map((t) => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url })),
+    if (savedLayoutLoading || !hydratedLayoutRef.current) return
+    saveLayout({
+      tabs: tabs.map((t) => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url, hidden: t.hidden })),
       activeTab,
       visible,
       tabOrder,
@@ -660,7 +691,44 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       floatGeom,
       dockSizes,
     })
-  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, tabSession])
+  }, [tabs, activeTab, visible, tabOrder, fileIds, activeFileId, activeShell, menuPlacement, containers, containerOf, containerActive, lockedShells, viewModes, floatGeom, dockSizes, saveLayout, savedLayoutLoading])
+
+  // Hydrate this tab view from the server exactly once. localStorage stays the
+  // crash fallback, but a state selected in the chooser/session-tabs (including
+  // one owned by another device) must win so joining really shows that layout.
+  useEffect(() => {
+    if (savedLayoutLoading || hydratedLayoutRef.current) return
+    hydratedLayoutRef.current = true
+    const l = savedLayout
+    if (!l) return
+    if (Array.isArray(l.tabs)) {
+      const next = l.tabs
+        .map((t) => normalizeTabIdentity(t, workspaceId))
+        .filter((t): t is Tab => !!t)
+      setTabs(next)
+    }
+    if (l.activeTab !== undefined) setActiveTab(l.activeTab ?? null)
+    if (l.visible) setVisible({ ...DEFAULT_VISIBLE, ...(l.visible as Partial<Record<ViewKind, boolean>>) })
+    if (Array.isArray(l.tabOrder)) setTabOrder(l.tabOrder)
+    if (Array.isArray(l.fileIds) && l.fileIds.length) {
+      setFileIds(l.fileIds)
+      nextFileId.current = Math.max(nextFileId.current, ...l.fileIds.map((id) => id + 1))
+    }
+    if (typeof l.activeFileId === 'number') setActiveFileId(l.activeFileId)
+    if (typeof l.activeShell === 'string') setActiveShell(l.activeShell)
+    if (typeof l.menuPlacement === 'string') setMenuPlacement(l.menuPlacement as MenuPlacement)
+    if (Array.isArray(l.containers)) {
+      setContainers(l.containers)
+      const maxId = l.containers.reduce((max, c) => Math.max(max, c.id), 0)
+      containerIdRef.current = Math.max(containerIdRef.current, maxId + 1)
+    }
+    if (l.containerOf) setContainerOf(l.containerOf)
+    if (l.containerActive) setContainerActive(l.containerActive)
+    if (Array.isArray(l.lockedShells)) setLockedShells(l.lockedShells)
+    if (l.viewModes) setViewModes(l.viewModes as Record<string, ViewMode>)
+    if (l.floatGeom) setFloatGeom(l.floatGeom)
+    if (l.dockSizes) setDockSizes(l.dockSizes)
+  }, [savedLayoutLoading, savedLayout, workspaceId])
 
   // Upgrade any legacy raw floating tab into a floating container so every
   // float keeps a draggable container tab.
@@ -948,7 +1016,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   // restored against their own workspace, not just the active one).
   useEffect(() => {
     try {
-      const toSave = tabs.map(t => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url }))
+      const toSave = tabs.map(t => ({ path: t.path, rel: t.rel, workspaceId: t.workspaceId, name: t.name, type: t.type, url: t.url, hidden: t.hidden }))
       localStorage.setItem('wede_tabs', JSON.stringify(toSave))
     } catch { /* ignore */ }
   }, [tabs])
@@ -1080,11 +1148,47 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       const next = prev.filter((t) => t.path !== path)
       if (activeTab === path) {
         const idx = prev.findIndex((t) => t.path === path)
-        setActiveTab(next[Math.min(idx, next.length - 1)]?.path || null)
+        const after = next.slice(idx + 1).find((t) => isFileTab(t) && !t.hidden)
+        const before = [...next.slice(0, idx)].reverse().find((t) => isFileTab(t) && !t.hidden)
+        setActiveTab((after ?? before)?.path || null)
       }
       return next
     })
   }, [activeTab])
+
+  // hideTab preserves the tab (content/scroll/order) but removes it from the
+  // main strip. Closing is the destructive action; hiding is the reversible one.
+  const hideTab = useCallback((path: string) => {
+    setTabs((prev) => {
+      const target = prev.find((t) => t.path === path)
+      if (!target || target.hidden || target.locked) return prev
+      const next = prev.map((t) => (t.path === path ? { ...t, hidden: true } : t))
+      if (activeTab === path) {
+        const idx = prev.findIndex((t) => t.path === path)
+        const after = next.slice(idx + 1).find((t) => isFileTab(t) && !t.hidden)
+        const before = [...next.slice(0, idx)].reverse().find((t) => isFileTab(t) && !t.hidden)
+        const nextActive = after ?? before ?? null
+        setActiveTab(nextActive?.path ?? null)
+        if (activeShell === `file:${path}`) setActiveShell(nextActive ? `file:${nextActive.path}` : '')
+      }
+      return next
+    })
+  }, [activeTab, activeShell])
+
+  // showTab reopens a hidden tab and focuses it.
+  const showTab = useCallback((path: string) => {
+    setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, hidden: false } : t)))
+    setVisible((v) => ({ ...v, code: true }))
+    setActiveTab(path)
+    setActiveShell(`file:${path}`)
+  }, [])
+
+  const toggleTabHidden = useCallback((path: string) => {
+    const tab = tabs.find((t) => t.path === path)
+    if (!tab) return
+    if (tab.hidden) showTab(path)
+    else hideTab(path)
+  }, [tabs, showTab, hideTab])
 
   // closeSelectedTabs closes the given tabs, skipping locked ones unless
   // includeLocked is set.
@@ -1094,7 +1198,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     if (next.length === tabs.length) return
     setTabs(next)
     if (activeTab && !next.some((t) => t.path === activeTab)) {
-      setActiveTab(next.length ? next[next.length - 1].path : null)
+      const nextActive = [...next].reverse().find((t) => isFileTab(t) && !t.hidden)
+      setActiveTab(nextActive?.path ?? null)
     }
   }, [tabs, activeTab])
 
@@ -1719,11 +1824,12 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     const existing = tabs.find((t) => t.path === key)
     if (existing) {
       const hasTarget = targetLine != null || targetSelection !== undefined || targetPdf != null || targetImage != null
-      if ((!preview && existing.preview) || hasTarget) {
+      if ((!preview && existing.preview) || hasTarget || existing.hidden) {
         setTabs((prev) => prev.map((t) => {
           if (t.path !== key) return t
           const next = { ...t }
           if (!preview) next.preview = false
+          if (t.hidden) next.hidden = false
           if (targetLine != null) next.targetLine = targetLine
           if (targetSelection === null) next.targetSelection = undefined
           else if (targetSelection != null) next.targetSelection = targetSelection
@@ -1776,6 +1882,17 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     } catch { /* ignore */ }
     return false
   }, [tabs, authFetch, workspaceId])
+
+  // Open a tab listed in the session-tabs panel in the current view. Hidden
+  // local tabs are revealed by openFile instead of being duplicated.
+  const openTabFromSessionPanel = useCallback((t: { path?: string; rel?: string; workspaceId?: string | null; name?: string; type?: string }) => {
+    if (t.type) return
+    const parsed = parseFileKey(t.path)
+    const rel = t.rel ?? parsed.rel
+    const wsId = t.workspaceId ?? parsed.workspaceId ?? workspaceId
+    if (!rel) return
+    void openFile({ path: rel, rel, workspaceId: wsId, name: t.name })
+  }, [openFile, workspaceId])
 
   // Clicking a collaborator's semantic cursor opens the target tab and, for
   // code, moves the local caret to the exact line/column.
@@ -2337,8 +2454,12 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   // there are no nested tab strips inside a view.
   const renderEntry = (e: ShellEntry): ReactNode => {
     switch (e.kind) {
-      case 'files':
-        return <FileExplorer key={e.fileId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={e.id === activeShell ? handleRegisterExplorerActions : undefined} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
+      case 'files': {
+        // Show only the active workspace's files, not all workspaces.
+        const allWorkspaces = workspacesApi?.workspaces || []
+        const activeWorkspaces = workspaceId ? allWorkspaces.filter(w => w.id === workspaceId) : allWorkspaces
+        return <FileExplorer key={e.fileId} authFetch={authFetch} workspaces={activeWorkspaces} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={e.id === activeShell ? handleRegisterExplorerActions : undefined} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
+      }
       case 'search':
         return <SearchPanel key={e.searchId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} readOnly={role === 'viewer'} onOpenFile={(entry, line) => {
           const key = fileKey(entry.workspaceId || workspaceId, entry.rel ?? entry.path)
@@ -2374,6 +2495,27 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         return <GitPanels authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} visible readOnly={role === 'viewer'} onOpenGraph={openGitGraph} />
       case 'chat':
         return <Chat workspaceId={workspaceId} workspaceName={(workspacesApi?.workspaces || []).find((w) => w.id === workspaceId)?.name} token={token} username={username} color={colorFromName(username)} />
+      case 'session-tabs':
+        return (
+          <SessionTabs
+            workspaceId={workspaceId}
+            authFetch={authFetch}
+            collabContext={collabContext}
+            currentState={tabSession.name}
+            tabs={tabs}
+            activeTab={activeTab}
+            collabRoster={collabRoster}
+            onJoin={(name) => {
+              if (!workspaceId) return
+              const workspaceName = (workspacesApi?.workspaces || []).find((w) => w.id === workspaceId)?.name || ''
+              navigateToSession({ workspaceId, collabContext: collabContext || workspaceName, tabViewState: name, force: true })
+            }}
+            onOpenTab={openTabFromSessionPanel}
+            onShowTab={showTab}
+            onHideTab={hideTab}
+            onCloseTab={closeTab}
+          />
+        )
       case 'api':
         return <ApiInstance key={e.apiId} workspaceId={workspaceId} authFetch={authFetch} readOnly={role === 'viewer'} />
       case 'log':
@@ -2665,10 +2807,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         <ChooseWorkspaceAndTabSession
           workspacesApi={workspacesApi}
           authFetch={authFetch}
-          username={username}
           currentWorkspaceId={workspaceId}
           currentCollabContext={collabContext}
-          currentTabViewState={tabSession.name}
+          currentTabViewState={kicked ? null : tabSession.name}
+          username={username}
           showCancel={sessionPicker.showCancel}
           onCancel={() => setSessionPicker(null)}
           onApply={applySessionChoice}

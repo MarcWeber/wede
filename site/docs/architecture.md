@@ -82,7 +82,7 @@ wede has no database and no separate backend process. One Go binary embeds the b
 | Package | Responsibility |
 |---------|-----------------|
 | `auth` | Password login, session tokens (hashed, 24 h TTL, persisted), brute-force lockout, share-token mint/redeem/revoke, role resolution (`owner`/`editor`/`viewer`), `Middleware`/`RequireEditor`/`RequireOwner` |
-| `config` | Loads `wede.config.json` (password, port, host, frame-ancestors, workspace root, serve-landing flag) |
+| `config` | Loads `wede.config.yaml` (password, port, host, frame-ancestors, workspace root, serve-landing flag) |
 | `folder` | Root-folder open/browse/recents; enforces the allowed workspace base (`cfg.WorkspaceRoot`) on any runtime folder-open/workspace-create |
 | `workspace` | Multi-project registry (`Manager`); one `Workspace` per open project owning its own lazily-built files/git/search/watcher/terminal/lsp/dap/presence/collab/chat/apiclient/docs handlers; also owns the `.wede`-location relocation feature (`wedehost.go`) |
 | `files` | File CRUD (list/tree/read/write/create/delete/rename/copy) + formatter dispatch (gofmt/prettier/etc., extensible via `formatters.json`); all paths pass through a workspace-confining `safePath()` |

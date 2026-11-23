@@ -310,7 +310,7 @@ fi
 
 # ── Default config ───────────────────────────────────────────────────────────
 CONFIG_DIR="${HOME}/.config/wede"
-CONFIG_FILE="${CONFIG_DIR}/wede.config.json"
+CONFIG_FILE="${CONFIG_DIR}/wede.config.yaml"
 mkdir -p -- "$CONFIG_DIR"
 
 if [ -f "$CONFIG_FILE" ]; then

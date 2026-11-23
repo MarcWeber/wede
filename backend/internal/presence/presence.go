@@ -33,17 +33,18 @@ func debug(format string, args ...any) {
 
 // Member is one connected participant in a room.
 type Member struct {
-	ID         string   `json:"id"`
-	Username   string   `json:"username"`
-	Color      string   `json:"color"`
-	File       string   `json:"file,omitempty"` // path currently viewed (relative to room root)
-	Line       int      `json:"line,omitempty"` // cursor line in that file
-	AnchorLine int      `json:"anchorLine,omitempty"` // selection start line (0 = no selection)
-	AnchorCol  int      `json:"anchorCol,omitempty"`  // selection start column (1-based, 0 = no selection)
-	HeadLine   int      `json:"headLine,omitempty"`   // selection end line (0 = no selection)
-	HeadCol    int      `json:"headCol,omitempty"`    // selection end column (1-based, 0 = no selection)
-	Tabs         []string `json:"tabs,omitempty"`          // open file tabs (relative paths)
-	TabViewState string   `json:"tabViewState,omitempty"` // user:<name> view state using this socket
+	ID            string   `json:"id"`
+	Username      string   `json:"username"`
+	Color         string   `json:"color"`
+	File          string   `json:"file,omitempty"`          // path currently viewed (relative to room root)
+	Line          int      `json:"line,omitempty"`          // cursor line in that file
+	AnchorLine    int      `json:"anchorLine,omitempty"`    // selection start line (0 = no selection)
+	AnchorCol     int      `json:"anchorCol,omitempty"`     // selection start column (1-based, 0 = no selection)
+	HeadLine      int      `json:"headLine,omitempty"`      // selection end line (0 = no selection)
+	HeadCol       int      `json:"headCol,omitempty"`       // selection end column (1-based, 0 = no selection)
+	Tabs          []string `json:"tabs,omitempty"`          // open file tabs (relative paths)
+	TabViewState  string   `json:"tabViewState,omitempty"`  // user:<name> view state using this socket
+	CollabContext string   `json:"collabContext,omitempty"` // session/context that owns TabViewState
 }
 
 // Presenter is the single participant currently leading the room. While set,
@@ -92,6 +93,18 @@ func NewHub() *Hub {
 // join). The channel is buffered; if a consumer falls behind, events are dropped
 // rather than blocking the hub.
 func (h *Hub) Join(username string, tabViewState ...string) (string, <-chan []byte) {
+	var state string
+	if len(tabViewState) > 0 {
+		state = tabViewState[0]
+	}
+	return h.JoinContext(username, state, "")
+}
+
+// JoinContext registers a participant and takes over its tab view state if
+// another socket in the same collaboration context already holds it. The older
+// socket receives a "kicked" event and is closed so only one device owns a
+// state at a time.
+func (h *Hub) JoinContext(username, tabViewState, collabContext string) (string, <-chan []byte) {
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -99,25 +112,78 @@ func (h *Hub) Join(username string, tabViewState ...string) (string, <-chan []by
 		close(ch)
 		return "", ch
 	}
+	evicted := false
+	if tabViewState != "" {
+		for oid, oc := range h.clients {
+			if oc.member.TabViewState != tabViewState || oc.member.CollabContext != collabContext {
+				continue
+			}
+			h.kickLocked(oc)
+			delete(h.clients, oid)
+			if h.presenter != nil && h.presenter.ID == oid {
+				h.presenter = nil
+			}
+			evicted = true
+		}
+	}
 	h.counter++
 	id := fmt.Sprintf("m%d", h.counter)
 	if username == "" {
 		username = "anon"
 	}
 	member := Member{
-		ID:       id,
-		Username: username,
-		Color:    palette[(h.counter-1)%uint64(len(palette))],
-	}
-	if len(tabViewState) > 0 {
-		member.TabViewState = tabViewState[0]
+		ID:            id,
+		Username:      username,
+		Color:         palette[(h.counter-1)%uint64(len(palette))],
+		TabViewState:  tabViewState,
+		CollabContext: collabContext,
 	}
 	c := &client{member: member, out: make(chan []byte, 16)}
 	h.clients[id] = c
 	h.mu.Unlock()
 
 	h.broadcast()
+	if evicted {
+		debug("[presence-debug] tab view state %q taken over in context %q", tabViewState, collabContext)
+	}
 	return id, c.out
+}
+
+// KickTabViewState force-closes every socket using a state in a context so its
+// client falls back to the tab view state selector. Used when a state is
+// removed or taken over.
+func (h *Hub) KickTabViewState(collabContext, tabViewState string) int {
+	if tabViewState == "" {
+		return 0
+	}
+	h.mu.Lock()
+	n := 0
+	for oid, oc := range h.clients {
+		if oc.member.TabViewState != tabViewState || oc.member.CollabContext != collabContext {
+			continue
+		}
+		h.kickLocked(oc)
+		delete(h.clients, oid)
+		if h.presenter != nil && h.presenter.ID == oid {
+			h.presenter = nil
+		}
+		n++
+	}
+	h.mu.Unlock()
+	if n > 0 {
+		h.broadcast()
+	}
+	return n
+}
+
+// kickLocked sends the kicked notice and closes the outbound channel. The write
+// pump sees the buffered notice first, then closes the socket.
+func (h *Hub) kickLocked(c *client) {
+	select {
+	case c.out <- []byte(`{"type":"kicked","reason":"tab_view_state"}`):
+	default:
+	}
+	close(c.out)
 }
 
 // Leave removes a participant and notifies the rest.
@@ -304,6 +370,9 @@ func (h *Hub) broadcast() {
 }
 
 // Close shuts the hub down, closing all outbound channels. Idempotent.
+// Before closing, it sends a "kicked" notice to every connected client so the
+// frontend knows the workspace was closed (rather than a network error) and can
+// show the session picker modal.
 func (h *Hub) Close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -313,6 +382,11 @@ func (h *Hub) Close() {
 	h.closed = true
 	h.presenter = nil
 	for id, c := range h.clients {
+		// Queue the kicked notice before closing so the write pump delivers it.
+		select {
+		case c.out <- []byte(`{"type":"kicked","reason":"workspace_closed"}`):
+		default:
+		}
 		close(c.out)
 		delete(h.clients, id)
 	}

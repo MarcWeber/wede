@@ -9,7 +9,7 @@ export interface MediaSettings {
   pdf: PdfViewMode
 }
 
-// Config defaults supplied by the backend (wede.config.json). These are only
+// Config defaults supplied by the backend (wede.config.yaml). These are only
 // the initial values; each browser may override them in Settings.
 export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   image: 'tab-viewer',

@@ -15,7 +15,7 @@ wede's security model is deliberately simple, and simple has sharp edges.
 Know them before you deploy.
 
 - **There are no user accounts.** Authentication is one owner password
-  (`wede.config.json`) plus revocable share tokens minted by the owner
+  (`wede.config.yaml`) plus revocable share tokens minted by the owner
   (`POST /api/auth/tokens`). There is no IdP, no per-user login, no SSO. Every
   "editor" or "viewer" is just a bearer of a token the owner handed out —
   wede has no idea who they actually are beyond a self-chosen display name.
@@ -68,7 +68,7 @@ With that in mind, the checklist:
 
 ### 1. Use a strong owner password, and change the shipped placeholder
 
-`wede.config.example.json` ships with `"password": "CHANGE_ME_BEFORE_USE"`.
+`wede.config.example.yaml` ships with `"password": "CHANGE_ME_BEFORE_USE"`.
 `config.Load()` (`backend/internal/config/config.go`) refuses to start with an
 empty password, but it does **not** refuse the example placeholder — if you
 copy the example file into place without editing it, wede will run with a
@@ -84,7 +84,7 @@ lockout is per address, one noisy client cannot lock the owner out everywhere.
 ### 2. Keep the default loopback bind unless you have a reason not to
 
 `config.Load()` defaults `Host` to `127.0.0.1`. Setting `"host": "0.0.0.0"`
-(or any non-loopback address) in `wede.config.json` makes wede reachable from
+(or any non-loopback address) in `wede.config.yaml` makes wede reachable from
 other machines directly, with no proxy in between — fine on a trusted LAN,
 risky on anything internet-facing. If you need public reachability, prefer a
 reverse proxy or the tunnel (both keep wede itself on loopback) over binding

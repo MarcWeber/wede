@@ -56,6 +56,7 @@ export default function HelpView() {
             <Item label="Git">stage and commit files</Item>,
             <Item label="API">test APIs</Item>,
             <Item label="Settings">configure collaborative features, visible tabs, and x/y shrink</Item>,
+            <Item label="Session tabs">list this view's tabs (including hidden) and other people's tab views; join one or open its files here</Item>,
             <Item label="Log">watch log files</Item>,
             <Item label="Help">this page; terminal help is under terminal &gt; settings &gt; help</Item>,
           ]} />

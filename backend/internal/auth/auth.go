@@ -334,15 +334,9 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		// Per-user login → editor role, with teacher flag if applicable.
 		sessionToken := h.newSession(username, RoleEditor)
 		isTeacher := h.teachers != nil && h.teachers[username]
-		http.SetCookie(w, &http.Cookie{
-			Name:     "wede_session",
-			Value:    sessionToken,
-			Path:     "/",
-			MaxAge:   int(SessionTTL / time.Second),
-			HttpOnly: true,
-			Secure:   isHTTPS(r),
-			SameSite: http.SameSiteLaxMode,
-		})
+		// Do NOT set a cookie: the frontend uses sessionStorage + Authorization header.
+		// A shared cookie would cause cross-user interference when multiple users
+		// log in from the same browser (even different tabs) — the last login wins.
 		json.NewEncoder(w).Encode(map[string]any{
 			"token":    sessionToken,
 			"username": username,
@@ -377,17 +371,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Owner-password login → owner role.
 	sessionToken := h.newSession(username, RoleOwner)
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "wede_session",
-		Value:    sessionToken,
-		Path:     "/",
-		MaxAge:   int(SessionTTL / time.Second),
-		HttpOnly: true,
-		Secure:   isHTTPS(r),
-		SameSite: http.SameSiteLaxMode,
-	})
-
+	// Do NOT set a cookie: the frontend uses sessionStorage + Authorization header.
 	json.NewEncoder(w).Encode(map[string]any{
 		"token":    sessionToken,
 		"username": username,
@@ -534,7 +518,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	delete(h.sessions, hashToken(token))
 	h.saveSessions()
 	h.mu.Unlock()
-
+	// Clear the cookie if it was ever set (for backward compatibility).
 	http.SetCookie(w, &http.Cookie{
 		Name:     "wede_session",
 		Value:    "",

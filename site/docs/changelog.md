@@ -375,7 +375,7 @@ this file for how their compare links are constructed.
 ### Fixed
 - **Old brand references removed** — all remaining mentions of the previous brand name
   (including the historical changelog entry) have been scrubbed from the codebase.
-- **Config unknown keys are now fatal** — `wede.config.json` is decoded with
+- **Config unknown keys are now fatal** — `wede.config.yaml` is decoded with
   `DisallowUnknownFields()`, so a typo like `"frame_ancestor"` (missing `s`) causes
   an immediate startup error rather than silently being ignored.
 - **Delete confirmation** — right-click → Delete in the file explorer now shows a
@@ -401,8 +401,8 @@ this file for how their compare links are constructed.
 ### Changed
 - **CI** — `ci.yml` now runs `go test ./...` (hard gate) and `npm run lint`
   (advisory — pre-existing JS violations tracked separately, now resolved to 0 errors).
-- **Config example** — `wede.config.example.json` added with placeholder password.
-  `wede.config.json` is now gitignored to prevent committing real credentials.
+- **Config example** — `wede.config.example.yaml` added with placeholder password.
+  `wede.config.yaml` is now gitignored to prevent committing real credentials.
 
 ### Removed
 - **`database/` module** — the orphaned Postgres migration tool (`database/go.mod`,

@@ -3,8 +3,11 @@ package workspace
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
+
+	"wede/backend/internal/auth"
 )
 
 // dto is the JSON shape returned for a running workspace/session.
@@ -54,15 +57,26 @@ func (m *Manager) HandleList(w http.ResponseWriter, r *http.Request) {
 
 // HandleSessionsList serves GET /api/sessions: active sessions plus the
 // configured templates the login picker offers for new sessions.
+// Templates with a non-empty visible_to list are filtered to the authenticated
+// user's username so restricted workspaces are hidden from others.
 func (m *Manager) HandleSessionsList(w http.ResponseWriter, r *http.Request) {
 	sessions := m.Sessions()
 	out := make([]dto, 0, len(sessions))
 	for _, s := range sessions {
 		out = append(out, toSessionDTO(s))
 	}
+	username := auth.GetUsername(r)
+	allTemplates := m.Templates()
+	templates := make([]Template, 0, len(allTemplates))
+	for _, t := range allTemplates {
+		if len(t.VisibleTo) > 0 && !slices.Contains(t.VisibleTo, username) {
+			continue
+		}
+		templates = append(templates, t)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sessions":  out,
-		"templates": m.Templates(),
+		"templates": templates,
 	})
 }
 
@@ -122,6 +136,8 @@ func (m *Manager) HandleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleTabSessionList serves GET /api/workspaces/{id}/tab_sessions?context=&dir=
+// For connected members it also returns the username and open tabs from the
+// presence roster so the UI can show who has which file open.
 func (m *Manager) HandleTabSessionList(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	store := m.TabSessions()
@@ -129,12 +145,25 @@ func (m *Manager) HandleTabSessionList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"tab_sessions": []any{}})
 		return
 	}
-	key := tabStateKey(id, r.URL.Query().Get("context"), r.URL.Query().Get("dir"))
-	connected := map[string]bool{}
+	ctx := r.URL.Query().Get("context")
+	key := tabStateKey(id, ctx, r.URL.Query().Get("dir"))
+	// Build a richer map from the presence roster for connected members.
+	type memberInfo struct {
+		username string
+		tabs     []string
+	}
+	connectedInfo := map[string]memberInfo{}
 	if rm, ok := m.Get(id); ok {
 		for _, member := range rm.Presence().Roster() {
-			if member.TabViewState != "" {
-				connected[member.TabViewState] = true
+			if member.TabViewState == "" {
+				continue
+			}
+			if ctx != "" && member.CollabContext != "" && member.CollabContext != ctx {
+				continue
+			}
+			connectedInfo[member.TabViewState] = memberInfo{
+				username: member.Username,
+				tabs:     member.Tabs,
 			}
 		}
 	}
@@ -142,12 +171,18 @@ func (m *Manager) HandleTabSessionList(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
 		if st := store.Get(key, u); st != nil {
-			out = append(out, map[string]any{
+			info, ok := connectedInfo[st.Name]
+			entry := map[string]any{
 				"name":       st.Name,
 				"updated_at": st.UpdatedAt,
 				"data":       st.Data,
-				"connected":  connected[st.Name],
-			})
+				"connected":  ok,
+			}
+			if ok {
+				entry["username"] = info.username
+				entry["tabs"] = info.tabs
+			}
+			out = append(out, entry)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tab_sessions": out})
@@ -172,11 +207,18 @@ func (m *Manager) HandleTabSessionGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleTabSessionPut serves PUT /api/workspaces/{id}/tab_sessions/{name}?context=&dir=
+// Only the session owner may update their tab view state — another user cannot
+// overwrite a peer's layout.
 func (m *Manager) HandleTabSessionPut(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	name := r.PathValue("name")
 	if strings.TrimSpace(name) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name required"})
+		return
+	}
+	username := auth.GetUsername(r)
+	if !strings.HasPrefix(name, "user:"+username+":") {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not your session"})
 		return
 	}
 	var body json.RawMessage
@@ -195,16 +237,27 @@ func (m *Manager) HandleTabSessionPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleTabSessionDelete serves DELETE /api/workspaces/{id}/tab_sessions/{name}?context=&dir=
+// Only the session owner may delete their tab view state — another user cannot
+// close a peer's session.
 func (m *Manager) HandleTabSessionDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	name := r.PathValue("name")
+	username := auth.GetUsername(r)
+	if !strings.HasPrefix(name, "user:"+username+":") {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not your session"})
+		return
+	}
 	store := m.TabSessions()
 	if store == nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "gone"})
 		return
 	}
-	key := tabStateKey(id, r.URL.Query().Get("context"), r.URL.Query().Get("dir"))
+	ctx := r.URL.Query().Get("context")
+	key := tabStateKey(id, ctx, r.URL.Query().Get("dir"))
 	store.Delete(key, name)
+	if rm, ok := m.Get(id); ok {
+		rm.Presence().KickTabViewState(ctx, name)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

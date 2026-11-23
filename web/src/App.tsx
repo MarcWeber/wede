@@ -3,7 +3,6 @@ import { useAuth } from './hooks/useAuth'
 import { useTheme } from './hooks/useTheme'
 import { useWorkspaces, urlCustomDirectory, urlCollabContext, urlTabViewState } from './hooks/useWorkspaces'
 import Logo from './components/Logo'
-import ThemePicker from './components/ThemePicker'
 import Login from './components/Login'
 import IDE from './components/IDE'
 import ChooseWorkspaceAndTabSession from './components/ChooseWorkspaceAndTabSession'
@@ -23,7 +22,11 @@ function App() {
   const { theme, setTheme } = useTheme()
   const workspacesApi = useWorkspaces(token, authFetch)
   const { createWorkspace, setActiveWorkspaceId, workspaces } = workspacesApi
-  const collabContext = urlCollabContext()
+  const activeWs = workspaces.find((w) => w.id === workspacesApi.activeWorkspaceId)
+  // collab_context defaults to the workspace name, matching the chooser and the
+  // server-side session key. Without this the chooser would list states under
+  // one context while the IDE saved them under another.
+  const collabContext = urlCollabContext() || activeWs?.name || null
   const tabViewState = urlTabViewState()
 
   const [workspace, setWorkspace] = useState<WorkspaceFolderState | null>(null)
@@ -79,6 +82,16 @@ function App() {
   useEffect(() => {
     const wsId = workspacesApi.activeWorkspaceId
     if (!workspacesApi.ready || !wsId) { setClaim('free'); return }
+    // A [use-here] choice asks for the state even if another socket has it.
+    // Consume the flag so a later F5 goes back to the normal connected check.
+    const urlParams = new URLSearchParams(window.location.search)
+    if (urlParams.get('takeover') === '1') {
+      urlParams.delete('takeover')
+      const qs = urlParams.toString()
+      history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash)
+      setClaim('free')
+      return
+    }
     if (!tabViewState) { setClaim('free'); return }
     let cancelled = false
     setClaim('checking')
@@ -129,11 +142,6 @@ function App() {
   }, [workspacesApi.ready, allowCustomDirectory, openDirectoryAsWorkspace])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // First visit - pick theme
-  if (!theme) {
-    return <ThemePicker onSelect={setTheme} />
-  }
-
   if (!token) {
     return <Login onLogin={login} error={error} remaining={remaining} />
   }
@@ -163,7 +171,6 @@ function App() {
           embedded
           workspacesApi={workspacesApi}
           authFetch={authFetch}
-          username={username}
           currentWorkspaceId={null}
           currentCollabContext={collabContext}
           currentTabViewState={null}
@@ -184,7 +191,6 @@ function App() {
           embedded
           workspacesApi={workspacesApi}
           authFetch={authFetch}
-          username={username}
           currentWorkspaceId={workspacesApi.activeWorkspaceId}
           currentCollabContext={collabContext}
           currentTabViewState={tabViewState}
@@ -200,7 +206,6 @@ function App() {
 
   // The active root path tracks the focused workspace (which follows the active
   // editor tab in multi-root), so the top bar / status bar / DAP reflect it.
-  const activeWs = workspaces.find((w) => w.id === workspacesApi.activeWorkspaceId)
   const activeRoot = activeWs?.root || workspace?.current
 
   return (

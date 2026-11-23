@@ -39,13 +39,13 @@ owner-only, filesystem-level control.
 
 ## Forgot / need to change the owner password
 
-There's only one password — the one in `wede.config.json` (`password` key,
+There's only one password — the one in `wede.config.yaml` (`password` key,
 required, no default). To change it:
 
 1. Find which config file is actually in use — wede logs it at startup:
    `loaded config from <path>` (`backend/internal/config/config.go`). It
    searches, in order: the working directory and its parents, then
-   `~/.config/wede/wede.config.json`, then next to the binary — the first one
+   `~/.config/wede/wede.config.yaml`, then next to the binary — the first one
    found wins, so if you have more than one lying around, the log line tells
    you which one is live.
 2. Edit the `password` field and restart wede.
@@ -54,7 +54,7 @@ required, no default). To change it:
 change.** The config decoder uses `json.Decoder.DisallowUnknownFields()`, so
 an unrelated typo elsewhere in the file (e.g. `"frame_ancestor"` instead of
 `"frame_ancestors"`) makes wede refuse to start at all with `invalid
-wede.config.json: json: unknown field "..."` — it will not start up with the
+wede.config.yaml: json: unknown field "..."` — it will not start up with the
 old password as a fallback. Check `journalctl -u wede` (or wherever your
 service manager sends stderr) for that exact message if wede won't come back
 up after an edit.
@@ -112,7 +112,7 @@ that's not a missing-file bug, it's the route simply not being mounted.
 Unauthenticated visits to `/` still work correctly either way — you get the
 IDE's own login form (the SPA), not a broken page. If you *want* the landing
 page and docs viewer (e.g. you're running a public-facing instance and like
-that UI), set `"serve_landing": true` in `wede.config.json`.
+that UI), set `"serve_landing": true` in `wede.config.yaml`.
 
 One route is **not** gated by `serve_landing` and is always available:
 `GET /licenses.txt` (third-party notices), mounted unconditionally whenever
@@ -271,7 +271,7 @@ shorter than that will drop idle terminals.
 cross-origin iframe embedding** on purpose, so a standalone wede isn't
 embeddable by some third-party page without your say-so.
 
-**Fix:** set `frame_ancestors` in `wede.config.json` to the origin(s) that
+**Fix:** set `frame_ancestors` in `wede.config.yaml` to the origin(s) that
 should be allowed to embed it:
 
 ```json

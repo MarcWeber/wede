@@ -16,6 +16,9 @@ cd "$(dirname "$0")"
 # Stop any running instances
 pkill -f './wede' 2>/dev/null || true
 pkill -f 'vite' 2>/dev/null || true
+# Make sure the ports are actually free (stale processes can linger)
+lsof -ti:9090 2>/dev/null | xargs kill 2>/dev/null || true
+lsof -ti:5173 2>/dev/null | xargs kill 2>/dev/null || true
 sleep 1
 
 echo "=== Starting Go backend on :9090 ==="
@@ -27,11 +30,6 @@ echo "Backend PID: $BACKEND_PID"
 for i in $(seq 1 10); do
   if curl -s -o /dev/null http://localhost:9090/api/auth/check 2>/dev/null; then
     break
-  fi
-  sleep 0.5
-done
-
-echo ""
   fi
   sleep 0.5
 done

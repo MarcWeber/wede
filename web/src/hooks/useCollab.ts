@@ -18,7 +18,7 @@ import { basePath } from '../api'
 import type { PresenceMember, CollabPointer, TerminalSession, CollabPresenter } from '../types'
 import { isCollabPointer } from '../lib/collabPointer'
 
-function buildWsUrl(workspaceId: string, token: string, username: string | null | undefined, tabViewState?: string | null): string {
+function buildWsUrl(workspaceId: string, token: string, username: string | null | undefined, tabViewState?: string | null, collabContext?: string | null): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   // In dev (Vite on 5173/5174) the WS must hit the backend on :9090 directly.
   const port = window.location.port
@@ -30,6 +30,7 @@ function buildWsUrl(workspaceId: string, token: string, username: string | null 
     + `?token=${encodeURIComponent(token)}`
     + `&username=${encodeURIComponent(username || '')}`
     + (tabViewState ? `&tab_view_state=${encodeURIComponent(tabViewState)}` : '')
+    + (collabContext ? `&collab_context=${encodeURIComponent(collabContext)}` : '')
 }
 
 const THROTTLE_MS = 150
@@ -58,6 +59,7 @@ interface CollabMessage {
   geo?: WindowGeo
   list?: Pick<TerminalSession, 'id' | 'name'>[]
   visibleTabTypes?: Record<string, boolean>
+  reason?: string
 }
 
 export interface UseCollabResult {
@@ -82,6 +84,8 @@ export function useCollab(
   token: string | null | undefined,
   username: string | null | undefined,
   tabViewState?: string | null,
+  collabContext?: string | null,
+  onKicked?: () => void,
 ): UseCollabResult {
   const [roster, setRoster] = useState<PresenceMember[]>([])
   const [presenter, setPresenter] = useState<CollabPresenter | null>(null)
@@ -89,6 +93,8 @@ export function useCollab(
   const [visibleTabTypes, setVisibleTabTypes] = useState<Record<string, boolean> | null>(null)
   const [pointers, setPointers] = useState<Record<string, CollabPointer>>({})
   const wsRef = useRef<WebSocket | null>(null)
+  const kickedRef = useRef(onKicked)
+  useEffect(() => { kickedRef.current = onKicked }, [onKicked])
   const lastSentRef = useRef<{ file: string | null; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number }>({ file: null, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 })
   const pendingRef = useRef<{ file: string; line: number; anchorLine: number; anchorCol: number; headLine: number; headCol: number } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -102,12 +108,16 @@ export function useCollab(
     let disposed = false
     let ws: WebSocket | undefined
     try {
-      ws = new WebSocket(buildWsUrl(workspaceId, token, username, tabViewState))
+      ws = new WebSocket(buildWsUrl(workspaceId, token, username, tabViewState, collabContext))
       wsRef.current = ws
       ws.onmessage = (ev: MessageEvent) => {
         try {
           const msg: CollabMessage = JSON.parse(ev.data)
           if (!msg) return
+          if (msg.type === 'kicked') {
+            kickedRef.current?.()
+            return
+          }
           if (msg.type === 'self' && msg.id) {
             setSelfId(msg.id)
             if (msg.visibleTabTypes) {
@@ -160,7 +170,7 @@ export function useCollab(
       try { if (ws) ws.close() } catch { /* ignore */ }
       if (wsRef.current === ws) wsRef.current = null
     }
-  }, [workspaceId, token, username, tabViewState])
+  }, [workspaceId, token, username, tabViewState, collabContext])
 
   const send = useCallback((obj: unknown) => {
     const ws = wsRef.current

@@ -350,6 +350,7 @@ type Template struct {
 	Path            string          `json:"path"`
 	TimeoutSecs     int             `json:"timeout_secs"`
 	LSP             []string        `json:"lsp,omitempty"`
+	VisibleTo       []string        `json:"visible_to,omitempty"`
 	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
 }
 
