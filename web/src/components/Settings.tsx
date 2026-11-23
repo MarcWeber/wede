@@ -169,6 +169,15 @@ export default function Settings({ visible, onClose, workspace, editorSettings, 
               </div>
               <Toggle checked={s.sessionTabAutoRefresh ?? false} onChange={(v) => update({ sessionTabAutoRefresh: v })} />
             </label>
+
+            {/* Show hidden files */}
+            <label className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5 cursor-pointer group">
+              <div>
+                <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">Show hidden files</span>
+                <span className="block text-[10px] text-text-muted">Override file_hide_patterns config to show dotfiles and hidden dirs</span>
+              </div>
+              <Toggle checked={s.showHiddenFiles ?? false} onChange={(v) => update({ showHiddenFiles: v })} />
+            </label>
           </div>
         </div>
 

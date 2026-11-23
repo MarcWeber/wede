@@ -88,6 +88,10 @@ Mobile optimization
     Terminal > settings > single/two-finger swipe: cursor movement, PgUp/PgDn,
     Vim/Emacs paging, scroll events or native scrollback.
 
+Voice to text:
+google gboard keyboard for android allows to voice type (never
+give private data to that!)
+
 Glossary
   #collab: opening scroll cursor location following etc implemented
   Files:        directory tree; open files, long-press to open/rename/remove

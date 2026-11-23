@@ -2989,7 +2989,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         // Show only the active workspace's files, not all workspaces.
         const allWorkspaces = workspacesApi?.workspaces || []
         const activeWorkspaces = workspaceId ? allWorkspaces.filter(w => w.id === workspaceId) : allWorkspaces
-        return <FileExplorer key={e.fileId} authFetch={authFetch} workspaces={activeWorkspaces} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={e.id === activeShell ? handleRegisterExplorerActions : undefined} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} />
+        return <FileExplorer key={e.fileId} authFetch={authFetch} workspaces={activeWorkspaces} onFileSelect={(entry, opts) => { void openFile(entry, opts) }} selectedPath={activeTab} onRegisterActions={e.id === activeShell ? handleRegisterExplorerActions : undefined} onCloseWorkspace={(id) => { void handleCloseWorkspace(id) }} roster={collabRoster} showHiddenFiles={editorSettings.showHiddenFiles ?? false} />
       }
       case 'search':
         return <SearchPanel key={e.searchId} authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} readOnly={role === 'viewer'} onOpenFile={(entry, line) => {

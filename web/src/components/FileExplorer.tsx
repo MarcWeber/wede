@@ -144,6 +144,7 @@ interface TreeNodeProps {
   onOpenSelected?: () => void
   onOpenAll?: () => void
   onDeleteSelected?: () => void
+  showHiddenFiles?: boolean
 }
 
 /* ── Tree node ── */
@@ -152,6 +153,7 @@ function TreeNode({
   onRefresh, selectedPath, gitMap, presenceMap, clipboard, setClipboard,
   onPaste, onDelete, onRename, onFocusDir, selectedFiles, onToggleSelect,
   onSelectAll, onUnselectAll, onOpenSelected, onOpenAll, onDeleteSelected,
+  showHiddenFiles = false,
 }: TreeNodeProps) {
   const [children, setChildren] = useState<TreeEntry[] | null>(null)
   const key        = fileKey(rootId, entry.path)
@@ -173,16 +175,17 @@ function TreeNode({
   const loadChildren = useCallback(async () => {
     if (!entry.isDir) return
     try {
-      const res = await authFetch(`/api/files?path=${encodeURIComponent(entry.path)}`)
+      const hiddenParam = showHiddenFiles ? '&showHidden=true' : ''
+      const res = await authFetch(`/api/files?path=${encodeURIComponent(entry.path)}${hiddenParam}`)
       const data: unknown = await res.json()
       setChildren(Array.isArray(data) ? data as TreeEntry[] : [])
     } catch { setChildren([]) }
-  }, [entry.path, entry.isDir, authFetch])
+  }, [entry.path, entry.isDir, authFetch, showHiddenFiles])
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (isOpen && children === null) void loadChildren()
-  }, [isOpen, children, loadChildren])
+  }, [isOpen, children, loadChildren, showHiddenFiles])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleClick = () => {
@@ -328,7 +331,7 @@ function TreeNode({
               onPaste={onPaste} onDelete={onDelete} onRename={onRename}
               onFocusDir={onFocusDir} selectedFiles={selectedFiles} onToggleSelect={onToggleSelect}
               onSelectAll={onSelectAll} onUnselectAll={onUnselectAll} onOpenSelected={onOpenSelected} onOpenAll={onOpenAll}
-              onDeleteSelected={onDeleteSelected}
+              onDeleteSelected={onDeleteSelected} showHiddenFiles={showHiddenFiles}
             />
           ))}
         </div>
@@ -373,6 +376,7 @@ interface RootSectionProps {
   authFetch: AuthFetch
   onFileSelect: (entry: FileEntry, opts?: { preview?: boolean }) => void
   selectedPath?: string | null
+  showHiddenFiles?: boolean
   roster?: PresenceMember[]
   register: (wsId: string, actions: ExplorerActions | null) => void
   collapsed: boolean
@@ -389,7 +393,7 @@ interface RootSectionProps {
 /* ── One workspace root: a collapsible section with its own scoped file tree. ──
    `ws` is { id, name, root }. All file/git calls are rewritten to this root's
    /api/workspaces/<id>/... endpoints, so several roots coexist independently. */
-function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, register, collapsed, onToggleCollapse, onFocus, onClose, canClose, showHeader, selectedFiles, onToggleSelect, onSelectMany }: RootSectionProps) {
+function RootSection({ ws, authFetch, onFileSelect, selectedPath, showHiddenFiles = false, roster, register, collapsed, onToggleCollapse, onFocus, onClose, canClose, showHeader, selectedFiles, onToggleSelect, onSelectMany }: RootSectionProps) {
   // wsFetch mirrors authFetch but pins every legacy /api/<service> path to THIS
   // workspace, so the tree, git status, and mutations act on this root alone.
   const wsFetch = useMemo(() => makeWsFetch(authFetch, ws.id), [authFetch, ws.id])
@@ -417,11 +421,12 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
 
   const loadRoot = useCallback(async () => {
     try {
-      const res = await wsFetch('/api/files?path=')
+      const hiddenParam = showHiddenFiles ? '&showHidden=true' : ''
+      const res = await wsFetch(`/api/files?path=${hiddenParam}`)
       const data: unknown = await res.json()
       if (Array.isArray(data)) setFiles(data)
     } catch { /* ignore */ }
-  }, [wsFetch])
+  }, [wsFetch, showHiddenFiles])
 
   const loadGitStatus = useCallback(async () => {
     try {
@@ -678,7 +683,7 @@ function RootSection({ ws, authFetch, onFileSelect, selectedPath, roster, regist
                 onPaste={(dir) => { void handlePaste(dir) }} onDelete={handleDelete} onRename={handleRename}
                 onFocusDir={setFocusedDir} selectedFiles={selectedFiles} onToggleSelect={onToggleSelect}
                 onSelectAll={handleSelectAll} onUnselectAll={handleUnselectAll} onOpenSelected={handleOpenSelected}
-                onOpenAll={handleOpenAll} onDeleteSelected={handleDeleteSelected}
+                onOpenAll={handleOpenAll} onDeleteSelected={handleDeleteSelected} showHiddenFiles={showHiddenFiles}
               />
             ))}
             {files.length === 0 && (
@@ -709,10 +714,11 @@ export interface FileExplorerProps {
   onRegisterActions?: (actions: ExplorerActions) => void
   onCloseWorkspace?: (id: string) => void
   roster?: PresenceMember[]
+  showHiddenFiles?: boolean
 }
 
 /* ── Main explorer: renders every open workspace as a root section. ── */
-export default function FileExplorer({ authFetch, workspaces = [], onFileSelect, selectedPath, onRegisterActions, onCloseWorkspace, roster = [] }: FileExplorerProps) {
+export default function FileExplorer({ authFetch, workspaces = [], onFileSelect, selectedPath, onRegisterActions, onCloseWorkspace, roster = [], showHiddenFiles = false }: FileExplorerProps) {
   const [focusedRoot, setFocusedRoot] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(() => new Set())
@@ -784,7 +790,7 @@ export default function FileExplorer({ authFetch, workspaces = [], onFileSelect,
         {roots.map((ws) => (
           <RootSection
             key={ws.id} ws={ws} authFetch={authFetch}
-            onFileSelect={onFileSelect} selectedPath={selectedPath} roster={roster}
+            onFileSelect={onFileSelect} selectedPath={selectedPath} showHiddenFiles={showHiddenFiles} roster={roster}
             register={register}
             showHeader={roots.length > 1}
             collapsed={collapsed.has(ws.id)}
