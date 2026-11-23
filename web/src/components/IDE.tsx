@@ -369,7 +369,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       if (lt.type === 'search') return lt.name
       if (lt.type === 'api') return lt.name
       if (lt.type === 'log') return lt.name
-      if (lt.type === 'term') return lt.name
+      // Terminal tabs: name is "term-1", entry ID is "term:1" to match entries memo
+      if (lt.type === 'term') {
+        const num = lt.name.replace('term-', '')
+        return `term:${num}`
+      }
       if (lt.type === 'web') return lt.name
       // View tabs: name is the kind, entry ID is "view:kind"
       if (lt.type === 'settings' || lt.type === 'git' || lt.type === 'help' ||

@@ -1,0 +1,100 @@
+PLAN: file-tab visibility + session-tabs
+
+Goal
+- Make a file tab explicitly one of: closed, hidden, visible.
+  closed  = removed from tabs; no recoverable UI state.
+  hidden  = still open in the tab_view_state, content/scroll/order preserved,
+            but not rendered in the main tab strip.
+  visible = rendered in the main tab strip.
+- Hide/show/close is stored per tab_view_state (server `TabLayout`), not in
+  browser-global localStorage.
+- "open tabs" panel lists every file tab in the current tab_view_state,
+  including hidden ones, with show/hide/close actions.
+- "session-tabs" panel lists tabs opened by other people in the same
+  collaboration context so the current user can join.
+
+Current code facts
+- `web/src/components/IDE.tsx`
+  - `tabs` is the single list of open tabs; no per-file hidden flag.
+  - `visible` is a map of view KINDS (files/search/terminals/...), not files.
+  - `localStorage` `wede_tabs`, `wede_activeTab`, `wede_visible`, `wede_containers`
+    are still the actual restore path.
+  - `tabSession.saveLayout(...)` writes `tabs`, `visible`, `containers`, etc.
+    to the server, but `tabSession.layout` is never used to hydrate state.
+- `web/src/components/ViewMenu.tsx`
+  - "Open tabs" currently derives a union of `roster[].tabs` (relative paths)
+    from presence and lists only those. It has no hidden/visible state.
+- `backend/internal/presence/presence.go`
+  - `Member.Tabs []string` (paths only) and `TabViewState string`.
+- `backend/internal/workspace/tabsession.go`
+  - stores opaque client layout JSON per `user:<name>`; no server-side tab
+    visibility model.
+- `web/src/hooks/useTabSession.ts`
+  - save/load endpoints work; restore is unused.
+
+Data model
+1. Client tab state
+   Add `hidden?: boolean` to the file `Tab` type (or a parallel
+   `hiddenTabPaths: Set<string>`; prefer the flag on Tab so it travels with
+   the tab object and its scroll/content state).
+   - Main tab strip renders only `tabs.filter(t => !t.hidden)`.
+   - Active tab: if the active tab becomes hidden, focus the next visible tab;
+     hidden tabs keep `activeTab` only if no visible tab exists.
+   - `openFile(...)`: reuses an existing tab path even when hidden and makes it
+     visible again.
+   - `closeTab`: removes the tab entirely (closed).
+   - `hideTab`: sets `hidden=true` and preserves content/scroll.
+2. Server layout dump (`TabLayout`)
+   - Add `hiddenTabs?: string[]` (paths) as a compatibility-friendly summary,
+     or rely on `tabs[].hidden`. Prefer both: `tabs[].hidden` is authoritative,
+     `hiddenTabs` is optional for old clients.
+   - Persist per tab_view_state through existing `saveLayout`.
+3. Presence/session listing
+   - `Member.Tabs []string` becomes structured, e.g.
+     `tabs: [{ path, hidden }]`, or add `HiddenTabs []string`.
+   - Add `CollabContext` to `Member` so connected/tab listings can be filtered
+     by context (today the list endpoint's connected map is workspace-wide).
+
+UI
+1. "open tabs" panel (current ViewMenu shared-tabs area or a new ViewKind)
+   - Section for the current tab_view_state: every file tab, visible and hidden.
+   - Row action: eye/eye-off (show/hide), `[close]`.
+   - Row click opens/focuses the file and makes it visible.
+   - Hidden rows shown dimmed with their last known scroll marker once scroll
+     positions are in TabLayout.
+2. "session-tabs" panel
+   - New `ViewKind = 'session-tabs'` (or a second section/tab beside "open tabs").
+   - Fetch `GET /tab_sessions?context=` and list:
+       state name, owner/connected, its tabs (from `data.tabs`), hidden flags.
+   - Actions:
+       `[join]` = use that tab_view_state here (same semantics as `[use-here]`,
+                 forces chooser if connected elsewhere).
+       `[open]` = open one of that state's files in the current tab_view_state.
+   - Mark the current state and connected states.
+
+Restore path
+- On IDE mount, if `tabSession.layout` exists and there is no fresh local
+  selection, hydrate:
+    tabs (with hidden), activeTab, tabOrder, fileIds, activeFileId, activeShell,
+    menuPlacement, containers, containerOf, containerActive, lockedShells,
+    viewModes, floatGeom, dockSizes.
+- Keep localStorage as a crash fallback only; server tab_view_state should win
+  when present. Do not let localStorage from another tab leak into this tab.
+  Key the fallback by tab id or remove it once server hydration is reliable.
+
+Backend
+- `tabsession.go`: no schema change needed for opaque layout; optionally validate
+  that `hiddenTabs` paths are a subset of `tabs`.
+- `presence.go` / `collab.go`: extend tabs payload to `{path, hidden}` and add
+  `collab_context` to `Member`.
+- `HandleTabSessionList`: filter `connected` by requested context once Member
+  carries context.
+
+Tests
+- Unit: tab hide/show/close transitions; active fallback; open hidden file
+  reactivates instead of duplicating.
+- Unit: TabLayout round-trip includes hidden flags.
+- Go: presence tab payload sanitization; connected filtered by context.
+- e2e: hide a tab -> disappears from strip, appears in open tabs, restore;
+  second tab_view_state keeps its own hidden set; session-tabs lists peer tabs;
+  join switches state; F5 restores hidden/visible set.
