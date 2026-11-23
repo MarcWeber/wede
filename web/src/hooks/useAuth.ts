@@ -8,6 +8,7 @@ interface AuthCheckResponse {
   role?: string
   teacher?: boolean
   locked?: boolean
+  userCount?: number
 }
 
 interface LoginResponse {

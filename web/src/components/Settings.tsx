@@ -158,6 +158,15 @@ export default function Settings({ visible, onClose, workspace, editorSettings, 
               </div>
               <Toggle checked={shareCursors} onChange={(v) => update({ shareCursors: v })} />
             </label>
+
+            {/* Session tabs auto-update */}
+            <label className="flex items-center justify-between bg-bg-primary border border-border rounded-lg px-3 py-2.5 cursor-pointer group">
+              <div>
+                <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors">Session tabs auto-update</span>
+                <span className="block text-[10px] text-text-muted">Push your open files to peers in real time; off = manual [Refresh] only</span>
+              </div>
+              <Toggle checked={s.sessionTabAutoRefresh ?? false} onChange={(v) => update({ sessionTabAutoRefresh: v })} />
+            </label>
           </div>
         </div>
 

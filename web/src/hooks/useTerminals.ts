@@ -35,14 +35,26 @@ function loadTerminals(): TerminalSession[] | null {
   return null
 }
 
-let nextId = (() => {
-  const saved = loadTerminals()
-  return saved && saved.length > 0 ? Math.max(...saved.map((t) => t.id)) + 1 : 1
-})()
+// Generate a unique terminal id that won't collide across browser tabs.
+// Each tab picks a random base so two users in different tabs don't both
+// create "Term 1". The server-side PTY session is keyed by term-<id>.
+function randomTermId(): number {
+  // 4-byte random number gives ~4B possible values — collisions are negligible.
+  return Math.floor(Math.random() * 0x100000000)
+}
+
+let nextId: number | null = null
+function genId(): number {
+  if (nextId === null) {
+    const saved = loadTerminals()
+    nextId = saved && saved.length > 0 ? Math.max(...saved.map((t) => t.id)) + 1 : 1
+  }
+  return nextId++
+}
 
 export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceId: string | null | undefined, sync: UseTerminalsSync = {}) {
   const { sendTerminals, onTerminals } = sync
-  const [terminals, setTerminals] = useState<TerminalSession[]>(() => loadTerminals() || [{ id: nextId++, name: 'Term 1' }])
+  const [terminals, setTerminals] = useState<TerminalSession[]>(() => loadTerminals() || [{ id: genId(), name: 'Term 1' }])
   const [activeId, setActiveId] = useState<number>(() => {
     const saved = localStorage.getItem('wede_terminal_active')
     return saved ? Number(saved) : (loadTerminals()?.[0]?.id || 1)
@@ -109,7 +121,7 @@ export function useTerminals(authFetch: AuthFetch | null | undefined, workspaceI
   // addTerminal(name?, initial?) — `initial` is a command run once when the new
   // terminal's PTY connects (used by the task runner).
   const addTerminal = useCallback((name?: string, initial?: string) => {
-    const id = nextId++
+    const id = genId()
     setTerminals((prev) => [...prev, { id, name: name || `Term ${id}`, initial: initial || undefined }])
     setActiveId(id)
     return id

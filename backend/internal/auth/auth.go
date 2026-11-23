@@ -556,12 +556,17 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 	isTeacher := valid && (role == RoleOwner || h.teachers[username])
 	h.mu.Unlock()
 
+	userCount := 0
+	if h.users != nil {
+		userCount = len(h.users)
+	}
 	json.NewEncoder(w).Encode(map[string]any{
 		"authenticated": valid,
 		"locked":        locked,
 		"username":      username,
 		"role":          string(role),
 		"teacher":       isTeacher,
+		"userCount":     userCount,
 	})
 }
 

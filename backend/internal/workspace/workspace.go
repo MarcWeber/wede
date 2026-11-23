@@ -351,6 +351,7 @@ type Template struct {
 	TimeoutSecs     int             `json:"timeout_secs"`
 	LSP             []string        `json:"lsp,omitempty"`
 	VisibleTo       []string        `json:"visible_to,omitempty"`
+	OpenToAnybody   bool            `json:"open_to_anybody,omitempty"`
 	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
 }
 

@@ -96,6 +96,9 @@ func TestUpdateTabsReflectedAndSanitized(t *testing.T) {
 	h := NewHub()
 	id, ch := h.Join("alice")
 
+	// Enable push so UpdateTabs broadcasts the roster.
+	h.SetPushTabs(id, true)
+
 	long := make([]byte, 1025)
 	for i := range long {
 		long[i] = 'a'

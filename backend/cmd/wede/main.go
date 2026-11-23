@@ -475,6 +475,7 @@ func templatesFrom(c *config.Config, bootPath string) map[string]workspace.Templ
 		out[name] = workspace.Template{
 			Name: name, Path: path, TimeoutSecs: w.EffectiveTimeout(def), LSP: append([]string(nil), w.LSP...),
 			VisibleTo:       append([]string(nil), w.VisibleTo...),
+			OpenToAnybody:   w.OpenToAnybody,
 			VisibleTabTypes: w.EffectiveVisibleTabTypes(c.VisibleTabTypes),
 		}
 	}

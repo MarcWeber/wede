@@ -101,6 +101,11 @@ type WorkspaceConfig struct {
 	// VisibleTo restricts which users can see this workspace in the session
 	// picker. Empty means visible to everyone. Accepts a list of usernames.
 	VisibleTo StringList `json:"visible_to,omitempty"`
+	// OpenToAnybody controls whether any authenticated user can join this
+	// workspace. When false (default), only users listed in VisibleTo can see
+	// and join it. When true, the workspace is open to all authenticated users
+	// regardless of VisibleTo.
+	OpenToAnybody bool `json:"open_to_anybody,omitempty"`
 	// VisibleTabTypes overrides which tab types are shown for this workspace.
 	// Merged with global config: workspace-level values override global values.
 	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`

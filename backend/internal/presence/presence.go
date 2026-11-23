@@ -45,6 +45,7 @@ type Member struct {
 	Tabs          []string `json:"tabs,omitempty"`          // open file tabs (relative paths)
 	TabViewState  string   `json:"tabViewState,omitempty"`  // user:<name> view state using this socket
 	CollabContext string   `json:"collabContext,omitempty"` // session/context that owns TabViewState
+	PushTabs      bool     `json:"pushTabs,omitempty"`      // when true, this member's tab list is broadcast to peers
 }
 
 // Presenter is the single participant currently leading the room. While set,
@@ -276,9 +277,10 @@ func (h *Hub) Update(id, file string, line, anchorLine, anchorCol, headLine, hea
 	}
 }
 
-// UpdateTabs sets the list of file tabs a member has open and rebroadcasts.
-// The list is capped so a hostile client cannot grow every roster broadcast
-// without bound.
+// UpdateTabs sets the list of file tabs a member has open and rebroadcasts
+// the full roster to all peers. The list is capped so a hostile client cannot
+// grow every roster broadcast without bound. Peers always receive the update
+// so the SessionTabs panel stays in sync across all connected users.
 func (h *Hub) UpdateTabs(id string, tabs []string) {
 	h.mu.Lock()
 	c, ok := h.clients[id]
@@ -289,6 +291,12 @@ func (h *Hub) UpdateTabs(id string, tabs []string) {
 	if ok {
 		h.broadcast()
 	}
+}
+
+// SetPushTabs is deprecated — UpdateTabs now always broadcasts. Kept for
+// API compatibility with the WebSocket handler.
+func (h *Hub) SetPushTabs(id string, enabled bool) {
+	// no-op: broadcasts always happen
 }
 
 func sanitizeTabs(tabs []string) []string {

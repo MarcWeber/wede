@@ -57,8 +57,10 @@ func (m *Manager) HandleList(w http.ResponseWriter, r *http.Request) {
 
 // HandleSessionsList serves GET /api/sessions: active sessions plus the
 // configured templates the login picker offers for new sessions.
-// Templates with a non-empty visible_to list are filtered to the authenticated
-// user's username so restricted workspaces are hidden from others.
+// Templates with open_to_anybody=false (default) are filtered: if visible_to
+// is non-empty, only listed users see it; if visible_to is empty and
+// open_to_anybody is false, the template is hidden from everyone.
+// When open_to_anybody=true, the template is visible to all authenticated users.
 func (m *Manager) HandleSessionsList(w http.ResponseWriter, r *http.Request) {
 	sessions := m.Sessions()
 	out := make([]dto, 0, len(sessions))
@@ -69,7 +71,17 @@ func (m *Manager) HandleSessionsList(w http.ResponseWriter, r *http.Request) {
 	allTemplates := m.Templates()
 	templates := make([]Template, 0, len(allTemplates))
 	for _, t := range allTemplates {
-		if len(t.VisibleTo) > 0 && !slices.Contains(t.VisibleTo, username) {
+		// If open to anybody, show to all authenticated users.
+		if t.OpenToAnybody {
+			templates = append(templates, t)
+			continue
+		}
+		// Otherwise, require the user to be in the visible_to list.
+		// If visible_to is empty, the workspace is hidden (not open to anybody).
+		if len(t.VisibleTo) == 0 {
+			continue
+		}
+		if !slices.Contains(t.VisibleTo, username) {
 			continue
 		}
 		templates = append(templates, t)
@@ -209,6 +221,8 @@ func (m *Manager) HandleTabSessionGet(w http.ResponseWriter, r *http.Request) {
 // HandleTabSessionPut serves PUT /api/workspaces/{id}/tab_sessions/{name}?context=&dir=
 // Only the session owner may update their tab view state — another user cannot
 // overwrite a peer's layout.
+// After saving, it broadcasts the updated file-tab list to all connected peers
+// so the SessionTabs panel refreshes in real time.
 func (m *Manager) HandleTabSessionPut(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	name := r.PathValue("name")
@@ -233,7 +247,46 @@ func (m *Manager) HandleTabSessionPut(w http.ResponseWriter, r *http.Request) {
 	}
 	key := tabStateKey(id, r.URL.Query().Get("context"), r.URL.Query().Get("dir"))
 	st := store.Put(key, name, body)
+
+	// Broadcast the updated file-tab list to connected peers so SessionTabs
+	// refreshes in real time without waiting for the client WebSocket message.
+	if tabs := extractFileTabs(body); len(tabs) > 0 {
+		if rm, ok := m.Get(id); ok {
+			hub := rm.Presence()
+			for _, member := range hub.Roster() {
+				if member.TabViewState == name {
+					hub.UpdateTabs(member.ID, tabs)
+					break
+				}
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, st)
+}
+
+// extractFileTabs parses the opaque tab_view_state JSON body and returns the
+// relative paths of file tabs (tabs without a type field). The body shape is
+// {data: {tabs: [{rel, type?}, ...]}}.
+func extractFileTabs(body json.RawMessage) []string {
+	var outer struct {
+		Data struct {
+			Tabs []struct {
+				Rel  string `json:"rel"`
+				Type string `json:"type"`
+			} `json:"tabs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &outer); err != nil {
+		return nil
+	}
+	var out []string
+	for _, t := range outer.Data.Tabs {
+		if t.Rel != "" && t.Type == "" {
+			out = append(out, t.Rel)
+		}
+	}
+	return out
 }
 
 // HandleTabSessionDelete serves DELETE /api/workspaces/{id}/tab_sessions/{name}?context=&dir=

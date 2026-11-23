@@ -280,7 +280,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
 
   // Collaboration presence: who else is in this workspace and what they're viewing.
   // The tab view state is advertised so the chooser can mark connected states.
-  const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, pointers: collabPointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals } = useCollab(workspaceId, token, username, tabSession.name, collabContext, handleKicked)
+  const { selfId, roster: collabRoster, presenter, visibleTabTypes, startLead, stopLead, setViewing: setCollabViewing, setTabs: setCollabTabs, pointers: collabPointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals, setPushTabs } = useCollab(workspaceId, token, username, tabSession.name, collabContext, handleKicked)
 
   const applySessionChoice = useCallback((choice: SessionChoice) => {
     navigateToSession(choice)
@@ -999,6 +999,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     lastSentTabsRef.current = key
     setCollabTabs(list)
   }, [tabs, workspaceId, setCollabTabs, selfId])
+
+  // Tell the server whether this client wants its tab changes broadcast to peers.
+  // When off (default), the user's tabs are stored but not pushed — peers only
+  // see them on manual refresh. When on, every tab change triggers a broadcast.
+  useEffect(() => {
+    const enabled = editorSettings.sessionTabAutoRefresh ?? false
+    setPushTabs(enabled)
+  }, [editorSettings.sessionTabAutoRefresh, setPushTabs])
 
   // Personal follow is client-local; a teacher's lead overrides it with a
   // forced live follow. Keeping the personal target lets us return to it when
@@ -2505,15 +2513,22 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
             tabs={tabs}
             activeTab={activeTab}
             collabRoster={collabRoster}
-            onJoin={(name) => {
-              if (!workspaceId) return
-              const workspaceName = (workspacesApi?.workspaces || []).find((w) => w.id === workspaceId)?.name || ''
-              navigateToSession({ workspaceId, collabContext: collabContext || workspaceName, tabViewState: name, force: true })
+            autoRefresh={editorSettings.sessionTabAutoRefresh ?? false}
+            terminals={terminalsApi.terminals}
+            onOpenTab={(path: string) => openTabFromSessionPanel({ rel: path, path })}
+            onActivateTerminal={(id: number) => {
+              terminalsApi.setActiveId(id)
+              setActiveShell(`term:${id}`)
             }}
-            onOpenTab={openTabFromSessionPanel}
-            onShowTab={showTab}
-            onHideTab={hideTab}
-            onCloseTab={closeTab}
+            onOpenFileWhere={(path: string, line?: number) => {
+              openTabFromSessionPanel({ rel: path, path })
+              if (line) {
+                // Navigate to the user's line after opening
+                setTimeout(() => {
+                  editorActions.current?.goToLine?.()
+                }, 100)
+              }
+            }}
           />
         )
       case 'api':

@@ -148,6 +148,10 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 			h.hub.UpdateTabs(id, tabs)
 			continue
 		}
+		if enabled, ok := parsePushTabs(msg); ok {
+			h.hub.SetPushTabs(id, enabled)
+			continue
+		}
 		// Ephemeral peer signals (mouse / window) are relayed to everyone else,
 		// tagged with the sender id so the client can attribute them via the roster.
 		if relayed, ok := tagRelay(id, msg); ok {
@@ -195,6 +199,7 @@ type inbound struct {
 	HeadCol    int      `json:"headCol"`
 	On         bool     `json:"on"`
 	List       []string `json:"list"`
+	Enabled    bool     `json:"enabled"`
 }
 
 // parseCursor extracts a cursor update from a raw message. Returns ok=false for
@@ -234,6 +239,19 @@ func parseTabs(msg []byte) ([]string, bool) {
 		return nil, false
 	}
 	return in.List, true
+}
+
+// parsePushTabs extracts a pushTabs enable/disable request. Returns ok=false
+// for any other message type.
+func parsePushTabs(msg []byte) (enabled bool, ok bool) {
+	var in inbound
+	if err := json.Unmarshal(msg, &in); err != nil {
+		return false, false
+	}
+	if in.Type != "pushTabs" {
+		return false, false
+	}
+	return in.Enabled, true
 }
 
 // tagRelay re-tags an ephemeral message (pointer/mouse/window/terminals) with

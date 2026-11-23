@@ -77,6 +77,7 @@ export interface UseCollabResult {
   onWindow: (cb: WindowSub) => () => void
   sendTerminals: (list: Pick<TerminalSession, 'id' | 'name'>[]) => void
   onTerminals: (cb: TerminalsSub) => () => void
+  setPushTabs: (enabled: boolean) => void
 }
 
 export function useCollab(
@@ -233,5 +234,7 @@ export function useCollab(
     return () => terminalsSubsRef.current.delete(cb)
   }, [])
 
-  return { selfId, roster, presenter, visibleTabTypes, startLead, stopLead, setViewing, setTabs, pointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals }
+  const setPushTabs = useCallback((enabled: boolean) => send({ type: 'pushTabs', enabled }), [send])
+
+  return { selfId, roster, presenter, visibleTabTypes, startLead, stopLead, setViewing, setTabs, pointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals, setPushTabs }
 }
