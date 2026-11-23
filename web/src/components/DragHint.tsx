@@ -407,7 +407,25 @@ export function useDragHints(opts: UseDragHintsOptions) {
     }, 80)
   }, [])
 
-  const lastHoverElRef = useRef<HTMLElement | null>(null)
+  // Find the element under a point by checking bounding rects of all
+  // [data-reorder-id] elements. This works even when pointerEvents:none blocks
+  // elementFromPoint (e.g. floating containers during modeDrag).
+  function findElementAtPoint(x: number, y: number): HTMLElement | null {
+    // Try elementFromPoint first (fast path)
+    const direct = document.elementFromPoint(x, y) as HTMLElement | null
+    if (direct) return direct
+    // Fallback: scan all reorder-id elements by bounding rect
+    const all = document.querySelectorAll('[data-reorder-id]') as NodeListOf<HTMLElement>
+    let best: HTMLElement | null = null
+    for (let i = 0; i < all.length; i++) {
+      const r = all[i].getBoundingClientRect()
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        best = all[i]
+        break
+      }
+    }
+    return best
+  }
 
   const runAction = useCallback((position: DragHintPosition | null, info: DragHintInfo, tabDrag = false) => {
     const o = optsRef.current
@@ -432,11 +450,9 @@ export function useDragHints(opts: UseDragHintsOptions) {
     // 2. Directional button action — a matching button always wins, even if
     // the pointer has left the strip (e.g. Close tab dragged upward).
     // The release-point check below is only used for drag & drop.
-    // Use lastHoverElRef (tracked during move) as fallback when elementFromPoint
-    // fails because target floating containers have pointerEvents:none during drag.
-    const releaseEl = document.elementFromPoint(info.clientX, info.clientY) as HTMLElement | null
-    const hoverEl = lastHoverElRef.current
-    const el = releaseEl ?? hoverEl
+    // Use findElementAtPoint which checks bounding rects when elementFromPoint
+    // fails due to pointerEvents:none on floating containers.
+    const el = findElementAtPoint(info.clientX, info.clientY)
     const releaseGroupEl = el?.closest('[data-reorder-group]') as HTMLElement | null
     let releaseOutsideGroup = false
     if (releaseGroupEl) {
@@ -561,13 +577,6 @@ export function useDragHints(opts: UseDragHintsOptions) {
         const dy = ev.clientY - startY
         const adx = Math.abs(dx)
         const distance = Math.hypot(dx, dy)
-        // Track the element under the pointer during drag so we have a fallback
-        // when elementFromPoint fails at release (e.g. floating containers with
-        // pointerEvents:none during modeDrag).
-        if (dragging) {
-          const hoverTarget = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
-          lastHoverElRef.current = hoverTarget
-        }
 
         // Horizontal scroll wins until tab-drag mode starts. This is checked on
         // every mouse move, not just the first one, so a slow drag cannot turn a
@@ -788,12 +797,6 @@ export function useDragHints(opts: UseDragHintsOptions) {
     }
 
     if (!s.dragging) s.dragging = true
-
-    // Track hover target during touch drag for same reason as mouse path
-    if (s.dragging) {
-      const hoverTarget = document.elementFromPoint(t.clientX, t.clientY) as HTMLElement | null
-      lastHoverElRef.current = hoverTarget
-    }
 
     const swipe = detectSwipe(dx, dy, {
       minDistance: optsRef.current.triggerDistance ?? 15,

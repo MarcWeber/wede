@@ -1915,7 +1915,19 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     const up = (ev: PointerEvent) => {
       cleanup()
       if (!active) return
-      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
+      // Use elementFromPoint first, then fallback to bounding rect scan
+      // when pointerEvents:none blocks hit testing (floating containers during drag)
+      let el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
+      if (!el) {
+        const all = document.querySelectorAll('[data-reorder-id]') as NodeListOf<HTMLElement>
+        for (let i = 0; i < all.length; i++) {
+          const r = all[i].getBoundingClientRect()
+          if (ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom) {
+            el = all[i]
+            break
+          }
+        }
+      }
 
       // Check if dropped on an individual tab — allows inserting at a specific
       // position within another container's tab strip.
@@ -3131,6 +3143,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
             onVisibleTabTypesChange={setLocalVisibleTabTypes}
             uiScale={uiScale}
             onUiScaleChange={updateUiScale}
+            uiScaleEnabled={uiScaleEnabled}
+            onToggleUiScale={() => setUiScaleEnabled(!uiScaleEnabled)}
             uiOrientation={uiOrientation}
             workspacesApi={workspacesApi}
             allowCustomDirectory={allowCustomDirectory}

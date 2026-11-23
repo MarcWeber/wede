@@ -34,12 +34,14 @@ interface SettingsProps {
   onVisibleTabTypesChange: (types: Record<string, boolean>) => void
   uiScale: UiScale
   onUiScaleChange: (scale: UiScale) => void
+  uiScaleEnabled: boolean
+  onToggleUiScale: () => void
   uiOrientation: UiOrientation
   workspacesApi: ReturnType<typeof useWorkspaces>
   allowCustomDirectory?: boolean
 }
 
-export default function Settings({ visible, onClose, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, onLogout, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiOrientation, workspacesApi, allowCustomDirectory = false }: SettingsProps) {
+export default function Settings({ visible, onClose, workspace, editorSettings, onEditorSettingsChange, lspAvailable, authFetch, role, workspaceId, username, onUsernameChange, onTrustChange, desktopMode, onDesktopModeChange, onLogout, visibleTabTypes, onVisibleTabTypesChange, uiScale, onUiScaleChange, uiScaleEnabled, onToggleUiScale, uiOrientation, workspacesApi, allowCustomDirectory = false }: SettingsProps) {
   const [name, setName] = useState(username || '')
   const [savedName, setSavedName] = useState(false)
   const [media, setMedia] = useMediaSettings()
@@ -185,8 +187,19 @@ export default function Settings({ visible, onClose, workspace, editorSettings, 
           </label>
 
           <div className="mt-3 space-y-2">
-            <div className="text-[11px] text-text-muted">UI scale</div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] text-text-muted">UI scale</div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={uiScaleEnabled}
+                  onChange={onToggleUiScale}
+                  className="w-3.5 h-3.5 rounded border-border text-accent focus:ring-accent/40"
+                />
+                <span className="text-[11px] text-text-secondary">Active</span>
+              </label>
+            </div>
+            <div className={`flex flex-wrap gap-2 ${!uiScaleEnabled ? 'opacity-40 pointer-events-none' : ''}`}>
               {(['portrait', 'landscape'] as const).map((profile) => (
                 <div key={profile} className="flex-1 min-w-[200px] bg-bg-primary border border-border rounded-lg px-3 py-2.5">
                   <div className="flex items-center justify-between mb-2">

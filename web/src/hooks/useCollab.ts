@@ -199,7 +199,8 @@ export function useCollab(
         }
       }
       ws.onerror = () => { /* non-fatal; onclose handles cleanup */ }
-    } catch { /* construction failed → collab inactive */ }
+      } catch { /* construction failed → collab inactive */ }
+    }
     connect()
 
     return () => {
