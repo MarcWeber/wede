@@ -80,6 +80,8 @@ export interface UseCollabResult {
   sendTerminals: (list: Pick<TerminalSession, 'id' | 'name'>[]) => void
   onTerminals: (cb: TerminalsSub) => () => void
   setPushTabs: (enabled: boolean) => void
+  reconnect: () => void
+  connected: boolean
 }
 
 export function useCollab(
@@ -90,13 +92,17 @@ export function useCollab(
   collabContext?: string | null,
   onKicked?: () => void,
   onInit?: (data: unknown) => void,
+  onDisconnect?: () => void,
 ): UseCollabResult {
   const [roster, setRoster] = useState<PresenceMember[]>([])
   const [presenter, setPresenter] = useState<CollabPresenter | null>(null)
   const [selfId, setSelfId] = useState<string | null>(null)
   const [visibleTabTypes, setVisibleTabTypes] = useState<Record<string, boolean> | null>(null)
   const [pointers, setPointers] = useState<Record<string, CollabPointer>>({})
+  const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
+  const disconnectRef = useRef(onDisconnect)
+  useEffect(() => { disconnectRef.current = onDisconnect }, [onDisconnect])
   const kickedRef = useRef(onKicked)
   const initRef = useRef(onInit)
   useEffect(() => { kickedRef.current = onKicked }, [onKicked])
@@ -113,10 +119,15 @@ export function useCollab(
     if (!workspaceId || !token) return undefined
     let disposed = false
     let ws: WebSocket | undefined
-    try {
-      ws = new WebSocket(buildWsUrl(workspaceId, token, username, tabViewState, collabContext))
-      wsRef.current = ws
-      ws.onmessage = (ev: MessageEvent) => {
+    const connect = () => {
+      try {
+        ws = new WebSocket(buildWsUrl(workspaceId, token, username, tabViewState, collabContext))
+        wsRef.current = ws
+        setConnected(true)
+        ws.onopen = () => {
+          setConnected(true)
+        }
+        ws.onmessage = (ev: MessageEvent) => {
         try {
           const msg: CollabMessage = JSON.parse(ev.data)
           logWebSocketReceive(JSON.stringify(msg))
@@ -181,13 +192,19 @@ export function useCollab(
       }
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null
-        if (!disposed) { setRoster([]); setPresenter(null); setPointers({}) }
+        setConnected(false)
+        if (!disposed) {
+          setRoster([]); setPresenter(null); setPointers({})
+          disconnectRef.current?.()
+        }
       }
       ws.onerror = () => { /* non-fatal; onclose handles cleanup */ }
     } catch { /* construction failed → collab inactive */ }
+    connect()
 
     return () => {
       disposed = true
+      setConnected(false)
       setRoster([]); setPresenter(null); setPointers({}); setSelfId(null); setVisibleTabTypes(null)
       lastSentRef.current = { file: null, tabId: 0, line: -1, anchorLine: 0, anchorCol: 0, headLine: 0, headCol: 0 }
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
@@ -262,5 +279,84 @@ export function useCollab(
 
   const setPushTabs = useCallback((enabled: boolean) => send({ type: 'pushTabs', enabled }), [send])
 
-  return { selfId, roster, presenter, visibleTabTypes, startLead, stopLead, setViewing, setTabs, pointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals, setPushTabs }
+  // Reconnect closes the existing socket and creates a new one with the same
+  // parameters. The useEffect will NOT re-run because dependencies haven't
+  // changed — so we manually close and recreate the connection.
+  const reconnect = useCallback(() => {
+    if (!workspaceId || !token) return
+    const old = wsRef.current
+    if (old) {
+      try { old.close() } catch { /* ignore */ }
+      wsRef.current = null
+    }
+    setRoster([]); setPresenter(null); setPointers({}); setSelfId(null); setVisibleTabTypes(null)
+    try {
+      const ws = new WebSocket(buildWsUrl(workspaceId, token, username, tabViewState, collabContext))
+      wsRef.current = ws
+      setConnected(true)
+      ws.onopen = () => { setConnected(true) }
+      ws.onmessage = (ev: MessageEvent) => {
+        try {
+          const msg: CollabMessage = JSON.parse(ev.data)
+          logWebSocketReceive(JSON.stringify(msg))
+          if (!msg) return
+          if (msg.type === 'kicked') { kickedRef.current?.(); return }
+          if (msg.type === 'init') {
+            if (msg.id) setSelfId(msg.id)
+            if (msg.visibleTabTypes) setVisibleTabTypes(msg.visibleTabTypes)
+            if (Array.isArray(msg.members)) {
+              setRoster(msg.members)
+              setPresenter(msg.presenter ?? null)
+              const ids = new Set(msg.members.map((m) => m.id))
+              setPointers((prev) => {
+                const next: Record<string, CollabPointer> = {}
+                for (const k of Object.keys(prev)) if (ids.has(k)) next[k] = prev[k]
+                return next
+              })
+            }
+            initRef.current?.(msg.data)
+            return
+          }
+          if (msg.type === 'self' && msg.id) {
+            setSelfId(msg.id)
+            if (msg.visibleTabTypes) setVisibleTabTypes(msg.visibleTabTypes)
+          } else if (msg.type === 'presence' && Array.isArray(msg.members)) {
+            setRoster(msg.members)
+            setPresenter(msg.presenter ?? null)
+            const ids = new Set(msg.members.map((m) => m.id))
+            setPointers((prev) => {
+              const next: Record<string, CollabPointer> = {}
+              for (const k of Object.keys(prev)) if (ids.has(k)) next[k] = prev[k]
+              return next
+            })
+          } else if (msg.type === 'pointer' && msg.id) {
+            const id = msg.id
+            const target = msg.target
+            setPointers((prev) => {
+              if (target == null) {
+                if (!(id in prev)) return prev
+                const next = { ...prev }; delete next[id]; return next
+              }
+              if (!isCollabPointer(target)) return prev
+              return { ...prev, [id]: target }
+            })
+          } else if (msg.type === 'window' && msg.id) {
+            const { win, geo, id } = msg
+            windowSubsRef.current.forEach((cb) => { try { cb(win ?? '', geo ?? {}, id ?? '') } catch { /* ignore */ } })
+          } else if (msg.type === 'terminals' && Array.isArray(msg.list)) {
+            terminalsSubsRef.current.forEach((cb) => { try { cb(msg.list ?? []) } catch { /* ignore */ } })
+          }
+        } catch { /* ignore */ }
+      }
+      ws.onclose = () => {
+        if (wsRef.current === ws) wsRef.current = null
+        setConnected(false)
+        setRoster([]); setPresenter(null); setPointers({})
+        disconnectRef.current?.()
+      }
+      ws.onerror = () => { /* non-fatal */ }
+    } catch { /* construction failed */ }
+  }, [workspaceId, token, username, tabViewState, collabContext])
+
+  return { selfId, roster, presenter, visibleTabTypes, startLead, stopLead, setViewing, setTabs, pointers, sendPointer, sendWindow, onWindow, sendTerminals, onTerminals, setPushTabs, reconnect, connected }
 }

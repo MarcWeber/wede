@@ -52,7 +52,7 @@ import { decodeCollabPointer, encodeCollabPointer } from '../lib/collabPointerDo
 import { elementScale } from '../lib/uiScale'
 import { useWorkspaces } from '../hooks/useWorkspaces'
 import { useTabSession, type LayoutRoot, type LayoutContainer, type LayoutTab } from '../hooks/useTabSession'
-import { logLayoutSave, logLayoutRestore, logInitPath, logInitRestore, logCursorMove } from '../lib/clientLog'
+import { logLayoutSave, logLayoutRestore, logInitPath, logInitRestore, logCursorMove, logDragDrop } from '../lib/clientLog'
 import type { AuthFetch, Tab, FileEntry, EditorSettings, Task, ExplorerActions, EditorActions, DapAvailableInfo, CollabPointer } from '../types'
 
 // colorFromName derives a stable per-user color for collaboration cursors.
@@ -1096,16 +1096,37 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   // The server is the single source of truth.
 
   // Remove empty containers so no ghost strip/window remains.
-  // Runs synchronously after drag & drop to prevent a visible ghost frame.
+  // Runs after any state change (including drag & drop) to clean up ghosts.
   useEffect(() => {
+    // A container is empty if it has no child entries and no child containers,
+    // or all child containers are themselves empty.
+    const hasChildEntry = (cid: number) =>
+      entries.some((e) => containerOf[e.id] === `container:${cid}`)
+
+    const hasChildContainer = (cid: number) =>
+      Object.values(containerOf).some((v) => v === `container:${cid}`)
+
+    // Recursively check if a container has any real content
+    const containerHasContent = (cid: number, visited: Set<number>): boolean => {
+      if (visited.has(cid)) return false
+      visited.add(cid)
+      if (hasChildEntry(cid)) return true
+      // Check attached sub-containers via containerOf
+      for (const [childKey, parentKey] of Object.entries(containerOf)) {
+        if (parentKey === `container:${cid}`) {
+          const childCidMatch = childKey.match(/^container:(\d+)$/)
+          if (childCidMatch) {
+            const childCid = parseInt(childCidMatch[1], 10)
+            if (containerHasContent(childCid, visited)) return true
+          }
+        }
+      }
+      return false
+    }
+
     const empty = containers.filter((c) => {
       if (!c.visible) return false
-      if (entries.some((e) => containerOf[e.id] === `container:${c.id}`)) return false
-      const cm = viewModes[`container:${c.id}`]
-      if (cm === 'float') {
-        if (containerActive[c.id]) return false
-        if (Object.values(containerOf).some((v) => v === `container:${c.id}`)) return false
-      }
+      if (containerHasContent(c.id, new Set())) return false
       return true
     })
     if (empty.length === 0) return
@@ -1889,6 +1910,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 8) return
       active = true
       setModeDrag(id)
+      if (debug) logDragDrop('start', { id })
     }
     const up = (ev: PointerEvent) => {
       cleanup()
@@ -1903,6 +1925,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         // Find the parent container's drop mode (e.g. "container:1", "center", etc.)
         const dropModeEl = tabEl.closest('[data-drop-mode]') as HTMLElement | null
         const mode = dropModeEl?.getAttribute('data-drop-mode') || null
+        if (debug) logDragDrop('drop-tab', { id, nearId, mode, el: el?.tagName, elClass: el?.className })
         if (mode && nearId) {
           // Determine whether to insert before or after the target tab
           // based on mouse position relative to the tab's center.
@@ -1915,6 +1938,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
 
       // Otherwise check for container boundary drop handles.
       const mode = el?.closest('[data-drop-mode]')?.getAttribute('data-drop-mode') || null
+      if (debug) logDragDrop('drop', { id, mode, el: el?.tagName, elClass: el?.className, elDataDropMode: el?.dataset?.dropMode })
       if (mode) dropViewMode(id, mode)
       else setModeDrag(null)
     }
@@ -1925,7 +1949,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', cancel)
-  }, [dropViewMode])
+  }, [dropViewMode, debug])
 
   // Reset view restores the fresh-install layout: every open tab is closed,
   // optional views are hidden, and per-tab modes/locks/positions are cleared.
@@ -1963,6 +1987,74 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     terminalsApi.resetTerminals()
     setMenuOpen(false)
   }, [terminalsApi])
+
+  // Flatten layout — collect all tabs from nested containers (floating, left,
+  // bottom, right) and append them to the main container's tab list, then
+  // remove the empty containers. Useful on mobile where nested containers
+  // waste space.
+  const flattenLayout = useCallback(() => {
+    // Find all entries that are in non-main containers
+    const nestedEntries = entries.filter((e) => {
+      const containerKey = containerOf[e.id]
+      if (!containerKey) return false // already in main container
+      return true
+    })
+
+    if (nestedEntries.length === 0) return
+
+    // Remove all container mappings for these entries (they go to main)
+    setContainerOf((prev) => {
+      const next = { ...prev }
+      for (const e of nestedEntries) delete next[e.id]
+      return next
+    })
+
+    // Remove all viewModes for nested containers and floating entries
+    setViewModes((prev) => {
+      const next = { ...prev }
+      for (const c of containers) {
+        if (c.id !== 1) delete next[`container:${c.id}`]
+      }
+      for (const e of nestedEntries) {
+        if (e.kind && !e.filePath && !e.webPath && !e.fileId && !e.termId && !e.apiId && !e.searchId && !e.logId) {
+          delete next[`view:${e.kind}`]
+        }
+      }
+      return next
+    })
+
+    // Remove floatGeom for all floating containers
+    setFloatGeom((prev) => {
+      const next = { ...prev }
+      for (const c of containers) {
+        if (c.id !== 1) delete next[`container:${c.id}`]
+      }
+      return next
+    })
+
+    // Clear containerActive for removed containers
+    setContainerActive((prev) => {
+      const next = { ...prev }
+      for (const c of containers) {
+        if (c.id !== 1) delete next[c.id]
+      }
+      return next
+    })
+
+    // Remove all nested containers
+    setContainers((prev) => prev.filter((c) => c.id === 1))
+
+    // Make sure the kinds of moved entries are visible
+    setVisible((prev) => {
+      const next = { ...prev }
+      for (const e of nestedEntries) {
+        if (e.kind) next[e.kind] = true
+      }
+      return next
+    })
+
+    setMenuOpen(false)
+  }, [entries, containers, containerOf])
 
   const forgetShellMapping = useCallback((id: string) => {
     setContainerOf((prev) => {
@@ -3179,6 +3271,8 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       placement={menuPlacement}
       onPlacement={setMenuPlacement}
       onResetView={resetView}
+      flattenAvailable={containers.length > 1}
+      onFlattenLayout={flattenLayout}
       username={username}
       users={collabRoster}
       onOpenSharedTab={(rel) => { void openFile({ path: rel, rel, workspaceId }) }}

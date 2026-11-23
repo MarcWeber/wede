@@ -223,6 +223,8 @@ export interface ViewMenuProps {
   placement: MenuPlacement
   onPlacement: (p: MenuPlacement) => void
   onResetView: () => void
+  flattenAvailable?: boolean
+  onFlattenLayout?: () => void
   username: string
   users: { id: string; username?: string; color?: string; line?: number; tabs?: string[] }[]
   onOpenSharedTab?: (path: string) => void
@@ -244,7 +246,7 @@ export default function ViewMenu({
   onLogout, onClose, desktop, sessionInfo,
   onOpenSessionPicker,
   onToggleDesktop, pointers, onJumpToPointer, uiScaleIsSet, uiScaleEnabled, onToggleUiScale, placement, onPlacement,
-  onResetView, username, users, onOpenSharedTab,
+  onResetView, flattenAvailable, onFlattenLayout, username, users, onOpenSharedTab,
   selfId, teacher = false, presenter = null,
   followTargetId = null, followMode = null,
   onFollow, onUnfollow, onLeadChange,
@@ -502,6 +504,15 @@ export default function ViewMenu({
           className={`w-full flex items-center gap-2.5 h-9 text-text-secondary hover:text-red hover:bg-bg-hover transition-colors ${slim ? 'justify-center px-0' : 'px-3'}`}>
           <RotateCcw className="w-3.5 h-3.5 shrink-0" /> {!slim && 'Reset view'}
         </button>
+        {flattenAvailable && onFlattenLayout && (
+          <button
+            onClick={onFlattenLayout}
+            role="menuitem"
+            title="Flatten layout — move all tabs from nested containers to the main container"
+            className={`w-full flex items-center gap-2.5 h-9 text-text-secondary hover:text-red hover:bg-bg-hover transition-colors ${slim ? 'justify-center px-0' : 'px-3'}`}>
+            <Boxes className="w-3.5 h-3.5 shrink-0" /> {!slim && 'Flatten layout'}
+          </button>
+        )}
         {/* Footer lives inside the scroll area so it never steals height in
             portrait mode. */}
         <div className="mt-1 border-t border-border py-1">

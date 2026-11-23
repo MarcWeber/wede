@@ -100,7 +100,12 @@ export default function Tabbed({
     const dropModeEl = info.dropTarget?.closest('[data-drop-mode]') as HTMLElement | null
     const dropModeVal = dropModeEl?.getAttribute('data-drop-mode')
     if (dropModeVal && dropModeVal !== sourceDropModeVal) {
-      onDropViewMode?.(tabId, dropModeVal)
+      // If dropped on a specific tab in the target container, preserve position
+      if (info.dropReorderId) {
+        onDropViewMode?.(tabId, dropModeVal, info.dropReorderId, info.dropReorderAfter)
+      } else {
+        onDropViewMode?.(tabId, dropModeVal)
+      }
       return
     }
 

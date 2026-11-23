@@ -407,6 +407,8 @@ export function useDragHints(opts: UseDragHintsOptions) {
     }, 80)
   }, [])
 
+  const lastHoverElRef = useRef<HTMLElement | null>(null)
+
   const runAction = useCallback((position: DragHintPosition | null, info: DragHintInfo, tabDrag = false) => {
     const o = optsRef.current
     const currentMode = o.mode
@@ -430,8 +432,12 @@ export function useDragHints(opts: UseDragHintsOptions) {
     // 2. Directional button action — a matching button always wins, even if
     // the pointer has left the strip (e.g. Close tab dragged upward).
     // The release-point check below is only used for drag & drop.
+    // Use lastHoverElRef (tracked during move) as fallback when elementFromPoint
+    // fails because target floating containers have pointerEvents:none during drag.
     const releaseEl = document.elementFromPoint(info.clientX, info.clientY) as HTMLElement | null
-    const releaseGroupEl = releaseEl?.closest('[data-reorder-group]') as HTMLElement | null
+    const hoverEl = lastHoverElRef.current
+    const el = releaseEl ?? hoverEl
+    const releaseGroupEl = el?.closest('[data-reorder-group]') as HTMLElement | null
     let releaseOutsideGroup = false
     if (releaseGroupEl) {
       const gr = releaseGroupEl.getBoundingClientRect()
@@ -466,7 +472,6 @@ export function useDragHints(opts: UseDragHintsOptions) {
         o.onAction?.(restAction, info)
       }
       if (o.onDragEnd) {
-        const el = releaseEl
         const row = el?.closest('[data-reorder-id]') as HTMLElement | null
         const dropReorderId = row?.dataset.reorderId ?? null
         // Detect left/right half of the target tab for insert position
@@ -556,6 +561,13 @@ export function useDragHints(opts: UseDragHintsOptions) {
         const dy = ev.clientY - startY
         const adx = Math.abs(dx)
         const distance = Math.hypot(dx, dy)
+        // Track the element under the pointer during drag so we have a fallback
+        // when elementFromPoint fails at release (e.g. floating containers with
+        // pointerEvents:none during modeDrag).
+        if (dragging) {
+          const hoverTarget = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null
+          lastHoverElRef.current = hoverTarget
+        }
 
         // Horizontal scroll wins until tab-drag mode starts. This is checked on
         // every mouse move, not just the first one, so a slow drag cannot turn a
@@ -776,6 +788,12 @@ export function useDragHints(opts: UseDragHintsOptions) {
     }
 
     if (!s.dragging) s.dragging = true
+
+    // Track hover target during touch drag for same reason as mouse path
+    if (s.dragging) {
+      const hoverTarget = document.elementFromPoint(t.clientX, t.clientY) as HTMLElement | null
+      lastHoverElRef.current = hoverTarget
+    }
 
     const swipe = detectSwipe(dx, dy, {
       minDistance: optsRef.current.triggerDistance ?? 15,

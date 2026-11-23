@@ -34,3 +34,7 @@ export function logWebSocketSend(msg: string): void {
 export function logWebSocketReceive(msg: string): void {
   logUi('debug', 'client.log', 'ws receive', { msg })
 }
+
+export function logDragDrop(action: string, data: Record<string, unknown>): void {
+  logUi('debug', 'client.log', 'drag-drop', { action, ...data })
+}
