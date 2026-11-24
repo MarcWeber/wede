@@ -172,7 +172,7 @@ const PLACEMENTS: { key: MenuPlacement; label: string }[] = [
 ]
 
 function ThemeLevelRow({ slim }: { slim: boolean }) {
-  const { level, setLevel } = useTheme()
+  const { level, setLevel, setThemePreview } = useTheme()
   const position = THEME_LEVEL_STOPS.indexOf(level)
   return (
     <div
@@ -187,7 +187,10 @@ function ThemeLevelRow({ slim }: { slim: boolean }) {
           max={THEME_LEVEL_STOPS.length}
           step={1}
           value={position + 1}
-          onChange={(e) => setLevel(THEME_LEVEL_STOPS[Number(e.target.value) - 1])}
+          onChange={(e) => {
+            setLevel(THEME_LEVEL_STOPS[Number(e.target.value) - 1])
+            setThemePreview(true)
+          }}
           className={`${slim ? 'w-full' : 'flex-1'} accent-accent cursor-pointer`}
           aria-label="Theme brightness and contrast"
         />
@@ -251,6 +254,7 @@ export default function ViewMenu({
   followTargetId = null, followMode = null,
   onFollow, onUnfollow, onLeadChange,
 }: ViewMenuProps) {
+  const { themePreview } = useTheme()
   const [showPlacement, setShowPlacement] = useState(false)
   const [followMenuId, setFollowMenuId] = useState<string | null>(null)
   const [sharedTabsOpen, setSharedTabsOpen] = useState(false)
@@ -543,7 +547,7 @@ export default function ViewMenu({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60" onClick={onClose}>
+    <div className={`fixed inset-0 z-50 ${themePreview ? 'bg-transparent' : 'bg-black/60'}`} onClick={onClose}>
       <aside className="relative w-64 h-full flex flex-col bg-bg-tertiary border-r border-border select-none animate-fade-in"
         onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose}

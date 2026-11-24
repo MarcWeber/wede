@@ -13,8 +13,10 @@ export type ThemeLevel = (typeof THEME_LEVEL_STOPS)[number]
 export interface ThemeContextValue {
   theme: ThemeName
   level: ThemeLevel
+  themePreview: boolean
   setTheme: (t: ThemeName) => void
   setLevel: (n: ThemeLevel) => void
+  setThemePreview: (enabled: boolean) => void
   toggle: () => void
   isDark: boolean
   terminalTheme: ITheme
@@ -56,6 +58,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return 'dark' // default to dark on first visit, skip theme picker
   })
   const [level, setLevelState] = useState<ThemeLevel>(loadLevel)
+  const [themePreview, setThemePreview] = useState(false)
 
   const apply = useCallback((t: ThemeName, n: ThemeLevel) => {
     document.documentElement.setAttribute('data-theme', t)
@@ -165,7 +168,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ThemeContext.Provider value={{ theme, level, setTheme, setLevel, toggle, isDark, terminalTheme }}>
+    <ThemeContext.Provider value={{ theme, level, themePreview, setTheme, setLevel, setThemePreview, toggle, isDark, terminalTheme }}>
       {children}
     </ThemeContext.Provider>
   )
