@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -70,10 +71,26 @@ func (c *configFlags) Set(v string) error {
 	return nil
 }
 
+func createLoginTokenFile(dir string, out io.Writer) error {
+	token, err := auth.CreateOneTimeLoginTokenFile(dir)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Created login token file: .wede_one_time_login_%s\n", token); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "login_token=%s\n", token); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, "Token passed the password-strength check.")
+	return err
+}
+
 func main() {
 	portFlag := flag.String("port", "", "Override port (default: from config or 9090)")
 	pFlag := flag.String("p", "", "Override port (shorthand)")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
+	createLoginTokenFileFlag := flag.Bool("create-login-token-file", false, "Create a strong one-time login token file and print its token")
 	var configs configFlags
 	flag.Var(&configs, "configs", "Layered config: keys:cached|hot:source (repeatable)")
 	flag.Parse()
@@ -81,6 +98,16 @@ func main() {
 	if *versionFlag {
 		fmt.Println("wede", Version)
 		os.Exit(0)
+	}
+	if *createLoginTokenFileFlag {
+		cwd, err := os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := createLoginTokenFile(cwd, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 
 	configLayers, err := config.ParseLayerSpecs(configs)

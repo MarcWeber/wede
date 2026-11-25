@@ -122,8 +122,9 @@ workspace/session URL handling.
 
 The server checks for a regular file named
 `.wede_one_time_login_<token>` in its current working directory. Tokens must be
-32–128 URL-safe characters (`A-Z`, `a-z`, `0-9`, `_`, or `-`). An empty token
-file does not expire; otherwise, its contents must be an expiry in
+12–128 URL-safe characters (`A-Z`, `a-z`, `0-9`, `_`, or `-`) and must not be
+detected as a common or weak password by the password-strength check. An empty
+token file does not expire; otherwise, its contents must be an expiry in
 `YYYY-mm-dd` or `YYYY-mm-dd HH:mm` format (24-hour time). It is interpreted
 using the server's local date and time. A date-only expiry is valid through
 that date; a date-time expiry is valid through the specified minute. Values
@@ -136,6 +137,12 @@ TOKEN=$(openssl rand -hex 32)
 (umask 077; printf '%s\n' '2026-12-31 23:59' > ".wede_one_time_login_${TOKEN}")
 printf '%s\n' "https://wede.example/?user=alice&login_token=${TOKEN}&workspace=<workspace-id>"
 ```
+
+Alternatively, run `./wede --create-login-token-file` from the server's working
+directory. It creates an empty, owner-only token file using a random token,
+checks that the token passes the password-strength rules, and prints the
+`login_token=<token>` value. Enable `token_link_login` as `keep` or `remove` to
+allow the generated link to authenticate.
 
 `remove` deletes the file when login succeeds, so only one request can redeem
 it, including concurrent requests. `keep` leaves the file in place and the link

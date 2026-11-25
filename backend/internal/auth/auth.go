@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"wede/backend/internal/weakpass"
 )
 
 // ── Context key for session role ──────────────────────────────────────────────
@@ -59,6 +61,7 @@ type sessionEntry struct {
 const maxUsernameLen = 32
 
 const oneTimeLoginFilePrefix = ".wede_one_time_login_"
+const minOneTimeLoginTokenLen = 12
 
 // sanitizeUsername trims and length-caps a chosen username. An empty result is
 // allowed; the presence layer substitutes a default ("anon").
@@ -393,7 +396,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func validOneTimeLoginToken(token string) bool {
-	if len(token) < 32 || len(token) > 128 {
+	if len(token) < minOneTimeLoginTokenLen || len(token) > 128 || weakpass.IsCommon(token) {
 		return false
 	}
 	for i := 0; i < len(token); i++ {
@@ -403,6 +406,35 @@ func validOneTimeLoginToken(token string) bool {
 		}
 	}
 	return true
+}
+
+// CreateOneTimeLoginTokenFile writes a cryptographically random, strong token
+// file with restrictive permissions and returns the token for use in a login URL.
+func CreateOneTimeLoginTokenFile(dir string) (string, error) {
+	for {
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return "", err
+		}
+		token := hex.EncodeToString(raw)
+		if !validOneTimeLoginToken(token) {
+			continue
+		}
+
+		path := filepath.Join(dir, oneTimeLoginFilePrefix+token)
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if err := file.Close(); err != nil {
+			os.Remove(path)
+			return "", err
+		}
+		return token, nil
+	}
 }
 
 func validOneTimeLoginExpiry(contents []byte, now time.Time) bool {
@@ -421,17 +453,36 @@ func validOneTimeLoginExpiry(contents []byte, now time.Time) bool {
 }
 
 func (h *Handler) loginWithOneTimeToken(w http.ResponseWriter, r *http.Request, token, username string) {
-	if !h.allowRedeem(clientIP(r)) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]string{"error": "too many attempts; try again later"})
-		return
-	}
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if (h.tokenLinkMode != "remove" && h.tokenLinkMode != "keep") || !validOneTimeLoginToken(token) {
+	h.loadLockout()
+	ip := clientKey(r)
+	now := time.Now()
+	if wait := h.lockedFor(ip, now); wait > 0 {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":   "locked",
+			"message": lockoutMessage(wait),
+		})
+		return
+	}
+	reject := func() {
+		_, wait := h.recordFailure(ip, time.Now())
+		h.saveLockout()
+		if wait > 0 {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error":   "locked",
+				"message": lockoutMessage(wait),
+			})
+			return
+		}
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+	}
+
+	if (h.tokenLinkMode != "remove" && h.tokenLinkMode != "keep") || !validOneTimeLoginToken(token) {
+		reject()
 		return
 	}
 
@@ -439,29 +490,25 @@ func (h *Handler) loginWithOneTimeToken(w http.ResponseWriter, r *http.Request, 
 	// Link usernames are display names, not proof of identity. In particular,
 	// they must not impersonate a configured teacher account.
 	if h.teachers[username] {
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+		reject()
 		return
 	}
 
 	path := filepath.Join(h.tokenLinkDir, oneTimeLoginFilePrefix+token)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+		reject()
 		return
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil || !validOneTimeLoginExpiry(contents, time.Now()) {
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+		reject()
 		return
 	}
 	if h.tokenLinkMode == "remove" {
 		if err := os.Remove(path); err != nil {
 			if os.IsNotExist(err) {
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+				reject()
 				return
 			}
 			w.WriteHeader(http.StatusInternalServerError)
@@ -470,6 +517,8 @@ func (h *Handler) loginWithOneTimeToken(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
+	delete(h.attempts, ip)
+	h.saveLockout()
 	sessionToken := h.newSession(username, RoleEditor)
 	json.NewEncoder(w).Encode(map[string]any{
 		"token":    sessionToken,

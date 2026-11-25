@@ -61,7 +61,7 @@ func createOneTimeLoginFile(t *testing.T, dir, token string) string {
 func TestOneTimeLoginDisabledByDefault(t *testing.T) {
 	h := newTestHandler(t)
 	dir := t.TempDir()
-	token := strings.Repeat("a", 64)
+	token := "wede-zxj9k2m4"
 	path := createOneTimeLoginFile(t, dir, token)
 
 	status, _ := oneTimeLogin(t, h, token, "alice")
@@ -76,7 +76,7 @@ func TestOneTimeLoginDisabledByDefault(t *testing.T) {
 func TestOneTimeLoginRemoveConsumesTokenAndCreatesEditor(t *testing.T) {
 	h := newTestHandler(t)
 	dir := t.TempDir()
-	token := strings.Repeat("b", 64)
+	token := "wede-zxj9k2m4"
 	path := createOneTimeLoginFile(t, dir, token)
 	h.SetTokenLinkLogin("remove", dir)
 
@@ -101,7 +101,7 @@ func TestOneTimeLoginRemoveConsumesTokenAndCreatesEditor(t *testing.T) {
 func TestOneTimeLoginKeepAllowsReuse(t *testing.T) {
 	h := newTestHandler(t)
 	dir := t.TempDir()
-	token := strings.Repeat("c", 64)
+	token := "wede-zxj9k2m4"
 	path := createOneTimeLoginFile(t, dir, token)
 	h.SetTokenLinkLogin("keep", dir)
 
@@ -115,6 +115,79 @@ func TestOneTimeLoginKeepAllowsReuse(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("keep mode removed token file: %v", err)
+	}
+}
+
+func TestOneTimeLoginTokenStrength(t *testing.T) {
+	h := newTestHandler(t)
+	dir := t.TempDir()
+	h.SetTokenLinkLogin("keep", dir)
+
+	t.Run("accepts minimum length token", func(t *testing.T) {
+		token := "wede-zxj9k2m"
+		createOneTimeLoginFile(t, dir, token)
+		if status, _ := oneTimeLogin(t, h, token, "alice"); status != http.StatusOK {
+			t.Fatalf("12-character strong token login status = %d, want 200", status)
+		}
+	})
+
+	t.Run("rejects common token", func(t *testing.T) {
+		token := strings.Repeat("qwerty", 6)
+		createOneTimeLoginFile(t, dir, token)
+		if status, _ := oneTimeLogin(t, h, token, "alice"); status != http.StatusUnauthorized {
+			t.Fatalf("common token login status = %d, want 401", status)
+		}
+	})
+
+	if validOneTimeLoginToken("wede-zxj9k") {
+		t.Error("11-character token should be invalid")
+	}
+}
+
+func TestCreateOneTimeLoginTokenFile(t *testing.T) {
+	dir := t.TempDir()
+	token, err := CreateOneTimeLoginTokenFile(dir)
+	if err != nil {
+		t.Fatalf("CreateOneTimeLoginTokenFile: %v", err)
+	}
+	if !validOneTimeLoginToken(token) {
+		t.Fatalf("generated token does not pass validation: %q", token)
+	}
+	info, err := os.Stat(filepath.Join(dir, oneTimeLoginFilePrefix+token))
+	if err != nil {
+		t.Fatalf("stat generated token file: %v", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		t.Errorf("generated file mode = %v, want regular file readable only by owner", info.Mode())
+	}
+	contents, err := os.ReadFile(filepath.Join(dir, oneTimeLoginFilePrefix+token))
+	if err != nil {
+		t.Fatalf("read generated token file: %v", err)
+	}
+	if len(contents) != 0 {
+		t.Errorf("generated token file is not empty: %q", contents)
+	}
+}
+
+func TestOneTimeLoginSharesPasswordLockout(t *testing.T) {
+	h := newTestHandler(t)
+	h.maxAttempts = 2
+	dir := t.TempDir()
+	token := "wede-zxj9k2m"
+	createOneTimeLoginFile(t, dir, token)
+	h.SetTokenLinkLogin("keep", dir)
+
+	if out := login(t, h, "wrong-password", ""); out["error"] != "wrong_password" {
+		t.Fatalf("first password failure = %v, want wrong_password", out["error"])
+	}
+	if status, _ := oneTimeLogin(t, h, "missingtoken1", "alice"); status != http.StatusForbidden {
+		t.Fatalf("token failure at shared attempt limit = %d, want 403", status)
+	}
+	if status, _ := oneTimeLogin(t, h, token, "alice"); status != http.StatusForbidden {
+		t.Fatalf("valid token during shared lockout = %d, want 403", status)
+	}
+	if _, err := os.Stat(filepath.Join(dir, oneTimeLoginFilePrefix+token)); err != nil {
+		t.Errorf("locked token login changed token file: %v", err)
 	}
 }
 
@@ -141,7 +214,7 @@ func TestOneTimeLoginExpiryDate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newTestHandler(t)
 			dir := t.TempDir()
-			token := strings.Repeat("f", 64)
+			token := "wede-zxj9k2m4"
 			path := createOneTimeLoginFile(t, dir, token)
 			if err := os.WriteFile(path, []byte(tc.contents+"\n"), 0600); err != nil {
 				t.Fatal(err)
@@ -164,7 +237,7 @@ func TestOneTimeLoginRejectsUnsafeTokenAndTeacherUsername(t *testing.T) {
 		t.Errorf("unsafe token status = %d, want 401", status)
 	}
 
-	token := strings.Repeat("d", 64)
+	token := "wede-zxj9k2m4"
 	path := createOneTimeLoginFile(t, dir, token)
 	h.SetTeachers([]string{"teacher"})
 	if status, _ := oneTimeLogin(t, h, token, "teacher"); status != http.StatusUnauthorized {
@@ -178,7 +251,7 @@ func TestOneTimeLoginRejectsUnsafeTokenAndTeacherUsername(t *testing.T) {
 func TestOneTimeLoginRemoveIsSingleUseUnderConcurrency(t *testing.T) {
 	h := newTestHandler(t)
 	dir := t.TempDir()
-	token := strings.Repeat("e", 64)
+	token := "wede-zxj9k2m4"
 	createOneTimeLoginFile(t, dir, token)
 	h.SetTokenLinkLogin("remove", dir)
 

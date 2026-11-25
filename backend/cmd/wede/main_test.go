@@ -1,13 +1,41 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"wede/backend/internal/auth"
 	"wede/backend/internal/config"
 )
+
+func TestCreateLoginTokenFileCommand(t *testing.T) {
+	dir := t.TempDir()
+	var output bytes.Buffer
+	if err := createLoginTokenFile(dir, &output); err != nil {
+		t.Fatalf("createLoginTokenFile: %v", err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "Token passed the password-strength check.") {
+		t.Fatalf("output does not confirm strength check: %q", text)
+	}
+	var token string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "login_token=") {
+			token = strings.TrimPrefix(line, "login_token=")
+		}
+	}
+	if token == "" {
+		t.Fatalf("output does not contain login_token: %q", text)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".wede_one_time_login_"+token)); err != nil {
+		t.Fatalf("token file was not created: %v", err)
+	}
+}
 
 // okHandler is a trivial next-handler used to exercise the middleware.
 func okHandler() http.Handler {
