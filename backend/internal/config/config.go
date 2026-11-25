@@ -24,15 +24,17 @@ import (
 // legacy single-password fields for backwards compatibility; when Users is
 // non-empty each configured user signs in with their own entry.
 type Config struct {
-	Branding       string                     `json:"branding,omitempty"`
-	Password       string                     `json:"password,omitempty"`
-	Users          map[string]string          `json:"users,omitempty"`
-	Teachers       StringList                 `json:"teachers,omitempty"`
-	Port           string                     `json:"port,omitempty"`
-	Host           string                     `json:"host,omitempty"`
-	Workspaces     map[string]WorkspaceConfig `json:"workspaces,omitempty"`
-	Defaults       Defaults                   `json:"defaults,omitempty"`
-	TokenLinkLogin string                     `json:"token_link_login,omitempty"`
+	Branding            string                     `json:"branding,omitempty"`
+	Password            string                     `json:"password,omitempty"`
+	Users               map[string]string          `json:"users,omitempty"`
+	Teachers            StringList                 `json:"teachers,omitempty"`
+	Port                string                     `json:"port,omitempty"`
+	Host                string                     `json:"host,omitempty"`
+	Workspaces          map[string]WorkspaceConfig `json:"workspaces,omitempty"`
+	Defaults            Defaults                   `json:"defaults,omitempty"`
+	TokenLinkLogin      string                     `json:"token_link_login,omitempty"`
+	RRControl           string                     `json:"rrcontrol,omitempty"`
+	SessionTimeoutHours int                        `json:"session_timeout_hours,omitempty"`
 
 	// MinPasswordChars is the minimum length for a plaintext password or user
 	// entry. 0 disables the check. Defaults to 12.
@@ -93,6 +95,16 @@ type Config struct {
 	// (*, ?, [abc]). Default hides common noise: .wede-collab-*, .DS_Store,
 	// .nfs*, node_modules, dist, build, .next, vendor, .cache, target.
 	FileHidePatterns StringList `json:"file_hide_patterns,omitempty"`
+}
+
+const defaultSessionTimeoutHours = 24
+
+// SessionTimeout returns the absolute lifetime of an authenticated session.
+func (c *Config) SessionTimeout() time.Duration {
+	if c == nil || c.SessionTimeoutHours <= 0 {
+		return time.Duration(defaultSessionTimeoutHours) * time.Hour
+	}
+	return time.Duration(c.SessionTimeoutHours) * time.Hour
 }
 
 // WorkspaceConfig is one workspace template. A template is not a running
@@ -204,7 +216,7 @@ type Layer struct {
 }
 
 var validKeys = map[string]bool{
-	"all": true, "users": true, "teachers": true, "workspaces": true, "defaults": true,
+	"all": true, "users": true, "teachers": true, "workspaces": true, "defaults": true, "rrcontrol": true,
 }
 
 // ParseLayerSpec parses "users,teachers:hot:foo.yaml". The source may itself
@@ -220,7 +232,7 @@ func ParseLayerSpec(spec string) (Layer, error) {
 	}
 	for _, k := range keys {
 		if !validKeys[k] {
-			return Layer{}, fmt.Errorf("invalid config key %q (want all|users|teachers|workspaces|defaults)", k)
+			return Layer{}, fmt.Errorf("invalid config key %q (want all|users|teachers|workspaces|defaults|rrcontrol)", k)
 		}
 	}
 	mode := strings.ToLower(strings.TrimSpace(parts[1]))
@@ -460,19 +472,24 @@ func (s *Store) build() (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{
-		Branding:         "wede",
-		Port:             "9090",
-		Host:             "127.0.0.1",
-		Defaults:         Defaults{WorkspaceTimeoutSecs: 600},
-		MinPasswordChars: 12,
-		TokenLinkLogin:   "off",
-		ViewImage:        "tab-viewer",
-		ViewPdf:          "tab-pdf-js",
+		Branding:            "wede",
+		Port:                "9090",
+		Host:                "127.0.0.1",
+		Defaults:            Defaults{WorkspaceTimeoutSecs: 600},
+		MinPasswordChars:    12,
+		TokenLinkLogin:      "off",
+		RRControl:           "no",
+		SessionTimeoutHours: defaultSessionTimeoutHours,
+		ViewImage:           "tab-viewer",
+		ViewPdf:             "tab-pdf-js",
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+	if err := normalizeSessionTimeout(cfg); err != nil {
+		return nil, err
 	}
 	if len(cfg.Users) == 0 && cfg.Password == "" {
 		return nil, fmt.Errorf("password or users required in config")
@@ -488,6 +505,9 @@ func (s *Store) build() (*Config, error) {
 		return nil, fmt.Errorf("branding must be at most 64 characters")
 	}
 	if err := normalizeTokenLinkLogin(cfg); err != nil {
+		return nil, err
+	}
+	if err := normalizeRRControl(cfg); err != nil {
 		return nil, err
 	}
 	if cfg.Defaults.Timeout() < 0 {
@@ -655,20 +675,28 @@ func parse(data []byte) (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{
-		Branding:       "wede",
-		Port:           "9090",
-		Host:           "127.0.0.1",
-		Defaults:       Defaults{WorkspaceTimeoutSecs: 600},
-		TokenLinkLogin: "off",
-		ViewImage:      "tab-viewer",
-		ViewPdf:        "tab-pdf-js",
+		Branding:            "wede",
+		Port:                "9090",
+		Host:                "127.0.0.1",
+		Defaults:            Defaults{WorkspaceTimeoutSecs: 600},
+		TokenLinkLogin:      "off",
+		RRControl:           "no",
+		SessionTimeoutHours: defaultSessionTimeoutHours,
+		ViewImage:           "tab-viewer",
+		ViewPdf:             "tab-pdf-js",
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("invalid wede.config.yaml: %w", err)
 	}
+	if err := normalizeSessionTimeout(cfg); err != nil {
+		return nil, err
+	}
 	if err := normalizeTokenLinkLogin(cfg); err != nil {
+		return nil, err
+	}
+	if err := normalizeRRControl(cfg); err != nil {
 		return nil, err
 	}
 	if len(cfg.Users) == 0 && cfg.Password == "" {
@@ -680,6 +708,17 @@ func parse(data []byte) (*Config, error) {
 	return cfg, nil
 }
 
+func normalizeSessionTimeout(cfg *Config) error {
+	if cfg.SessionTimeoutHours == 0 {
+		cfg.SessionTimeoutHours = defaultSessionTimeoutHours
+	}
+	maxHours := int((1<<63 - 1) / int64(time.Hour))
+	if cfg.SessionTimeoutHours < 1 || cfg.SessionTimeoutHours > maxHours {
+		return fmt.Errorf("session_timeout_hours must be between 1 and %d", maxHours)
+	}
+	return nil
+}
+
 func normalizeTokenLinkLogin(cfg *Config) error {
 	if cfg.TokenLinkLogin == "" {
 		cfg.TokenLinkLogin = "off"
@@ -689,6 +728,18 @@ func normalizeTokenLinkLogin(cfg *Config) error {
 		return nil
 	default:
 		return fmt.Errorf("token_link_login must be one of: off, keep, remove")
+	}
+}
+
+func normalizeRRControl(cfg *Config) error {
+	if cfg.RRControl == "" {
+		cfg.RRControl = "no"
+	}
+	switch cfg.RRControl {
+	case "off", "ask", "no", "yes":
+		return nil
+	default:
+		return fmt.Errorf("rrcontrol must be one of: off, ask, no, yes")
 	}
 }
 

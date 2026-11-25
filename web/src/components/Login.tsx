@@ -40,7 +40,7 @@ export default function Login({
 }: LoginProps) {
   const branding = useBranding()
   const [password, setPassword] = useState('')
-  const [name, setName] = useState(() => sessionStorage.getItem('wede_username') || '')
+  const [name, setName] = useState(() => localStorage.getItem('wede_username') || sessionStorage.getItem('wede_username') || '')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [choice, setChoice] = useState('')

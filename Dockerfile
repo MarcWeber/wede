@@ -9,6 +9,15 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY web/ ./
 RUN npm run build
 
+WORKDIR /src/backend/rrcontrol/frontend
+COPY backend/rrcontrol/frontend/package.json backend/rrcontrol/frontend/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
+COPY backend/rrcontrol/frontend/build.mjs ./
+COPY backend/rrcontrol/frontend/embed/ ./embed/
+COPY backend/rrcontrol/frontend/rc/ ./rc/
+RUN npm run build
+
 # Stage 2: Go backend build
 FROM golang:1.25-alpine AS backend
 
@@ -20,6 +29,7 @@ RUN go mod download
 
 COPY . .
 COPY --from=web /src/web/dist backend/cmd/wede/dist
+COPY --from=web /src/backend/rrcontrol/dist backend/rrcontrol/dist
 RUN mkdir -p backend/cmd/wede/site && cp -r site backend/cmd/wede/site && \
     cd backend && go build -tags embed_frontend -o /out/wede ./cmd/wede
 

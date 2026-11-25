@@ -6,7 +6,7 @@ import Login from './components/Login'
 import IDE from './components/IDE'
 import ChooseWorkspaceAndTabSession from './components/ChooseWorkspaceAndTabSession'
 import { navigateToSession } from './lib/sessionNav'
-import { workspaceUrl } from './api'
+import { basePath, workspaceUrl } from './api'
 
 interface WorkspaceFolderState {
   hasWorkspace?: boolean
@@ -14,6 +14,31 @@ interface WorkspaceFolderState {
   recents?: string[]
   home?: string
   [key: string]: unknown
+}
+
+type RRControlWindow = Window & {
+  __wedeRRControlWho?: string
+  __rrwebRemote?: {
+    setWho: (who: string) => void
+    destroy: () => void
+  }
+}
+
+function createRRControlTabID(): string {
+  const key = 'wede-rrcontrol-tab-id'
+  try {
+    const stored = sessionStorage.getItem(key)
+    if (stored) return stored
+    const id = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    sessionStorage.setItem(key, id)
+    return id
+  } catch {
+    return typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  }
 }
 
 function App() {
@@ -30,6 +55,8 @@ function App() {
   const [workspace, setWorkspace] = useState<WorkspaceFolderState | null>(null)
   const [loading, setLoading] = useState(true)
   const [allowCustomDirectory, setAllowCustomDirectory] = useState<boolean | null>(null)
+  const [rrControlMode, setRRControlMode] = useState<string | null>(null)
+  const [rrControlTabID] = useState(createRRControlTabID)
   const [resolvingCustomDir, setResolvingCustomDir] = useState(false)
   const customDirRef = useRef<string | null>(null)
   // A view state is claimed only if no other socket already uses it. When it is
@@ -82,12 +109,43 @@ function App() {
     let cancelled = false
     fetch('/api/ui-config')
       .then((r) => r.json())
-      .then((data: { workspace_allow_custom_directory?: unknown }) => {
-        if (!cancelled) setAllowCustomDirectory(data.workspace_allow_custom_directory === true)
+      .then((data: { workspace_allow_custom_directory?: unknown; rrcontrol?: unknown }) => {
+        if (!cancelled) {
+          setAllowCustomDirectory(data.workspace_allow_custom_directory === true)
+          setRRControlMode(typeof data.rrcontrol === 'string' ? data.rrcontrol : 'off')
+        }
       })
-      .catch(() => { if (!cancelled) setAllowCustomDirectory(false) })
+      .catch(() => {
+        if (!cancelled) {
+          setAllowCustomDirectory(false)
+          setRRControlMode('off')
+        }
+      })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    const rrWindow = window as RRControlWindow
+    const who = token ? (username.trim() || 'wede-user') : ''
+    rrWindow.__wedeRRControlWho = who
+    if (who) rrWindow.__rrwebRemote?.setWho(who)
+  }, [token, username])
+
+  useEffect(() => {
+    if (!token || !rrControlMode || rrControlMode === 'off') return
+    const script = document.createElement('script')
+    const params = new URLSearchParams({ tab_id: rrControlTabID, who: username.trim() || 'wede-user' })
+    script.src = `${basePath()}/rrcontrol/script.js?${params}`
+    script.async = true
+    script.dataset.wedeRrcontrol = 'true'
+    document.head.appendChild(script)
+    return () => {
+      const rrWindow = window as RRControlWindow
+      rrWindow.__rrwebRemote?.destroy()
+      delete rrWindow.__rrwebRemote
+      script.remove()
+    }
+  }, [token, username, rrControlMode, rrControlTabID])
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -160,7 +218,7 @@ function App() {
   // Wait for the workspace list before deciding what to show. The ui-config
   // flag is needed first so ?workspace=directory: links can resolve without
   // flashing the chooser.
-  if (loading || !workspacesApi.ready || allowCustomDirectory === null || resolvingCustomDir || claim === 'checking') {
+  if (loading || !workspacesApi.ready || allowCustomDirectory === null || rrControlMode === null || resolvingCustomDir || claim === 'checking') {
     return (
       <div className="min-h-screen bg-bg-tertiary flex items-center justify-center">
         <div className="animate-fade-in text-center">
@@ -235,6 +293,7 @@ function App() {
       onUsernameChange={updateUsername}
       role={role}
       teacher={teacher}
+      rrControlMode={rrControlMode}
       debug={debug}
       collabContext={collabContext}
       tabViewState={tabViewState}

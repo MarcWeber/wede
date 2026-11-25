@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remote Control — rrweb</title>
+<style>
+  :root { --bg:#0d1220; --panel:#141b2d; --panel2:#1a2338; --line:#26314b; --ink:#e6ecf7; --muted:#8b97b0; --accent:#2f81f7; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html, body { height:100%; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--ink); display:flex; flex-direction:column; }
+  header.topbar { display:flex; align-items:center; gap:14px; padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }
+  .brand { font-weight:700; letter-spacing:.02em; }
+  .conn { font-size:12px; color:var(--muted); }
+  .conn[data-state="connected"] { color:#3ecf8e; }
+  .conn[data-state="reconnecting…"] { color:#f5a524; }
+  .spacer { flex:1; }
+  a.link { color:var(--muted); text-decoration:none; font-size:13px; }
+  a.link:hover { color:var(--ink); }
+  .layout { flex:1; display:flex; min-height:0; }
+  aside.sidebar { width:310px; min-width:250px; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
+  .sidebar-head { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--line); font-size:12px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
+  .count { background:var(--panel2); border-radius:999px; padding:1px 9px; color:var(--ink); }
+  .clients { overflow:auto; padding:8px; display:grid; gap:6px; align-content:start; }
+  .client { display:block; text-align:left; width:100%; background:transparent; border:1px solid transparent; border-radius:10px; padding:10px 12px; color:var(--ink); cursor:pointer; font:inherit; text-decoration:none; }
+  .client:hover { background:var(--panel2); }
+  .client.selected { background:rgba(47,129,247,.16); border-color:rgba(47,129,247,.55); }
+  .client .who { font-weight:600; display:flex; align-items:center; gap:8px; }
+  .client .meta { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px; }
+  .badge { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; background:#3ecf8e; color:#06271a; border-radius:999px; padding:1px 7px; }
+  .empty { margin:auto; padding:20px; text-align:center; color:var(--muted); font-size:13px; }
+  .empty a { color:var(--accent); }
+  main.stage { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; }
+  .toolbar { display:flex; align-items:center; gap:10px; min-height:38px; padding:6px 12px; background:var(--panel); border-bottom:1px solid var(--line); font-size:11px; white-space:nowrap; }
+  .status { flex:0 0 auto; color:var(--muted); }
+  .stats { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; color:var(--muted); }
+  .page-link { flex:0 0 auto; max-width:22vw; overflow:hidden; text-overflow:ellipsis; color:var(--accent); }
+  .btn { flex:0 0 auto; font:inherit; font-size:11px; border:0; border-radius:6px; padding:4px 8px; background:var(--accent); color:#fff; cursor:pointer; }
+  .placeholder { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:var(--muted); padding:30px; }
+  .placeholder h1 { color:var(--ink); font-size:20px; margin:0 0 8px; }
+  .viewer { flex:1; min-height:0; overflow:auto; background:#fff; }
+  .viewer iframe { border:0; display:block; background:#fff; }
+  body.viewer-only .sidebar { display:none; }
+  body.viewer-only > .topbar { min-height:32px; padding:4px 8px; }
+  body.viewer-only > .topbar .brand, body.viewer-only > .topbar .spacer { display:none; }
+  body.viewer-only .toolbar { min-height:30px; padding:4px 8px; }
+  body.viewer-only .status, body.viewer-only #stop-btn { display:none; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">rrweb remote access</div>
+  <div class="conn" id="conn-state">connecting…</div>
+  <div class="spacer"></div>
+  <a class="link" href="test-page" target="_blank" rel="noopener">Open test page</a>
+</header>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-head"><span>Connected pages</span><span class="count" id="client-count">0</span></div>
+    <div class="clients" id="clients"></div>
+    <div class="empty" id="empty">No pages connected yet.<br><a href="test-page" target="_blank" rel="noopener">Open the test page</a></div>
+  </aside>
+  <main class="stage">
+    <div class="toolbar" id="toolbar" hidden>
+      <div class="stats" id="stats"></div>
+      <a class="page-link" id="page-link" target="_blank" rel="noopener" hidden></a>
+      <div class="status" id="status"></div>
+      <button class="btn" id="stop-btn" type="button">Stop watching</button>
+    </div>
+    <div class="placeholder" id="placeholder">
+      <h1>Select a connected page</h1>
+      <p>Click a page on the left to watch it.<br>If remote control is enabled you can interact with the live clone.</p>
+    </div>
+    <div class="viewer" id="viewer" hidden></div>
+  </main>
+</div>
+<script type="module" src="rc/main.js"></script>
+</body>
+</html>

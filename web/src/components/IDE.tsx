@@ -45,7 +45,7 @@ import SessionTabs from './SessionTabs'
 import { navigateToSession, type SessionChoice } from '../lib/sessionNav'
 import { useTerminals } from '../hooks/useTerminals'
 import { useDap } from '../hooks/useDap'
-import { workspaceUrl, rawFileUrl } from '../api'
+import { basePath, workspaceUrl, rawFileUrl } from '../api'
 import { fileKey, parseFileKey, normalizeTabIdentity } from '../lib/fileKey'
 import { followTargetFromPeer, targetSelectionKey } from '../lib/followSelection'
 import { decodeCollabPointer, encodeCollabPointer } from '../lib/collabPointerDom'
@@ -84,6 +84,7 @@ export interface IDEProps {
   onUsernameChange: (name: string) => void
   role: string
   teacher?: boolean
+  rrControlMode?: string | null
   debug?: boolean
   collabContext?: string | null
   tabViewState?: string | null
@@ -104,13 +105,13 @@ export interface ContainerInfo {
   ownTab?: boolean
 }
 
-type ViewKind = 'files' | 'search' | 'code' | 'web' | 'git' | 'api' | 'settings' | 'log' | 'help' | 'terminals' | 'chat' | 'session-tabs'
+type ViewKind = 'files' | 'search' | 'code' | 'web' | 'git' | 'api' | 'settings' | 'log' | 'help' | 'terminals' | 'chat' | 'session-tabs' | 'rrcontrol'
 
 // The layout a fresh install starts with (and what "Reset view" restores).
 const DEFAULT_VISIBLE: Record<ViewKind, boolean> = {
   files: true, search: false, code: true, web: false, git: false, api: false,
   settings: false, log: false, help: false, terminals: false, chat: false,
-  'session-tabs': false,
+  'session-tabs': false, rrcontrol: false,
 }
 
 // Geometry of a `float` tab: it stays on top of the main container and is moved
@@ -297,11 +298,12 @@ interface FileReadResponse {
   size?: number
 }
 
-export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false, debug = false, collabContext = null, tabViewState = null }: IDEProps) {
+export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false, rrControlMode = null, debug = false, collabContext = null, tabViewState = null }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
   const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, isSet: uiScaleIsSet, enabled: uiScaleEnabled, setEnabled: setUiScaleEnabled, updateScale: updateUiScale } = useUiScale()
   const { isDark, toggle: toggleTheme } = useTheme()
+  const rrControlEnabled = rrControlMode !== null && rrControlMode !== 'off'
 
   // Single state object — the only source of truth for all IDE layout.
   // One setState call restores everything from the server, no race conditions.
@@ -380,7 +382,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       }
       if (lt.type === 'web') return lt.name
       // View tabs: name is the kind, entry ID is "view:kind"
-      if (lt.type === 'settings' || lt.type === 'git' || lt.type === 'help' ||
+      if (lt.type === 'settings' || lt.type === 'git' || lt.type === 'help' || lt.type === 'rrcontrol' ||
           lt.type === 'chat' || lt.type === 'session-tabs' || lt.type === 'code') {
         return `view:${lt.name}`
       }
@@ -514,7 +516,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         }
         if (lt.type === 'search' || lt.type === 'api' || lt.type === 'log' ||
             lt.type === 'term' || lt.type === 'settings' || lt.type === 'git' ||
-            lt.type === 'help' || lt.type === 'chat' || lt.type === 'session-tabs') continue
+            lt.type === 'help' || lt.type === 'chat' || lt.type === 'session-tabs' || lt.type === 'rrcontrol') continue
         const tab: Tab = { id: lt.id, path: fileKey(workspaceId, lt.name), name: lt.name, rel: lt.name, workspaceId }
         if (lt.type === 'browser') { tab.type = 'browser'; tab.url = lt.name }
         restoredTabs.push(tab)
@@ -684,6 +686,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         if (e.kind === 'help') return { id: tabId, type: 'help', name: 'help' }
         if (e.kind === 'chat') return { id: tabId, type: 'chat', name: 'chat' }
         if (e.kind === 'session-tabs') return { id: tabId, type: 'session-tabs', name: 'session-tabs' }
+        if (e.kind === 'rrcontrol') return { id: tabId, type: 'rrcontrol', name: 'rrcontrol' }
         if (e.kind === 'code') return { id: tabId, type: 'code', name: 'code' }
         return { id: tabId, type: e.kind || 'code', name: e.id }
       })
@@ -3152,6 +3155,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
           </div>
         )
       }
+      case 'rrcontrol':
+        return (
+          <div className="h-full flex items-center justify-center">
+            <button type="button" onClick={() => window.location.assign(`${basePath()}/remote-control`)}>
+              Open standalone RR Control
+            </button>
+          </div>
+        )
       case 'help':
         return <HelpView />
       case 'settings':
@@ -3331,6 +3342,10 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       onOpenSharedTab={(rel) => { void openFile({ path: rel, rel, workspaceId }) }}
       selfId={selfId}
       teacher={teacher}
+      onOpenRemoteControl={rrControlEnabled ? () => {
+        const viewer = window.open(`${basePath()}/remote-control`, '_blank')
+        if (viewer) viewer.opener = null
+      } : undefined}
       presenter={presenter}
       followTargetId={followTargetId}
       followMode={followMode}

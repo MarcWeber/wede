@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  X, LogOut, Moon, Sun, Monitor, Users,
+  X, LogOut, Moon, Sun, Monitor, MonitorPlay, Users,
   LayoutPanelLeft, ChevronDown, ChevronRight, RotateCcw,
   Eye, Radio, Scaling, MousePointer2, Boxes, FolderOpen,
 } from 'lucide-react'
@@ -239,6 +239,7 @@ export interface ViewMenuProps {
   onFollow?: (id: string, mode: 'open' | 'live') => void
   onUnfollow?: () => void
   onLeadChange?: (on: boolean) => void
+  onOpenRemoteControl?: () => void
 }
 
 // ViewMenu — the app menu. On desktop it is a persistent column attached to the
@@ -252,7 +253,7 @@ export default function ViewMenu({
   onResetView, flattenAvailable, onFlattenLayout, username, users, onOpenSharedTab,
   selfId, teacher = false, presenter = null,
   followTargetId = null, followMode = null,
-  onFollow, onUnfollow, onLeadChange,
+  onFollow, onUnfollow, onLeadChange, onOpenRemoteControl,
 }: ViewMenuProps) {
   const { themePreview } = useTheme()
   const [showPlacement, setShowPlacement] = useState(false)
@@ -305,6 +306,21 @@ export default function ViewMenu({
             slim={slim}
           />
         ))}
+
+        {teacher && onOpenRemoteControl && (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={onOpenRemoteControl}
+              title={slim ? 'RR Control' : undefined}
+              className={`w-full flex items-center gap-2.5 h-9 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors ${slim ? 'justify-center px-0' : 'pl-2.5 pr-3'}`}
+            >
+              <MonitorPlay className="w-3.5 h-3.5 shrink-0 text-text-muted" />
+              {!slim && <span className="text-[12px] font-medium truncate">RR Control</span>}
+            </button>
+          </>
+        )}
 
         {sharedTabsOpen && (
           <div className="mx-2 my-1 rounded-md border border-border bg-bg-primary/60 p-1.5">

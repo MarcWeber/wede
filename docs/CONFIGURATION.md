@@ -34,7 +34,9 @@ and run `wede` from any subdirectory of it, and it will still be found.
 | `password` | `string` | *(none)* | — | Legacy shared login password. Required only when `users` is empty. |
 | `users` | `map[string]string` | `{}` | — | Per-user passwords. When non-empty, each user signs in with their own entry; the legacy `password` is ignored. |
 | `min_password_chars` | `int` | `12` | — | Minimum length for plaintext `password`/`users` values. `0` disables the check. `sha256:` entries are skipped. |
+| `session_timeout_hours` | `int` | `24` | — | Absolute login-session lifetime from creation, not an idle timeout. |
 | `token_link_login` | `string` | `off` | — | Allow file-backed login links: `remove` consumes the token file, `keep` allows reuse, `off` disables this feature. |
+| `rrcontrol` | `string` | `no` | — | Enable rrweb remote access: `no` permits teacher viewing only, `ask` asks the connected page for consent, `yes` permits control, `off` disables the feature. |
 | `teachers` | `string[]` | `[]` | — | Usernames allowed to start a forced-follow “Lead the rest” session. |
 | `workspaces` | `map[string]template` | `{}` | — | Named workspace templates offered in the login workspace picker. |
 | `defaults.workspace_timeout_secs` | `int` | `600` | — | Idle timeout after the last user leaves a session. `0` never expires. |
@@ -113,6 +115,13 @@ weak passwords even when they satisfy the minimum length.
 }
 ```
 
+## `session_timeout_hours`
+
+Default `24`. This is the absolute lifetime of a login session from when it is
+created; activity does not extend it. Set a positive number of hours to change
+the lifetime. Existing sessions are checked against the configured duration,
+including after a hot config reload.
+
 ## `token_link_login`
 
 Default `off`. Set this to `remove` or `keep` to allow a URL containing
@@ -152,6 +161,26 @@ cannot be claimed through a link. The username is still a user-chosen display
 name, not a separate account identity. Use HTTPS and avoid logging or sharing
 the full URL: the application removes the token from browser history as soon as
 it starts the exchange.
+
+## `rrcontrol`
+
+Default `no`. The rrweb remote-access dashboard is available as a teacher-only
+IDE tab while the feature is enabled. Its page assets and client script are
+embedded in the Wede binary; support WebSocket connections are independently
+authenticated and rejected unless the logged-in user is a teacher.
+
+| Value | Behavior |
+|-------|----------|
+| `off` | Disable the client script, dashboard, and tab. |
+| `no` | Allow teachers to watch connected pages, but not control them; this is the default. |
+| `ask` | Ask each connected page for consent before recording; remote control stays disabled. |
+| `yes` | Allow teachers to watch and control connected pages without a consent prompt. |
+
+Each authenticated browser tab has a stable `tab_id`, while `who` is a
+changeable display name. Wede sets `who` to the logged-in username after login,
+so the tab identity stays stable while the displayed user name is corrected.
+Setting `rrcontrol` through a `--configs rrcontrol:hot:...` layer applies the
+mode change without restarting the server.
 
 ## `workspaces`
 

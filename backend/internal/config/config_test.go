@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseDefaults(t *testing.T) {
@@ -30,6 +31,31 @@ func TestParseDefaults(t *testing.T) {
 	if cfg.TokenLinkLogin != "off" {
 		t.Errorf("TokenLinkLogin = %q, want default off", cfg.TokenLinkLogin)
 	}
+	if cfg.RRControl != "no" {
+		t.Errorf("RRControl = %q, want default no", cfg.RRControl)
+	}
+	if cfg.SessionTimeoutHours != 24 {
+		t.Errorf("SessionTimeoutHours = %d, want default 24", cfg.SessionTimeoutHours)
+	}
+}
+
+func TestParseSessionTimeoutHours(t *testing.T) {
+	cfg, err := parse([]byte(`{"password":"x","session_timeout_hours":48}`))
+	if err != nil {
+		t.Fatalf("parse session timeout: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("parse returned nil config")
+	}
+	if cfg.SessionTimeoutHours != 48 || cfg.SessionTimeout() != 48*time.Hour {
+		t.Fatalf("session timeout = %d hours / %s, want 48 hours", cfg.SessionTimeoutHours, cfg.SessionTimeout())
+	}
+	if cfg, err := parse([]byte(`{"password":"x","session_timeout_hours":0}`)); err != nil || cfg.SessionTimeoutHours != 24 {
+		t.Fatalf("zero session timeout should use default 24 hours; config=%+v err=%v", cfg, err)
+	}
+	if _, err := parse([]byte(`{"password":"x","session_timeout_hours":-1}`)); err == nil {
+		t.Fatal("expected negative session timeout to be rejected")
+	}
 }
 
 func TestParseTokenLinkLoginModes(t *testing.T) {
@@ -46,6 +72,23 @@ func TestParseTokenLinkLoginModes(t *testing.T) {
 	}
 	if _, err := parse([]byte(`{"password":"x","token_link_login":"yes"}`)); err == nil {
 		t.Fatal("expected invalid token_link_login mode to be rejected")
+	}
+}
+
+func TestParseRRControlModes(t *testing.T) {
+	for _, mode := range []string{"off", "ask", "no", "yes"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, err := parse([]byte(`{"password":"x","rrcontrol":"` + mode + `"}`))
+			if err != nil {
+				t.Fatalf("parse rrcontrol %q: %v", mode, err)
+			}
+			if cfg.RRControl != mode {
+				t.Errorf("RRControl = %q, want %q", cfg.RRControl, mode)
+			}
+		})
+	}
+	if _, err := parse([]byte(`{"password":"x","rrcontrol":"maybe"}`)); err == nil {
+		t.Fatal("expected invalid rrcontrol mode to be rejected")
 	}
 }
 

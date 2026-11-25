@@ -33,28 +33,35 @@ interface RedeemResponse {
   teacher?: boolean
 }
 
+const AUTH_STORAGE_KEYS = ['wede_token', 'wede_username', 'wede_role', 'wede_teacher'] as const
+type AuthStorageKey = (typeof AUTH_STORAGE_KEYS)[number]
+
+function readAuthValue(key: AuthStorageKey): string | null {
+  return localStorage.getItem(key) || sessionStorage.getItem(key)
+}
+
+function writeAuthValue(key: AuthStorageKey, value: string): void {
+  localStorage.setItem(key, value)
+  sessionStorage.removeItem(key)
+}
+
+function clearAuthValues(): void {
+  for (const key of AUTH_STORAGE_KEYS) {
+    localStorage.removeItem(key)
+    sessionStorage.removeItem(key)
+  }
+}
+
 // SECURITY NOTE — session token storage.
 //
-// The session token is kept in sessionStorage (per-tab, not shared across tabs)
-// so that two users on the same browser can each open their own tab and log in
-// independently without kicking the other out. The token is readable by
-// WebSocket clients (terminal/collab/chat) that pass it as an "auth.<token>"
-// subprotocol. The downside is that any successful XSS could read it. The
-// primary stored-XSS vector (rendering collaborators' markdown) is now closed by
-// sanitizing with DOMPurify in MarkdownPreview, so a token-stealing payload can
-// no longer be planted via file content.
-//
-// The robust fix is to move the token to an HttpOnly, SameSite cookie so JS can
-// never read it. That is a backend change (Set-Cookie on login/redeem, read the
-// cookie in auth.Middleware, clear it on logout, and switch the WS handshake to
-// cookie auth) and is tracked as follow-up work; it is intentionally not done in
-// this change to avoid destabilizing the WS auth path. Until then, keep the XSS
-// surface minimal (DOMPurify above) and treat the token as sensitive.
+// Authentication is shared across tabs in localStorage. Workspace/session
+// selection remains tab-specific. The token is readable by WebSocket clients
+// that pass it as an "auth.<token>" subprotocol, so treat it as sensitive.
 export function useAuth() {
-  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem('wede_token'))
-  const [username, setUsername] = useState<string>(() => sessionStorage.getItem('wede_username') || '')
-  const [role, setRole] = useState<string>(() => sessionStorage.getItem('wede_role') || '')
-  const [teacher, setTeacher] = useState<boolean>(() => sessionStorage.getItem('wede_teacher') === '1')
+  const [token, setToken] = useState<string | null>(() => readAuthValue('wede_token'))
+  const [username, setUsername] = useState<string>(() => readAuthValue('wede_username') || '')
+  const [role, setRole] = useState<string>(() => readAuthValue('wede_role') || '')
+  const [teacher, setTeacher] = useState<boolean>(() => readAuthValue('wede_teacher') === '1')
   const [error, setError] = useState<string | null>(null)
   const [locked, setLocked] = useState(false)
   // Undefined until the server reports a count, so the login form does not
@@ -62,11 +69,18 @@ export function useAuth() {
   const [remaining, setRemaining] = useState<number | undefined>(undefined)
   const [debug, setDebug] = useState(false) // server debug mode (server-log + client-log)
 
-  // On mount: confirm role from /api/auth/check so a persisted viewer/editor
-  // session gets the correct role even after a page reload.
+  // Migrate credentials from the former per-tab storage to shared browser storage.
+  useEffect(() => {
+    for (const key of AUTH_STORAGE_KEYS) {
+      const current = localStorage.getItem(key)
+      const previous = sessionStorage.getItem(key)
+      if (!current && previous) localStorage.setItem(key, previous)
+      sessionStorage.removeItem(key)
+    }
+  }, [])
 
   useEffect(() => {
-    const t = sessionStorage.getItem('wede_token')
+    const t = localStorage.getItem('wede_token')
     if (!t) return
     fetch(`${apiBase()}/auth/check`, { headers: { Authorization: t } })
       .then(r => r.json())
@@ -75,15 +89,12 @@ export function useAuth() {
         setDebug(!!data.debug)
         if (data.authenticated && data.role) {
           setRole(data.role)
-          sessionStorage.setItem('wede_role', data.role)
+          writeAuthValue('wede_role', data.role)
           setTeacher(!!data.teacher)
-          sessionStorage.setItem('wede_teacher', data.teacher ? '1' : '0')
+          writeAuthValue('wede_teacher', data.teacher ? '1' : '0')
         } else if (!data.authenticated) {
           // Session expired server-side; clear stored credentials.
-          sessionStorage.removeItem('wede_token')
-          sessionStorage.removeItem('wede_username')
-          sessionStorage.removeItem('wede_role')
-          sessionStorage.removeItem('wede_teacher')
+          clearAuthValues()
           setToken(null)
           setUsername('')
           setRole('')
@@ -92,6 +103,18 @@ export function useAuth() {
       })
       .catch(() => {})
   }, []) // intentionally run once on mount only
+
+  useEffect(() => {
+    const syncAuth = (event: StorageEvent) => {
+      if (event.key !== null && !AUTH_STORAGE_KEYS.includes(event.key as AuthStorageKey)) return
+      setToken(localStorage.getItem('wede_token'))
+      setUsername(localStorage.getItem('wede_username') || '')
+      setRole(localStorage.getItem('wede_role') || '')
+      setTeacher(localStorage.getItem('wede_teacher') === '1')
+    }
+    window.addEventListener('storage', syncAuth)
+    return () => window.removeEventListener('storage', syncAuth)
+  }, [])
 
 
   const login = useCallback(async (password: string, name = ''): Promise<boolean> => {
@@ -115,17 +138,17 @@ export function useAuth() {
         return false
       }
       if (data.token) {
-        sessionStorage.setItem('wede_token', data.token)
+        writeAuthValue('wede_token', data.token)
         sessionStorage.removeItem('wede_session_id')
         setToken(data.token)
         const resolved = data.username || name || ''
-        sessionStorage.setItem('wede_username', resolved)
+        writeAuthValue('wede_username', resolved)
         setUsername(resolved)
         const resolvedRole = data.role || 'owner'
-        sessionStorage.setItem('wede_role', resolvedRole)
+        writeAuthValue('wede_role', resolvedRole)
         setRole(resolvedRole)
         const resolvedTeacher = !!data.teacher
-        sessionStorage.setItem('wede_teacher', resolvedTeacher ? '1' : '0')
+        writeAuthValue('wede_teacher', resolvedTeacher ? '1' : '0')
         setTeacher(resolvedTeacher)
         setLocked(false)
         setRemaining(undefined)
@@ -152,17 +175,17 @@ export function useAuth() {
         setError('This login link is invalid, expired, or disabled.')
         return false
       }
-      sessionStorage.setItem('wede_token', data.token)
+      writeAuthValue('wede_token', data.token)
       sessionStorage.removeItem('wede_session_id')
       setToken(data.token)
       const resolved = data.username || name || ''
-      sessionStorage.setItem('wede_username', resolved)
+      writeAuthValue('wede_username', resolved)
       setUsername(resolved)
       const resolvedRole = data.role || 'editor'
-      sessionStorage.setItem('wede_role', resolvedRole)
+      writeAuthValue('wede_role', resolvedRole)
       setRole(resolvedRole)
       const resolvedTeacher = !!data.teacher
-      sessionStorage.setItem('wede_teacher', resolvedTeacher ? '1' : '0')
+      writeAuthValue('wede_teacher', resolvedTeacher ? '1' : '0')
       setTeacher(resolvedTeacher)
       setLocked(false)
       setRemaining(undefined)
@@ -185,17 +208,17 @@ export function useAuth() {
       if (!res.ok) return false
       const data: RedeemResponse = await res.json()
       if (data.token) {
-        sessionStorage.setItem('wede_token', data.token)
+        writeAuthValue('wede_token', data.token)
         sessionStorage.removeItem('wede_session_id')
         setToken(data.token)
         const resolved = data.username || ''
-        sessionStorage.setItem('wede_username', resolved)
+        writeAuthValue('wede_username', resolved)
         setUsername(resolved)
         const resolvedRole = data.role || 'viewer'
-        sessionStorage.setItem('wede_role', resolvedRole)
+        writeAuthValue('wede_role', resolvedRole)
         setRole(resolvedRole)
         const resolvedTeacher = !!data.teacher
-        sessionStorage.setItem('wede_teacher', resolvedTeacher ? '1' : '0')
+        writeAuthValue('wede_teacher', resolvedTeacher ? '1' : '0')
         setTeacher(resolvedTeacher)
         return true
       }
@@ -206,13 +229,11 @@ export function useAuth() {
   }, [])
 
   const logout = useCallback(() => {
-    const t = sessionStorage.getItem('wede_token')
-    sessionStorage.removeItem('wede_token')
-    sessionStorage.removeItem('wede_username')
-    sessionStorage.removeItem('wede_role')
-    sessionStorage.removeItem('wede_teacher')
+    const t = readAuthValue('wede_token')
+    clearAuthValues()
     sessionStorage.removeItem('wede_session_id')
     setToken(null)
+    setUsername('')
     setRole('')
     setTeacher(false)
     if (t) {
@@ -240,8 +261,11 @@ export function useAuth() {
     const v = (name || '').trim()
     setUsername(v)
     try {
-      if (v) sessionStorage.setItem('wede_username', v)
-      else sessionStorage.removeItem('wede_username')
+      if (v) writeAuthValue('wede_username', v)
+      else {
+        localStorage.removeItem('wede_username')
+        sessionStorage.removeItem('wede_username')
+      }
     } catch { /* ignore */ }
   }, [])
 

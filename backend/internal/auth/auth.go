@@ -49,7 +49,7 @@ func GetUsername(r *http.Request) string {
 	return ""
 }
 
-// sessionEntry holds a token's creation timestamp for idle-TTL enforcement, the
+// sessionEntry holds a token's creation timestamp for absolute-TTL enforcement, the
 // display username chosen at (or after) login, and the session's role.
 type sessionEntry struct {
 	CreatedAt time.Time `json:"created_at"`
@@ -73,7 +73,7 @@ func sanitizeUsername(s string) string {
 	return s
 }
 
-// SessionTTL is the idle lifetime of a session token (24 hours).
+// SessionTTL is the default absolute lifetime of a session token (24 hours).
 const SessionTTL = 24 * time.Hour
 
 // defaultMaxAttempts is the number of wrong owner-password attempts allowed per
@@ -115,6 +115,7 @@ type Handler struct {
 	attempts      map[string]clientAttempt // client address -> failures
 	maxAttempts   int
 	lockoutWindow time.Duration
+	sessionTTL    time.Duration
 	sessions      map[string]sessionEntry
 	tokens        map[string]shareToken
 	dataDir       string
@@ -124,21 +125,35 @@ type Handler struct {
 }
 
 func New(password string) *Handler {
+	return NewWithSessionTTL(password, SessionTTL)
+}
+
+// NewWithSessionTTL creates a Handler using ttl for persisted and active sessions.
+func NewWithSessionTTL(password string, ttl time.Duration) *Handler {
 	home, _ := os.UserHomeDir()
 	dataDir := filepath.Join(home, ".wede")
-	return NewWithDataDir(password, dataDir)
+	return NewWithDataDirAndSessionTTL(password, dataDir, ttl)
 }
 
 // NewWithDataDir creates a Handler that stores sessions, tokens, and lockout state
 // in dir instead of the default ~/.wede. Useful when the storage location must be
 // explicitly controlled (e.g. tests, alternate deployment paths).
 func NewWithDataDir(password, dir string) *Handler {
+	return NewWithDataDirAndSessionTTL(password, dir, SessionTTL)
+}
+
+// NewWithDataDirAndSessionTTL creates a Handler with explicit storage and session lifetime.
+func NewWithDataDirAndSessionTTL(password, dir string, ttl time.Duration) *Handler {
+	if ttl <= 0 {
+		ttl = SessionTTL
+	}
 	os.MkdirAll(dir, 0700)
 	h := &Handler{
 		password:      password,
 		tokenLinkMode: "off",
 		maxAttempts:   defaultMaxAttempts,
 		lockoutWindow: defaultLockoutWindow,
+		sessionTTL:    ttl,
 		attempts:      make(map[string]clientAttempt),
 		sessions:      make(map[string]sessionEntry),
 		tokens:        make(map[string]shareToken),
@@ -171,7 +186,7 @@ func (h *Handler) loadSessions() {
 	if json.Unmarshal(data, &stored) == nil {
 		now := time.Now()
 		for k, e := range stored {
-			if now.Sub(e.CreatedAt) < SessionTTL {
+			if now.Sub(e.CreatedAt) < h.sessionTTL {
 				h.sessions[k] = e
 			}
 		}
@@ -270,11 +285,11 @@ func lockoutMessage(wait time.Duration) string {
 	return fmt.Sprintf("Too many failed attempts from this address. Try again in %dm.", (secs+59)/60)
 }
 
-// pruneExpired removes sessions whose idle TTL has elapsed. mu must be held.
+// pruneExpired removes sessions whose absolute TTL has elapsed. mu must be held.
 func (h *Handler) pruneExpired() {
 	now := time.Now()
 	for k, e := range h.sessions {
-		if now.Sub(e.CreatedAt) >= SessionTTL {
+		if now.Sub(e.CreatedAt) >= h.sessionTTL {
 			delete(h.sessions, k)
 		}
 	}
@@ -289,7 +304,7 @@ func (h *Handler) validSession(token string) bool {
 	if !ok {
 		return false
 	}
-	if time.Since(e.CreatedAt) >= SessionTTL {
+	if time.Since(e.CreatedAt) >= h.sessionTTL {
 		delete(h.sessions, key)
 		return false
 	}
@@ -578,7 +593,7 @@ func (h *Handler) newSession(username string, role Role) string {
 func (h *Handler) Role(token string) Role {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if e, ok := h.sessions[hashToken(token)]; ok && time.Since(e.CreatedAt) < SessionTTL {
+	if e, ok := h.sessions[hashToken(token)]; ok && time.Since(e.CreatedAt) < h.sessionTTL {
 		return normalizeRole(e.Role)
 	}
 	return ""
@@ -648,7 +663,7 @@ func (h *Handler) IsAuthenticated(r *http.Request) bool {
 func (h *Handler) Username(token string) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if e, ok := h.sessions[hashToken(token)]; ok && time.Since(e.CreatedAt) < SessionTTL {
+	if e, ok := h.sessions[hashToken(token)]; ok && time.Since(e.CreatedAt) < h.sessionTTL {
 		return e.Username
 	}
 	return ""
@@ -830,6 +845,18 @@ func (h *Handler) SetDebug(debug bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.debug = debug
+}
+
+// SetSessionTTL updates the session lifetime during a config reload.
+func (h *Handler) SetSessionTTL(ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = SessionTTL
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.sessionTTL = ttl
+	h.pruneExpired()
+	h.saveSessions()
 }
 
 // SetUsers updates the per-user password map and revokes sessions for users

@@ -36,6 +36,7 @@ and run `wede` from any subdirectory of it, and it will still be found.
 | `password` | `string` | *(none)* | — | Legacy shared login password. Required only when `users` is empty. |
 | `users` | `map[string]string` | `{}` | — | Per-user passwords. When non-empty, each user signs in with their own entry; the legacy `password` is ignored. |
 | `min_password_chars` | `int` | `12` | — | Minimum length for plaintext `password`/`users` values. `0` disables the check. `sha256:` entries are skipped. |
+| `session_timeout_hours` | `int` | `24` | — | Absolute login-session lifetime from creation, not an idle timeout. |
 | `token_link_login` | `string` | `off` | — | Allow file-backed login links: `remove` consumes the token file, `keep` allows reuse, `off` disables this feature. |
 | `teachers` | `string[]` | `[]` | — | Usernames allowed to start a forced-follow “Lead the rest” session. |
 | `workspaces` | `map[string]template` | `{}` | — | Named workspace templates offered in the login workspace picker. |
@@ -114,6 +115,13 @@ weak passwords even when they satisfy the minimum length.
   "min_password_chars": 12
 }
 ```
+
+## `session_timeout_hours`
+
+Default `24`. This is the absolute lifetime of a login session from when it is
+created; activity does not extend it. Set a positive number of hours to change
+the lifetime. Existing sessions are checked against the configured duration,
+including after a hot config reload.
 
 ## `token_link_login`
 

@@ -1,5 +1,8 @@
 node_modules/
 dist/
+!backend/rrcontrol/dist/
+backend/rrcontrol/dist/*
+!backend/rrcontrol/dist/.keep
 backend/cmd/wede/dist/
 backend/cmd/wede/site/
 .env

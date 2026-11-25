@@ -17,7 +17,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            backend/rrcontrol/frontend/package-lock.json
 
       - uses: actions/setup-go@v5
         with:
@@ -53,6 +55,10 @@ jobs:
         working-directory: web
 
       - run: npm run build
+        working-directory: web
+
+      - name: Build RR control assets
+        run: npm run build:rrcontrol
         working-directory: web
 
       # `npm run build` exiting 0 proves nothing about whether the bundle RUNS.

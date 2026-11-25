@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rrweb test page</title>
+<style>
+  :root { --accent:#2f81f7; --bg:#f4f6fb; --card:#fff; --ink:#1c2333; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; color:var(--ink); background:var(--bg); }
+  header { padding:22px 28px; background:linear-gradient(120deg,#2f81f7,#7b5cff); color:#fff; }
+  header h1 { margin:0; font-size:22px; }
+  header p { margin:4px 0 0; opacity:.85; font-size:13px; }
+  main { max-width:980px; margin:0 auto; padding:24px 20px 80px; display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); }
+  .card { background:var(--card); border-radius:14px; padding:18px; box-shadow:0 8px 24px rgba(20,30,60,.07); }
+  .card h2 { margin:0 0 12px; font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:#5a6478; }
+  button { font:inherit; cursor:pointer; border:0; border-radius:9px; padding:8px 14px; background:var(--accent); color:#fff; }
+  button.ghost { background:#e9edf7; color:#2b3a55; }
+  button.danger { background:#e5484d; }
+  input[type=text], input[type=number], select { font:inherit; padding:8px 10px; border:1px solid #ccd4e6; border-radius:9px; width:100%; }
+  .row { display:flex; gap:10px; align-items:center; }
+  .row > * { flex:0 0 auto; }
+  .row > input[type=text] { flex:1 1 auto; }
+  .counter { font-size:42px; font-weight:700; margin:6px 0 12px; font-variant-numeric:tabular-nums; }
+  .mirror { margin-top:10px; padding:10px 12px; background:#eef3ff; border-radius:9px; min-height:42px; word-break:break-word; }
+  .swatches { display:flex; gap:8px; margin-bottom:12px; }
+  .swatch { width:34px; height:34px; border-radius:50%; cursor:pointer; border:2px solid transparent; }
+  .swatch.active { border-color:#1c2333; }
+  .colorbox { height:90px; border-radius:12px; transition:background .25s; }
+  .progress { height:12px; background:#e6ebf5; border-radius:999px; overflow:hidden; }
+  .progress > div { height:100%; width:30%; background:var(--accent); transition:width .15s; }
+  ul.todos { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+  ul.todos li { display:flex; gap:10px; align-items:center; background:#f4f6fb; border-radius:9px; padding:8px 10px; }
+  ul.todos li span { flex:1; }
+  ul.todos li.done span { text-decoration:line-through; opacity:.55; }
+  .clock { font-size:30px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .muted { color:#7a8499; font-size:13px; }
+  dialog { border:0; border-radius:16px; padding:22px; box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  dialog::backdrop { background:rgba(20,30,60,.4); }
+  .feed { max-height:150px; overflow:auto; font:12px/1.6 ui-monospace,monospace; background:#0f1729; color:#9fe3b0; border-radius:9px; padding:10px; }
+  label.check { display:flex; gap:8px; align-items:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>rrweb remote access — test page</h1>
+  <p>This page loads <code>script.js?who=visitor-1</code>. Interact with it, then watch it from <a href="remote-control" style="color:#fff">remote-control</a>.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Counter</h2>
+    <div class="counter" id="counter">0</div>
+    <div class="row">
+      <button id="dec" class="ghost">−</button>
+      <button id="inc">+</button>
+      <input id="step" type="number" value="1" min="1" style="width:90px">
+      <button id="reset" class="ghost">reset</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Live text mirror</h2>
+    <input id="text" type="text" placeholder="Type something…">
+    <div class="mirror" id="mirror">…</div>
+  </section>
+
+  <section class="card">
+    <h2>Todo list</h2>
+    <div class="row" style="margin-bottom:12px">
+      <input id="todo-input" type="text" placeholder="New item">
+      <button id="todo-add">Add</button>
+    </div>
+    <ul class="todos" id="todos"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Theme colour</h2>
+    <div class="swatches" id="swatches">
+      <div class="swatch active" data-color="#2f81f7" style="background:#2f81f7"></div>
+      <div class="swatch" data-color="#12b981" style="background:#12b981"></div>
+      <div class="swatch" data-color="#f59e0b" style="background:#f59e0b"></div>
+      <div class="swatch" data-color="#e5484d" style="background:#e5484d"></div>
+      <div class="swatch" data-color="#7b5cff" style="background:#7b5cff"></div>
+    </div>
+    <div class="colorbox" id="colorbox" style="background:#2f81f7"></div>
+  </section>
+
+  <section class="card">
+    <h2>Slider &amp; select</h2>
+    <input id="range" type="range" min="0" max="100" value="30" style="width:100%">
+    <div class="progress" style="margin:12px 0"><div id="range-fill"></div></div>
+    <select id="mood">
+      <option>happy</option>
+      <option>curious</option>
+      <option>sleepy</option>
+    </select>
+    <div class="mirror" id="mood-out">mood: happy</div>
+  </section>
+
+  <section class="card">
+    <h2>Clock</h2>
+    <div class="clock" id="clock">--:--:--</div>
+    <p class="muted">Updated every second to keep the DOM busy.</p>
+  </section>
+
+  <section class="card">
+    <h2>Dynamic content</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button id="add-row">Append row</button>
+      <button id="clear-rows" class="ghost">Clear</button>
+    </div>
+    <div id="rows" style="display:grid;gap:6px"></div>
+  </section>
+
+  <section class="card">
+    <h2>Modal &amp; form</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button id="open-modal">Open modal</button>
+    </div>
+    <label class="check"><input type="checkbox" id="toggle-panel"> show extra panel</label>
+    <div id="extra-panel" hidden class="mirror">Extra panel is visible.</div>
+    <dialog id="modal">
+      <h3 style="margin-top:0">A modal</h3>
+      <p>This dialog is part of the DOM and should be mirrored.</p>
+      <div class="row" style="justify-content:flex-end">
+        <button id="close-modal" class="ghost">Close</button>
+      </div>
+    </dialog>
+  </section>
+
+  <section class="card">
+    <h2>Event feed</h2>
+    <div class="feed" id="feed"></div>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const feed = $('feed');
+  function log(msg) {
+    const line = document.createElement('div');
+    line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+    feed.prepend(line);
+    while (feed.childElementCount > 80) feed.lastElementChild.remove();
+  }
+
+  let count = 0;
+  $('inc').onclick = () => { count += Number($('step').value) || 1; $('counter').textContent = count; log('increment'); };
+  $('dec').onclick = () => { count -= Number($('step').value) || 1; $('counter').textContent = count; log('decrement'); };
+  $('reset').onclick = () => { count = 0; $('counter').textContent = '0'; log('reset'); };
+
+  $('text').addEventListener('input', (e) => {
+    $('mirror').textContent = e.target.value || '…';
+  });
+
+  function addTodo(text) {
+    const li = document.createElement('li');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.onchange = () => li.classList.toggle('done', cb.checked);
+    const span = document.createElement('span');
+    span.textContent = text;
+    const del = document.createElement('button');
+    del.className = 'danger';
+    del.textContent = '×';
+    del.onclick = () => { li.remove(); log('todo removed'); };
+    li.append(cb, span, del);
+    $('todos').appendChild(li);
+  }
+  addTodo('Try remote control');
+  addTodo('Watch the replay');
+  $('todo-add').onclick = () => {
+    const v = $('todo-input').value.trim();
+    if (!v) return;
+    addTodo(v);
+    $('todo-input').value = '';
+    log('todo added');
+  };
+  $('todo-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('todo-add').click();
+  });
+
+  document.querySelectorAll('.swatch').forEach((sw) => {
+    sw.onclick = () => {
+      document.querySelectorAll('.swatch').forEach((s) => s.classList.remove('active'));
+      sw.classList.add('active');
+      $('colorbox').style.background = sw.dataset.color;
+      log('theme ' + sw.dataset.color);
+    };
+  });
+
+  function syncRange() {
+    $('range-fill').style.width = $('range').value + '%';
+  }
+  $('range').addEventListener('input', syncRange);
+  syncRange();
+
+  $('mood').addEventListener('change', () => {
+    $('mood-out').textContent = 'mood: ' + $('mood').value;
+    log('mood changed');
+  });
+
+  setInterval(() => {
+    $('clock').textContent = new Date().toLocaleTimeString();
+  }, 1000);
+
+  let rowId = 0;
+  $('add-row').onclick = () => {
+    const d = document.createElement('div');
+    d.className = 'mirror';
+    d.textContent = 'dynamic row #' + ++rowId + ' — ' + Math.random().toString(36).slice(2, 8);
+    $('rows').appendChild(d);
+    log('row appended');
+  };
+  $('clear-rows').onclick = () => { $('rows').innerHTML = ''; log('rows cleared'); };
+
+  $('open-modal').onclick = () => { $('modal').showModal(); log('modal open'); };
+  $('close-modal').onclick = () => { $('modal').close(); log('modal close'); };
+  $('toggle-panel').onchange = () => {
+    $('extra-panel').hidden = !$('toggle-panel').checked;
+    log('panel toggled');
+  };
+
+  log('page ready');
+</script>
+<script src="script.js?who=visitor-1"></script>
+</body>
+</html>

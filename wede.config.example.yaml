@@ -1,0 +1,128 @@
+# wede configuration example — YAML format (comments are supported)
+# Copy to wede.config.yaml and adjust for your setup.
+
+# Branding name shown in the UI (default: "wede").
+# branding: "My IDE"
+
+# Minimum password length (0 to disable, default 12).
+min_password_chars: 12
+
+# Absolute login session lifetime in hours (default: 24; not an idle timeout).
+session_timeout_hours: 24
+
+# Login through a .wede_one_time_login_<token> file in the server's working
+# directory: remove consumes the file, keep allows reuse, off disables (default).
+# Empty token files do not expire; write YYYY-MM-DD or YYYY-MM-DD HH:mm to set
+# an inclusive expiry (24-hour, server local time).
+# http://.../&login_token=<token>&workspace=<workspace>:<collab>:<directory>
+token_link_login: keep
+
+# RR remote-access mode: off, no (watch only), ask (request consent), yes (control).
+rrcontrol: no
+
+# Global owner password (required if "users" is empty).
+# When "users" is configured, each user logs in with their own password.
+password: CHANGE_ME_BEFORE_USE
+
+# Optional per-user passwords. Keys are usernames, values are plain-text
+# passwords or "sha256:hex" hashed passwords. If present, users log in with
+# their own credentials instead of the global owner password.
+users:
+  marc: marc_password
+  alice: "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
+# Teachers can lead forced-follow collaboration sessions.
+teachers:
+  - teacher
+  - marc
+  - user
+  - bailo
+
+# Glob patterns for files/directories hidden in the FileExplorer.
+# Supports shell-style wildcards: * (any chars), ? (one char), [abc] (set).
+# Default patterns hide common noise and temp files.
+file_hide_patterns:
+  - .wede-collab-*
+  - .DS_Store
+  - .nfs*
+  - .svn
+  - node_modules
+  - dist
+  - build
+  - .next
+  - vendor
+  - .cache
+  - target
+
+
+port: "9090"
+
+# Host interface: "127.0.0.1" for localhost only, "0.0.0.0" for all interfaces.
+host: "127.0.0.1"
+
+# frame_ancestors: CSP header controlling which origins may embed wede in an
+# iframe. Empty (default) means 'self' — only the same origin can embed wede.
+# Set to "*" to allow any origin, or list specific origins like "https://example.com".
+frame_ancestors: ""
+
+# How image files are opened by default: "tab-viewer" (embed) or "external".
+view_image: tab-viewer
+
+# How PDF files are opened by default: "tab-pdf-js" (embed), "tab-choose", or "external".
+view_pdf: tab-pdf-js
+
+# Enable automatic tunnel creation for remote access.
+tunnel_enabled: false
+
+# Glob patterns for files/directories hidden in the FileExplorer.
+# Supports shell-style wildcards: * (any chars), ? (one char), [abc] (set).
+# Files matching any pattern are excluded from the file tree, Quick Open, and search.
+# Omit to show all files. Default patterns hide common noise and temp files.
+file_hide_patterns:
+  - .wede-collab-*
+  - .DS_Store
+  - .nfs*
+  - node_modules
+  - dist
+  - build
+  - .next
+  - vendor
+  - .cache
+  - target
+
+# Controls which tab types appear in the hamburger menu.
+# Set to false to hide a tab type. Omit the field to show all tabs.
+visible_tab_types:
+  files: true
+  search: true
+  code: true
+  terminals: true
+  web: true
+  git: true
+  api: true
+  log: true
+  help: true
+  chat: true
+  settings: true
+  session-tabs: true
+
+# Allow creating workspaces from arbitrary directory paths.
+workspace_allow_custom_directory: true
+
+# Workspace templates shown in the session picker.
+workspaces:
+  myproject:
+    path: /path/to/project
+    # open_to_anybody: if true, any authenticated user can see and join.
+    # If false (default), only users listed in visible_to can see it.
+    # If visible_to is empty and open_to_anybody is false, the workspace is hidden.
+    open_to_anybody: true
+    # visible_to: optional list of usernames allowed to see this workspace.
+    # Only checked when open_to_anybody is false.
+    # visible_to:
+    #   - marc
+    #   - alice
+    # visible_tab_types: override which tabs are shown for this workspace.
+    visible_tab_types:
+      terminals: false
+      api: false

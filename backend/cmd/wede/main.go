@@ -26,6 +26,7 @@ import (
 	"wede/backend/internal/trust"
 	"wede/backend/internal/tunnel"
 	"wede/backend/internal/workspace"
+	"wede/backend/rrcontrol"
 )
 
 // Version is injected at build time via -ldflags "-X main.Version=vX.Y.Z".
@@ -159,7 +160,17 @@ func main() {
 	// projects can be opened as further workspaces via /api/workspaces.
 	wsMgr := workspace.NewManager(cfg.FrameAncestors, cfg.WorkspaceRoot)
 
-	authHandler := auth.New(cfg.Password)
+	authHandler := auth.NewWithSessionTTL(cfg.Password, cfg.SessionTimeout())
+	rrControl, err := rrcontrol.New(rrcontrol.Options{
+		ControlMode:  cfg.RRControl,
+		Authenticate: authHandler.Middleware,
+		IsTeacher: func(r *http.Request) bool {
+			return auth.GetRole(r) == auth.RoleOwner || authHandler.IsTeacher(auth.GetUsername(r))
+		},
+	})
+	if err != nil {
+		log.Fatalf("rrcontrol config: %v", err)
+	}
 	tokenLinkDir, cwdErr := os.Getwd()
 	if cwdErr != nil {
 		log.Printf("token link login: could not determine working directory: %v", cwdErr)
@@ -168,7 +179,11 @@ func main() {
 	wsMgr.SetTeacherChecker(authHandler.IsTeacher)
 
 	applyConfig := func(c *config.Config) {
+		if err := rrControl.SetControlMode(c.RRControl); err != nil {
+			log.Printf("rrcontrol config reload: %v", err)
+		}
 		authHandler.SetCredentials(c.Password, c.Users)
+		authHandler.SetSessionTTL(c.SessionTimeout())
 		authHandler.SetTokenLinkLogin(c.TokenLinkLogin, tokenLinkDir)
 		authHandler.SetTeachers(c.Teachers)
 		authHandler.SetDebug(c.Debug)
@@ -218,8 +233,10 @@ func main() {
 			"view_image":                       c.ViewImage,
 			"view_pdf":                         c.ViewPdf,
 			"workspace_allow_custom_directory": c.WorkspaceAllowCustomDirectory,
+			"rrcontrol":                        c.RRControl,
 		})
 	})
+	registerRRControlRoutes(mux, rrControl.Handler())
 
 	// Public auth routes
 	mux.HandleFunc("POST /api/auth/login", authHandler.Login)
@@ -496,6 +513,22 @@ func main() {
 	if err := http.ListenAndServe(addr, securityHeaders(cfg, mux)); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func registerRRControlRoutes(mux *http.ServeMux, handler http.Handler) {
+	mux.Handle("/rrcontrol/", http.StripPrefix("/rrcontrol", handler))
+	redirect := func(target string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			location := target
+			if r.URL.RawQuery != "" {
+				location += "?" + r.URL.RawQuery
+			}
+			w.Header().Set("Location", location)
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		}
+	}
+	mux.HandleFunc("GET /remote-control", redirect("rrcontrol/remote-control"))
+	mux.HandleFunc("GET /test-page", redirect("rrcontrol/test-page"))
 }
 
 func templatesFrom(c *config.Config, bootPath string) map[string]workspace.Template {

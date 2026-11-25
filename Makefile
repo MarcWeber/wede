@@ -1,11 +1,14 @@
-.PHONY: check build test lint build-frontend build-backend notices dev run
+.PHONY: check build test lint build-frontend build-backend build-rrcontrol notices dev run
 
 # One verification gate — run at the end of every wave cycle.
 check:
 	@bash scripts/check.sh
 
 # Backend
-build-backend:
+build-rrcontrol:
+	cd backend/rrcontrol/frontend && npm ci --no-audit --no-fund && npm run build
+
+build-backend: build-rrcontrol
 	cd backend && go build ./...
 
 test:

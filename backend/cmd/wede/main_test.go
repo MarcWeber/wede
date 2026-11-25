@@ -65,6 +65,84 @@ func TestSecurityHeadersDefault(t *testing.T) {
 	}
 }
 
+func TestRRControlDashboardUsesStandaloneFrameProtection(t *testing.T) {
+	cfg := &config.Config{FrameAncestors: ""}
+	h := securityHeaders(cfg, okHandler())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rrcontrol/remote-control", nil))
+
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("X-Frame-Options = %q, want DENY", got)
+	}
+	if got, want := rec.Header().Get("Content-Security-Policy"), "frame-ancestors 'self'"; got != want {
+		t.Errorf("CSP = %q, want %q", got, want)
+	}
+}
+
+func TestTestPageRedirectPreservesProxyPrefixAndQuery(t *testing.T) {
+	mux := http.NewServeMux()
+	registerRRControlRoutes(mux, okHandler())
+	server := httptest.NewServer(http.StripPrefix("/foo", mux))
+	defer server.Close()
+
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	response, err := client.Get(server.URL + "/foo/test-page?case=local")
+	if err != nil {
+		t.Fatalf("GET test page: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusTemporaryRedirect)
+	}
+	location := response.Header.Get("Location")
+	if location != "rrcontrol/test-page?case=local" {
+		t.Fatalf("Location = %q, want relative test page URL", location)
+	}
+	resolved, err := response.Request.URL.Parse(location)
+	if err != nil {
+		t.Fatalf("resolve Location: %v", err)
+	}
+	if got, want := resolved.Path, "/foo/rrcontrol/test-page"; got != want {
+		t.Errorf("redirect path = %q, want %q", got, want)
+	}
+}
+
+func TestRemoteControlRedirectPreservesWatchAndProxyPrefix(t *testing.T) {
+	mux := http.NewServeMux()
+	registerRRControlRoutes(mux, okHandler())
+	server := httptest.NewServer(http.StripPrefix("/foo", mux))
+	defer server.Close()
+
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	requestURL := server.URL + "/foo/remote-control?watch=tab-123"
+	response, err := client.Get(requestURL)
+	if err != nil {
+		t.Fatalf("GET remote-control: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusTemporaryRedirect)
+	}
+	location := response.Header.Get("Location")
+	if location != "rrcontrol/remote-control?watch=tab-123" {
+		t.Fatalf("Location = %q, want relative RR dashboard URL", location)
+	}
+	resolved, err := response.Request.URL.Parse(location)
+	if err != nil {
+		t.Fatalf("resolve Location: %v", err)
+	}
+	if got, want := resolved.Path, "/foo/rrcontrol/remote-control"; got != want {
+		t.Errorf("redirect path = %q, want %q", got, want)
+	}
+	if got, want := resolved.Query().Get("watch"), "tab-123"; got != want {
+		t.Errorf("redirect watch = %q, want %q", got, want)
+	}
+}
+
 // TestRouteRoleGating is a regression integration test for audit findings H1 and M1:
 //
 //   - H1: LSP WebSocket (/api/workspaces/{id}/lsp) was ungated — a viewer could

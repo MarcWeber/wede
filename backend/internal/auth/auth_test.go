@@ -24,6 +24,36 @@ func newTestHandler(t *testing.T) *Handler {
 	return h
 }
 
+func TestConfiguredSessionTTLLoadsAndExpiresPersistedSessions(t *testing.T) {
+	dir := t.TempDir()
+	const token = "session-token-for-ttl-test"
+	h := NewWithDataDirAndSessionTTL("test-password", dir, 48*time.Hour)
+	h.mu.Lock()
+	h.sessions[hashToken(token)] = sessionEntry{
+		CreatedAt: time.Now().Add(-30 * time.Hour),
+		Username:  "alice",
+		Role:      RoleEditor,
+	}
+	h.saveSessions()
+	h.mu.Unlock()
+
+	restored := NewWithDataDirAndSessionTTL("test-password", dir, 48*time.Hour)
+	restored.mu.Lock()
+	valid := restored.validSession(token)
+	restored.mu.Unlock()
+	if !valid {
+		t.Fatal("session older than 24 hours should survive the configured 48-hour TTL")
+	}
+
+	restored.SetSessionTTL(24 * time.Hour)
+	restored.mu.Lock()
+	valid = restored.validSession(token)
+	restored.mu.Unlock()
+	if valid {
+		t.Fatal("session older than the reloaded 24-hour TTL should expire")
+	}
+}
+
 func login(t *testing.T, h *Handler, password, username string) map[string]any {
 	t.Helper()
 	body := `{"password":"` + password + `","username":"` + username + `"}`

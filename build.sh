@@ -38,6 +38,8 @@ kill_wede() {
 build_dev() {
   echo "=== Dev build: esbuild + Go (parallel, no embed) ==="
 
+  (cd backend/rrcontrol/frontend && npm ci --no-audit --no-fund && npm run build)
+
   # Frontend build in background
   (
     rm -rf web/dist && mkdir -p web/dist
