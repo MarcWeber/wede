@@ -83,6 +83,7 @@ export interface IDEProps {
   username: string
   onUsernameChange: (name: string) => void
   role: string
+  guest?: boolean
   teacher?: boolean
   rrControlMode?: string | null
   debug?: boolean
@@ -298,7 +299,7 @@ interface FileReadResponse {
   size?: number
 }
 
-export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, teacher = false, rrControlMode = null, debug = false, collabContext = null, tabViewState = null }: IDEProps) {
+export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, guest = false, teacher = false, rrControlMode = null, debug = false, collabContext = null, tabViewState = null }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
   const { scale: uiScale, orientation: uiOrientation, active: activeUiScale, isSet: uiScaleIsSet, enabled: uiScaleEnabled, setEnabled: setUiScaleEnabled, updateScale: updateUiScale } = useUiScale()
@@ -3028,7 +3029,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       case 'git':
         return <GitPanels authFetch={authFetch} workspaces={workspacesApi?.workspaces || []} workspaceId={workspaceId} visible readOnly={role === 'viewer'} onOpenGraph={openGitGraph} />
       case 'chat':
-        return <Chat workspaceId={workspaceId} workspaceName={(workspacesApi?.workspaces || []).find((w) => w.id === workspaceId)?.name} token={token} username={username} color={colorFromName(username)} />
+        return <Chat workspaceId={workspaceId} workspaceName={(workspacesApi?.workspaces || []).find((w) => w.id === workspaceId)?.name} token={token} username={username} color={colorFromName(username)} readOnly={guest && role === 'viewer'} />
       case 'session-tabs':
         return (
           <SessionTabs

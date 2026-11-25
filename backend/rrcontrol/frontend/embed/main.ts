@@ -4,8 +4,10 @@
 
 const here = new URL(import.meta.url);
 const serverOrigin = here.origin;
+const sessionKey = 'rrw_session_id';
+const identityKeys = ['rrweb-remote-access', 'rrweb_remote_access', 'tab_id'];
 let who = here.searchParams.get('who') || 'anonymous-' + randomId(4);
-const tabID = here.searchParams.get('tab_id') || randomId(16);
+let tabID = explicitIdentity() || storedIdentity() || '';
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -20,12 +22,45 @@ function randomId(len: number): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function explicitIdentity(): string | null {
+  for (const key of identityKeys) {
+    const value = here.searchParams.get(key) || new URL(location.href).searchParams.get(key);
+    if (value && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function storedIdentity(): string | null {
+  try {
+    const value = sessionStorage.getItem(sessionKey);
+    return value && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistIdentity(id: string): void {
+  if (!id) return;
+  tabID = id;
+  try {
+    sessionStorage.setItem(sessionKey, id);
+  } catch {
+    /* storage unavailable */
+  }
+  if ((window as any).__rrwebRemote) (window as any).__rrwebRemote.tabID = id;
+}
+
+persistIdentity(tabID);
+
 function socketUrl(): string {
   const proto = serverOrigin.startsWith('https:') ? 'wss:' : 'ws:';
   const url = new URL('../ws', here);
   url.protocol = proto;
   url.searchParams.set('role', 'client');
-  url.searchParams.set('tab_id', tabID);
+  if (tabID) {
+    url.searchParams.set('id', tabID);
+    url.searchParams.set('tab_id', tabID);
+  }
   url.searchParams.set('who', who);
   return url.toString();
 }
@@ -54,11 +89,18 @@ function connect(): void {
       return;
     }
     switch (msg.type) {
+      case 'identity':
+        if (typeof msg.id === 'string') persistIdentity(msg.id);
+        break;
       case 'watch-request':
         showInvite();
         break;
       case 'watch-start':
+        if (typeof msg.id === 'string') persistIdentity(msg.id);
         await startWatching(msg);
+        break;
+      case 'full-snapshot':
+        if (watching && recordMod) recordMod.takeFullSnapshot();
         break;
       case 'watch-stop':
         stopWatching();

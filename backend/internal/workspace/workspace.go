@@ -334,30 +334,31 @@ func (r *Workspace) shutdown() {
 
 // Manager owns the set of live workspaces. Safe for concurrent use.
 type Manager struct {
-	mu              sync.RWMutex
-	workspaces      map[string]*Workspace
-	order           []string // preserves creation order for stable listing
-	templates       map[string]Template
-	defaultTimeout  int
-	frameAncestors  string // threaded into per-workspace terminal/lsp origin checks
-	allowedRoot     string // base dir under which new workspaces may be created ("" = no restriction)
-	allowCustomDir  bool   // permit POST /api/workspaces from an arbitrary path
-	canLead         func(username string) bool
-	visibleTabTypes map[string]bool // global visible tab types from config
-	fileHidePatterns []string       // glob patterns for hidden files in explorer
+	mu               sync.RWMutex
+	workspaces       map[string]*Workspace
+	order            []string // preserves creation order for stable listing
+	templates        map[string]Template
+	defaultTimeout   int
+	frameAncestors   string // threaded into per-workspace terminal/lsp origin checks
+	allowedRoot      string // base dir under which new workspaces may be created ("" = no restriction)
+	allowCustomDir   bool   // permit POST /api/workspaces from an arbitrary path
+	canLead          func(username string) bool
+	visibleTabTypes  map[string]bool // global visible tab types from config
+	fileHidePatterns []string        // glob patterns for hidden files in explorer
 
 	tabSessions *tabSessionStore
 }
 
 // Template is a configured workspace blueprint. Sessions are created from it.
 type Template struct {
-	Name            string          `json:"name"`
-	Path            string          `json:"path"`
-	TimeoutSecs     int             `json:"timeout_secs"`
-	LSP             []string        `json:"lsp,omitempty"`
-	VisibleTo       []string        `json:"visible_to,omitempty"`
-	OpenToAnybody   bool            `json:"open_to_anybody,omitempty"`
-	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
+	Name                string          `json:"name"`
+	Path                string          `json:"path"`
+	TimeoutSecs         int             `json:"timeout_secs"`
+	LSP                 []string        `json:"lsp,omitempty"`
+	VisibleTo           []string        `json:"visible_to,omitempty"`
+	Lock                string          `json:"lock"`
+	LegacyOpenToAnybody bool            `json:"-"`
+	VisibleTabTypes     map[string]bool `json:"visible_tab_types,omitempty"`
 }
 
 // SessionInfo is a snapshot of a running session for the picker/API.

@@ -92,6 +92,40 @@ func TestParseRRControlModes(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLockModesAndLegacyOpenToAnybody(t *testing.T) {
+	cases := []struct {
+		name           string
+		workspace      string
+		wantLock       string
+		wantLegacyOpen bool
+	}{
+		{name: "default closed", workspace: `{}`, wantLock: "closed"},
+		{name: "users inferred", workspace: `{"visible_to":["marc"]}`, wantLock: "users"},
+		{name: "read only", workspace: `{"lock":"anon-ro"}`, wantLock: "anon-ro"},
+		{name: "read write", workspace: `{"lock":"anon-rw"}`, wantLock: "anon-rw"},
+		{name: "legacy open", workspace: `{"open_to_anybody":true}`, wantLock: "users", wantLegacyOpen: true},
+		{name: "legacy closed", workspace: `{"open_to_anybody":false}`, wantLock: "closed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := parse([]byte(`{"password":"x","workspaces":{"project":` + tc.workspace + `}}`))
+			if err != nil {
+				t.Fatalf("parse workspace lock: %v", err)
+			}
+			workspace := cfg.Workspaces["project"]
+			if workspace.Lock != tc.wantLock || workspace.LegacyOpenToAnybody != tc.wantLegacyOpen {
+				t.Fatalf("workspace policy = lock %q, legacy-open %v; want %q, %v", workspace.Lock, workspace.LegacyOpenToAnybody, tc.wantLock, tc.wantLegacyOpen)
+			}
+		})
+	}
+	if _, err := parse([]byte(`{"password":"x","workspaces":{"project":{"lock":"anon"}}}`)); err == nil {
+		t.Fatal("expected unsupported workspace lock to be rejected")
+	}
+	if _, err := parse([]byte(`{"password":"x","workspaces":{"project":{"lock":"anon-rw","open_to_anybody":true}}}`)); err == nil {
+		t.Fatal("expected mixing lock and legacy open_to_anybody to be rejected")
+	}
+}
+
 func TestParseTunnelEnabled(t *testing.T) {
 	cfg, err := parse([]byte(`{"password":"x","tunnel_enabled":true}`))
 	if err != nil {

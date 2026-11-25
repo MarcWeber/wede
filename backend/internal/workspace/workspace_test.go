@@ -8,9 +8,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"wede/backend/internal/auth"
 	"wede/backend/internal/folder"
 )
 
@@ -258,6 +260,104 @@ func TestCreateFromTemplateAndSessionList(t *testing.T) {
 	}
 	if _, err := m.CreateFromTemplate("missing", ""); err == nil {
 		t.Fatal("expected unknown template error")
+	}
+}
+
+func TestHandleSessionCreateEnforcesVisibleUsers(t *testing.T) {
+	m := NewManager("", "")
+	m.SetTemplates(map[string]Template{
+		"private": {Name: "private", Path: t.TempDir(), TimeoutSecs: 600, Lock: "users", VisibleTo: []string{"alice"}},
+	})
+
+	authHandler := auth.NewWithDataDir("test-password", t.TempDir())
+	create := func(username string) *httptest.ResponseRecorder {
+		loginBody := bytes.NewBufferString(`{"username":"` + username + `","password":"test-password"}`)
+		loginResponse := httptest.NewRecorder()
+		authHandler.Login(loginResponse, httptest.NewRequest(http.MethodPost, "/api/auth/login", loginBody))
+		var result struct {
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(loginResponse.Body.Bytes(), &result); err != nil || result.Token == "" {
+			t.Fatalf("login token missing for %s: response=%s err=%v", username, loginResponse.Body.String(), err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewBufferString(`{"template":"private"}`))
+		req.Header.Set("Authorization", result.Token)
+		rec := httptest.NewRecorder()
+		authHandler.Middleware(http.HandlerFunc(m.HandleSessionCreate)).ServeHTTP(rec, req)
+		return rec
+	}
+	allowed := create("alice")
+	if allowed.Code != http.StatusCreated {
+		t.Fatalf("listed user creation status = %d, want 201 (%s)", allowed.Code, allowed.Body.String())
+	}
+	denied := create("bob")
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("unlisted user creation status = %d, want 403 (%s)", denied.Code, denied.Body.String())
+	}
+}
+
+func TestGuestAccessIsScopedAndUsesConfiguredRole(t *testing.T) {
+	m := NewManager("", "")
+	m.SetTemplates(map[string]Template{
+		"public":  {Name: "public", Path: t.TempDir(), Lock: "anon-ro"},
+		"private": {Name: "private", Path: t.TempDir(), Lock: "closed"},
+	})
+	publicSession, err := m.CreateFromTemplate("public", "")
+	if err != nil {
+		t.Fatalf("create public session: %v", err)
+	}
+	privateSession, err := m.CreateFromTemplate("private", "")
+	if err != nil {
+		t.Fatalf("create private session: %v", err)
+	}
+
+	authHandler := auth.NewWithDataDir("", t.TempDir())
+	token := authHandler.NewGuestSession(publicSession.ID, auth.RoleViewer)
+	if token == "" {
+		t.Fatal("guest session token was empty")
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler := authHandler.Middleware(m.AccessControl(next))
+
+	allowed := httptest.NewRecorder()
+	allowedReq := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+publicSession.ID+"/files", nil)
+	allowedReq.Header.Set("Authorization", token)
+	handler.ServeHTTP(allowed, allowedReq)
+	if allowed.Code != http.StatusNoContent {
+		t.Fatalf("guest public workspace status = %d, want 204", allowed.Code)
+	}
+
+	denied := httptest.NewRecorder()
+	deniedReq := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+privateSession.ID+"/files", nil)
+	deniedReq.Header.Set("Authorization", token)
+	handler.ServeHTTP(denied, deniedReq)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("guest cross-workspace status = %d, want 403", denied.Code)
+	}
+
+	if _, role, err := m.CreateAnonymousSession("public", ""); err != nil || role != auth.RoleViewer {
+		t.Fatalf("anon-ro join role = %q, err=%v; want viewer", role, err)
+	}
+	m.SetTemplates(map[string]Template{"public": {Name: "public", Path: t.TempDir(), Lock: "anon-rw"}})
+	if _, role, err := m.CreateAnonymousSession("public", ""); err != nil || role != auth.RoleEditor {
+		t.Fatalf("anon-rw join role = %q, err=%v; want editor", role, err)
+	}
+}
+
+func TestAnonymousTemplateListDoesNotExposePaths(t *testing.T) {
+	root := t.TempDir()
+	m := NewManager("", "")
+	m.SetTemplates(map[string]Template{
+		"public":  {Name: "public", Path: root, Lock: "anon-ro"},
+		"private": {Name: "private", Path: t.TempDir(), Lock: "closed"},
+	})
+	rec := httptest.NewRecorder()
+	m.HandleAnonymousTemplates(rec, httptest.NewRequest(http.MethodGet, "/api/anonymous/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("anonymous template list status = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), root) || strings.Contains(rec.Body.String(), "private") {
+		t.Fatalf("anonymous template response exposed private data: %s", rec.Body.String())
 	}
 }
 

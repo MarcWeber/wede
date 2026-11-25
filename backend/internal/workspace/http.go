@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -50,46 +51,107 @@ func (m *Manager) HandleList(w http.ResponseWriter, r *http.Request) {
 	workspaces := m.List()
 	out := make([]dto, 0, len(workspaces))
 	for _, rm := range workspaces {
+		if !m.allowsWorkspace(rm.ID, auth.GetUsername(r), auth.IsGuest(r), auth.GetRole(r)) {
+			continue
+		}
 		out = append(out, toDTO(rm))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workspaces": out})
 }
 
 // HandleSessionsList serves GET /api/sessions: active sessions plus the
-// configured templates the login picker offers for new sessions.
-// Templates with open_to_anybody=false (default) are filtered: if visible_to
-// is non-empty, only listed users see it; if visible_to is empty and
-// open_to_anybody is false, the template is hidden from everyone.
-// When open_to_anybody=true, the template is visible to all authenticated users.
+// configured templates the login picker offers for new sessions. Both lists
+// apply each template's lock policy; guest sessions only see their own session.
 func (m *Manager) HandleSessionsList(w http.ResponseWriter, r *http.Request) {
 	sessions := m.Sessions()
 	out := make([]dto, 0, len(sessions))
 	for _, s := range sessions {
-		out = append(out, toSessionDTO(s))
+		if auth.IsGuest(r) && s.ID != auth.GuestWorkspaceID(r) {
+			continue
+		}
+		if !m.allowsWorkspace(s.ID, auth.GetUsername(r), auth.IsGuest(r), auth.GetRole(r)) {
+			continue
+		}
+		d := toSessionDTO(s)
+		if auth.IsGuest(r) {
+			d.Root = s.Name
+		}
+		out = append(out, d)
 	}
 	username := auth.GetUsername(r)
 	allTemplates := m.Templates()
 	templates := make([]Template, 0, len(allTemplates))
-	for _, t := range allTemplates {
-		// If open to anybody, show to all authenticated users.
-		if t.OpenToAnybody {
-			templates = append(templates, t)
-			continue
+	if !auth.IsGuest(r) {
+		for _, t := range allTemplates {
+			if t.Allows(username, false) {
+				templates = append(templates, t)
+			}
 		}
-		// Otherwise, require the user to be in the visible_to list.
-		// If visible_to is empty, the workspace is hidden (not open to anybody).
-		if len(t.VisibleTo) == 0 {
-			continue
-		}
-		if !slices.Contains(t.VisibleTo, username) {
-			continue
-		}
-		templates = append(templates, t)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sessions":  out,
 		"templates": templates,
 	})
+}
+
+type anonymousTemplate struct {
+	Name string `json:"name"`
+	Lock string `json:"lock"`
+}
+
+func (t Template) Allows(username string, guest bool) bool {
+	if guest {
+		return t.Lock == "anon-ro" || t.Lock == "anon-rw"
+	}
+	switch t.Lock {
+	case "users":
+		return t.LegacyOpenToAnybody || slices.Contains(t.VisibleTo, username)
+	case "anon-ro", "anon-rw":
+		return true
+	default:
+		return false
+	}
+}
+
+// HandleAnonymousTemplates is the public, deliberately minimal list used by
+// the login screen. Paths and session IDs are not exposed before a guest joins.
+func (m *Manager) HandleAnonymousTemplates(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	out := make([]anonymousTemplate, 0)
+	for _, t := range m.Templates() {
+		if t.Lock == "anon-ro" || t.Lock == "anon-rw" {
+			out = append(out, anonymousTemplate{Name: t.Name, Lock: t.Lock})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"templates": out})
+}
+
+// CreateAnonymousSession creates or reuses a public template session and
+// returns the permissions that must be used for the issued guest credential.
+func (m *Manager) CreateAnonymousSession(templateName, sessionName string) (*Workspace, auth.Role, error) {
+	m.mu.RLock()
+	tpl, ok := m.templates[templateName]
+	m.mu.RUnlock()
+	if !ok || (tpl.Lock != "anon-ro" && tpl.Lock != "anon-rw") {
+		return nil, "", errors.New("anonymous access is not enabled for this workspace")
+	}
+	role := auth.RoleViewer
+	if tpl.Lock == "anon-rw" {
+		role = auth.RoleEditor
+	}
+	m.mu.RLock()
+	for _, ws := range m.workspaces {
+		if ws.Template == templateName {
+			m.mu.RUnlock()
+			return ws, role, nil
+		}
+	}
+	m.mu.RUnlock()
+	ws, err := m.CreateFromTemplate(templateName, sessionName)
+	if err != nil {
+		return nil, "", err
+	}
+	return ws, role, nil
 }
 
 // HandleSessionCreate serves POST /api/sessions with body {template, name?}.
@@ -103,6 +165,10 @@ func (m *Manager) HandleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Template == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "template required"})
+		return
+	}
+	if !m.templateAllows(body.Template, auth.GetUsername(r), false) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "workspace is not available to this user"})
 		return
 	}
 	// Check if a session for this template already exists — return it instead
@@ -125,6 +191,75 @@ func (m *Manager) HandleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, toDTO(rm))
+}
+
+// AccessControl applies template locks to every workspace-scoped API route and
+// prevents guest credentials from crossing their single workspace boundary.
+func (m *Manager) AccessControl(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth.IsGuest(r) {
+			if r.Method == http.MethodGet && r.URL.Path == "/api/sessions" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			id, ok := workspaceIDFromPath(r.URL.Path)
+			if ok && id == auth.GuestWorkspaceID(r) && m.allowsWorkspace(id, auth.GetUsername(r), true, auth.GetRole(r)) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "guest access is limited to its public workspace"})
+			return
+		}
+		if id, ok := workspaceIDFromPath(r.URL.Path); ok && !m.allowsWorkspace(id, auth.GetUsername(r), false, auth.GetRole(r)) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "workspace is not available to this user"})
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/sessions/") {
+			id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+			if id != "" && strings.IndexByte(id, '/') < 0 && !m.allowsWorkspace(id, auth.GetUsername(r), false, auth.GetRole(r)) {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "workspace is not available to this user"})
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func workspaceIDFromPath(path string) (string, bool) {
+	const prefix = "/api/workspaces/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	tail := strings.TrimPrefix(path, prefix)
+	id, _, _ := strings.Cut(tail, "/")
+	return id, id != ""
+}
+
+func (m *Manager) templateAllows(name, username string, guest bool) bool {
+	m.mu.RLock()
+	tpl, ok := m.templates[name]
+	m.mu.RUnlock()
+	if !ok {
+		return !guest
+	}
+	return tpl.Allows(username, guest)
+}
+
+func (m *Manager) allowsWorkspace(id, username string, guest bool, role auth.Role) bool {
+	ws, ok := m.Get(id)
+	if !ok {
+		return false
+	}
+	m.mu.RLock()
+	tpl, exists := m.templates[ws.Template]
+	m.mu.RUnlock()
+	if !exists {
+		return !guest
+	}
+	if !tpl.Allows(username, guest) {
+		return false
+	}
+	return !guest || tpl.Lock != "anon-ro" || !role.CanMutate()
 }
 
 // HandleSessionClose serves DELETE /api/sessions/{id}.
@@ -354,7 +489,11 @@ func (m *Manager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "workspace not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, toDTO(rm))
+	d := toDTO(rm)
+	if auth.IsGuest(r) {
+		d.Root = rm.Name
+	}
+	writeJSON(w, http.StatusOK, d)
 }
 
 // HandleClose serves DELETE /api/workspaces/{id}.

@@ -16,6 +16,11 @@ interface WorkspaceFolderState {
   [key: string]: unknown
 }
 
+interface AnonymousWorkspaceTemplate {
+  name: string
+  lock: 'anon-ro' | 'anon-rw'
+}
+
 type RRControlWindow = Window & {
   __wedeRRControlWho?: string
   __rrwebRemote?: {
@@ -42,7 +47,7 @@ function createRRControlTabID(): string {
 }
 
 function App() {
-  const { token, username, role, teacher, debug, login, loginWithToken, logout, redeem, error, remaining, authFetch, updateUsername } = useAuth()
+  const { token, username, role, teacher, guest, debug, login, loginWithToken, loginAnonymous, logout, redeem, error, remaining, authFetch, updateUsername } = useAuth()
   const workspacesApi = useWorkspaces(token, authFetch)
   const { createWorkspace, setActiveWorkspaceId, workspaces } = workspacesApi
   const activeWs = workspaces.find((w) => w.id === workspacesApi.activeWorkspaceId)
@@ -56,12 +61,27 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [allowCustomDirectory, setAllowCustomDirectory] = useState<boolean | null>(null)
   const [rrControlMode, setRRControlMode] = useState<string | null>(null)
+  const [anonymousTemplates, setAnonymousTemplates] = useState<AnonymousWorkspaceTemplate[]>([])
   const [rrControlTabID] = useState(createRRControlTabID)
   const [resolvingCustomDir, setResolvingCustomDir] = useState(false)
   const customDirRef = useRef<string | null>(null)
   // A view state is claimed only if no other socket already uses it. When it is
   // in use elsewhere we show the chooser instead of silently sharing a layout.
   const [claim, setClaim] = useState<'checking' | 'blocked' | 'free'>('checking')
+
+  useEffect(() => {
+    if (token) return
+    let cancelled = false
+    fetch(`${basePath()}/api/anonymous/sessions`)
+      .then((r) => r.json())
+      .then((data: { templates?: AnonymousWorkspaceTemplate[] }) => {
+        if (!cancelled) setAnonymousTemplates(data.templates || [])
+      })
+      .catch(() => {
+        if (!cancelled) setAnonymousTemplates([])
+      })
+    return () => { cancelled = true }
+  }, [token])
 
   const fetchWorkspace = useCallback(async () => {
     if (!token) return
@@ -212,7 +232,18 @@ function App() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!token) {
-    return <Login onLogin={login} error={error} remaining={remaining} />
+    return (
+      <Login
+        onLogin={login}
+        error={error}
+        remaining={remaining}
+        anonymousTemplates={anonymousTemplates}
+        onJoinAnonymous={async (template) => {
+          const sessionID = await loginAnonymous(template)
+          setActiveWorkspaceId(sessionID)
+        }}
+      />
+    )
   }
 
   // Wait for the workspace list before deciding what to show. The ui-config
@@ -292,6 +323,7 @@ function App() {
       username={username}
       onUsernameChange={updateUsername}
       role={role}
+      guest={guest}
       teacher={teacher}
       rrControlMode={rrControlMode}
       debug={debug}

@@ -22,6 +22,7 @@ export interface ChatProps {
   token: string | null
   username: string
   color: string
+  readOnly?: boolean
 }
 
 type GitClassification =
@@ -110,7 +111,7 @@ function UserMessage({ msg, grouped }: { msg: ChatRow; grouped?: boolean }) {
   )
 }
 
-export default function Chat({ workspaceId, workspaceName, token, username, color }: ChatProps) {
+export default function Chat({ workspaceId, workspaceName, token, username, color, readOnly = false }: ChatProps) {
   const [channel, setChannel] = useState('public')
   const [showAllGit, setShowAllGit] = useState(false) // include churn (uncommitted/clean) too
   const { messages, sendMessage } = useChat(workspaceId, token, username, color, channel)
@@ -260,25 +261,29 @@ export default function Chat({ workspaceId, workspaceName, token, username, colo
 
       {/* ── Input ── */}
       <div className="shrink-0 border-t border-border px-3 py-2">
-        <div className="flex gap-2 items-end">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={handleInput}
-            onKeyDown={handleKey}
-            placeholder="Message… (Enter to send, Shift+Enter for newline)"
-            rows={1}
-            className="flex-1 bg-bg-input border border-border rounded-md px-3 py-2 text-[12px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 resize-none leading-relaxed transition-colors"
-            style={{ minHeight: 36, maxHeight: 96 }}
-          />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim()}
-            className="px-3 py-2 bg-accent text-white rounded-md text-[11px] font-semibold hover:bg-accent-hover disabled:opacity-30 disabled:cursor-not-allowed transition-all shrink-0"
-          >
-            Send
-          </button>
-        </div>
+        {readOnly ? (
+          <p className="text-[11px] text-text-muted text-center">Read-only access — chat is disabled</p>
+        ) : (
+          <div className="flex gap-2 items-end">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKey}
+              placeholder="Message… (Enter to send, Shift+Enter for newline)"
+              rows={1}
+              className="flex-1 bg-bg-input border border-border rounded-md px-3 py-2 text-[12px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20 resize-none leading-relaxed transition-colors"
+              style={{ minHeight: 36, maxHeight: 96 }}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="px-3 py-2 bg-accent text-white rounded-md text-[11px] font-semibold hover:bg-accent-hover disabled:opacity-30 disabled:cursor-not-allowed transition-all shrink-0"
+            >
+              Send
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

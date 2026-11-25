@@ -54,6 +54,56 @@ func TestConfiguredSessionTTLLoadsAndExpiresPersistedSessions(t *testing.T) {
 	}
 }
 
+func TestGuestSessionsAreNeverPersisted(t *testing.T) {
+	dir := t.TempDir()
+	h := NewWithDataDir("test-password", dir)
+	token := h.NewGuestSession("public-session", RoleViewer)
+	if token == "" {
+		t.Fatal("NewGuestSession returned an empty token")
+	}
+	h.mu.Lock()
+	h.saveSessions()
+	h.mu.Unlock()
+
+	restored := NewWithDataDir("test-password", dir)
+	if role := restored.Role(token); role != "" {
+		t.Fatalf("guest session restored after restart with role %q", role)
+	}
+
+	// Older or externally-written stores must also not restore guest entries.
+	legacyGuest := map[string]sessionEntry{
+		hashToken("stale-guest-token"): {
+			CreatedAt: time.Now(), Guest: true, WorkspaceID: "public-session", Role: RoleViewer,
+		},
+	}
+	data, err := json.Marshal(legacyGuest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(restored.sessionsFile(), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewWithDataDir("test-password", dir)
+	if role := reloaded.Role("stale-guest-token"); role != "" {
+		t.Fatalf("guest session loaded from persisted entry with role %q", role)
+	}
+}
+
+func TestGuestCannotChangeDisplayName(t *testing.T) {
+	h := newTestHandler(t)
+	token := h.NewGuestSession("public-session", RoleViewer)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/username", strings.NewReader(`{"username":"marc"}`))
+	req.Header.Set("Authorization", token)
+	rec := httptest.NewRecorder()
+	h.Middleware(http.HandlerFunc(h.SetUsername)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("guest rename status = %d, want 403", rec.Code)
+	}
+	if username := h.Username(token); username != "anon" {
+		t.Fatalf("guest username = %q, want fixed anon", username)
+	}
+}
+
 func login(t *testing.T, h *Handler, password, username string) map[string]any {
 	t.Helper()
 	body := `{"password":"` + password + `","username":"` + username + `"}`

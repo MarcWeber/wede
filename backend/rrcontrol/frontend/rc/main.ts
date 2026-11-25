@@ -148,16 +148,10 @@ function handle(msg: any): void {
       onWatchStarted(msg);
       break;
     case 'watch-denied':
-      setStatus('Visitor denied access.');
+      showWatchDenied(typeof msg.reason === 'string' ? msg.reason : '');
       teardownViewer();
       selected = null;
       renderList();
-      if (viewerOnly) {
-        showViewerMessage(
-          'Access was denied',
-          'The visitor did not allow this page to be viewed.',
-        );
-      }
       break;
     case 'client-gone':
       if (msg.target === selected) {

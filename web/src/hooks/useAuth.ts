@@ -33,8 +33,25 @@ interface RedeemResponse {
   teacher?: boolean
 }
 
+interface AnonymousLoginResponse {
+  error?: string
+  token?: string
+  username?: string
+  role?: string
+  session?: { id?: string }
+}
+
 const AUTH_STORAGE_KEYS = ['wede_token', 'wede_username', 'wede_role', 'wede_teacher'] as const
+const GUEST_STORAGE_KEYS = ['wede_guest_token', 'wede_guest_role', 'wede_guest_workspace'] as const
 type AuthStorageKey = (typeof AUTH_STORAGE_KEYS)[number]
+
+function readGuestValue(key: (typeof GUEST_STORAGE_KEYS)[number]): string | null {
+  return sessionStorage.getItem(key)
+}
+
+function clearGuestValues(): void {
+  for (const key of GUEST_STORAGE_KEYS) sessionStorage.removeItem(key)
+}
 
 function readAuthValue(key: AuthStorageKey): string | null {
   return localStorage.getItem(key) || sessionStorage.getItem(key)
@@ -58,10 +75,11 @@ function clearAuthValues(): void {
 // selection remains tab-specific. The token is readable by WebSocket clients
 // that pass it as an "auth.<token>" subprotocol, so treat it as sensitive.
 export function useAuth() {
-  const [token, setToken] = useState<string | null>(() => readAuthValue('wede_token'))
-  const [username, setUsername] = useState<string>(() => readAuthValue('wede_username') || '')
-  const [role, setRole] = useState<string>(() => readAuthValue('wede_role') || '')
-  const [teacher, setTeacher] = useState<boolean>(() => readAuthValue('wede_teacher') === '1')
+  const [token, setToken] = useState<string | null>(() => readGuestValue('wede_guest_token') || readAuthValue('wede_token'))
+  const [username, setUsername] = useState<string>(() => readGuestValue('wede_guest_token') ? 'anon' : readAuthValue('wede_username') || '')
+  const [role, setRole] = useState<string>(() => readGuestValue('wede_guest_role') || readAuthValue('wede_role') || '')
+  const [teacher, setTeacher] = useState<boolean>(() => !readGuestValue('wede_guest_token') && readAuthValue('wede_teacher') === '1')
+  const [guest, setGuest] = useState<boolean>(() => !!readGuestValue('wede_guest_token'))
   const [error, setError] = useState<string | null>(null)
   const [locked, setLocked] = useState(false)
   // Undefined until the server reports a count, so the login form does not
@@ -71,6 +89,7 @@ export function useAuth() {
 
   // Migrate credentials from the former per-tab storage to shared browser storage.
   useEffect(() => {
+    if (readGuestValue('wede_guest_token')) return
     for (const key of AUTH_STORAGE_KEYS) {
       const current = localStorage.getItem(key)
       const previous = sessionStorage.getItem(key)
@@ -80,7 +99,8 @@ export function useAuth() {
   }, [])
 
   useEffect(() => {
-    const t = localStorage.getItem('wede_token')
+    const guestToken = readGuestValue('wede_guest_token')
+    const t = guestToken || localStorage.getItem('wede_token')
     if (!t) return
     fetch(`${apiBase()}/auth/check`, { headers: { Authorization: t } })
       .then(r => r.json())
@@ -89,16 +109,23 @@ export function useAuth() {
         setDebug(!!data.debug)
         if (data.authenticated && data.role) {
           setRole(data.role)
-          writeAuthValue('wede_role', data.role)
-          setTeacher(!!data.teacher)
-          writeAuthValue('wede_teacher', data.teacher ? '1' : '0')
+          if (guestToken) {
+            sessionStorage.setItem('wede_guest_role', data.role)
+            setTeacher(false)
+          } else {
+            writeAuthValue('wede_role', data.role)
+            setTeacher(!!data.teacher)
+            writeAuthValue('wede_teacher', data.teacher ? '1' : '0')
+          }
         } else if (!data.authenticated) {
           // Session expired server-side; clear stored credentials.
-          clearAuthValues()
+          if (guestToken) clearGuestValues()
+          else clearAuthValues()
           setToken(null)
           setUsername('')
           setRole('')
           setTeacher(false)
+          setGuest(false)
         }
       })
       .catch(() => {})
@@ -106,16 +133,17 @@ export function useAuth() {
 
   useEffect(() => {
     const syncAuth = (event: StorageEvent) => {
+      if (readGuestValue('wede_guest_token')) return
       if (event.key !== null && !AUTH_STORAGE_KEYS.includes(event.key as AuthStorageKey)) return
       setToken(localStorage.getItem('wede_token'))
       setUsername(localStorage.getItem('wede_username') || '')
       setRole(localStorage.getItem('wede_role') || '')
       setTeacher(localStorage.getItem('wede_teacher') === '1')
+      setGuest(false)
     }
     window.addEventListener('storage', syncAuth)
     return () => window.removeEventListener('storage', syncAuth)
   }, [])
-
 
   const login = useCallback(async (password: string, name = ''): Promise<boolean> => {
     setError(null)
@@ -138,6 +166,7 @@ export function useAuth() {
         return false
       }
       if (data.token) {
+        clearGuestValues()
         writeAuthValue('wede_token', data.token)
         sessionStorage.removeItem('wede_session_id')
         setToken(data.token)
@@ -150,6 +179,7 @@ export function useAuth() {
         const resolvedTeacher = !!data.teacher
         writeAuthValue('wede_teacher', resolvedTeacher ? '1' : '0')
         setTeacher(resolvedTeacher)
+        setGuest(false)
         setLocked(false)
         setRemaining(undefined)
         return true
@@ -176,6 +206,7 @@ export function useAuth() {
         return false
       }
       writeAuthValue('wede_token', data.token)
+      clearGuestValues()
       sessionStorage.removeItem('wede_session_id')
       setToken(data.token)
       const resolved = data.username || name || ''
@@ -187,6 +218,7 @@ export function useAuth() {
       const resolvedTeacher = !!data.teacher
       writeAuthValue('wede_teacher', resolvedTeacher ? '1' : '0')
       setTeacher(resolvedTeacher)
+      setGuest(false)
       setLocked(false)
       setRemaining(undefined)
       return true
@@ -209,6 +241,7 @@ export function useAuth() {
       const data: RedeemResponse = await res.json()
       if (data.token) {
         writeAuthValue('wede_token', data.token)
+        clearGuestValues()
         sessionStorage.removeItem('wede_session_id')
         setToken(data.token)
         const resolved = data.username || ''
@@ -220,22 +253,47 @@ export function useAuth() {
         const resolvedTeacher = !!data.teacher
         writeAuthValue('wede_teacher', resolvedTeacher ? '1' : '0')
         setTeacher(resolvedTeacher)
+        setGuest(false)
         return true
       }
       return false
     } catch {
       return false
     }
+ }, [])
+
+  const loginAnonymous = useCallback(async (template: string): Promise<string> => {
+    const res = await fetch(`${apiBase()}/anonymous/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template }),
+    })
+    const data = await res.json() as AnonymousLoginResponse
+    if (!res.ok || !data.token || !data.session?.id) {
+      throw new Error(data.error || 'Could not join anonymously')
+    }
+    clearGuestValues()
+    sessionStorage.setItem('wede_guest_token', data.token)
+    sessionStorage.setItem('wede_guest_role', data.role || 'viewer')
+    sessionStorage.setItem('wede_guest_workspace', data.session.id)
+    setToken(data.token)
+    setUsername(data.username || 'anon')
+    setRole(data.role || 'viewer')
+    setTeacher(false)
+    setGuest(true)
+    return data.session.id
   }, [])
 
   const logout = useCallback(() => {
-    const t = readAuthValue('wede_token')
-    clearAuthValues()
+    const t = guest ? readGuestValue('wede_guest_token') : readAuthValue('wede_token')
+    if (guest) clearGuestValues()
+    else clearAuthValues()
     sessionStorage.removeItem('wede_session_id')
     setToken(null)
     setUsername('')
     setRole('')
     setTeacher(false)
+    setGuest(false)
     if (t) {
       // Revoke the token server-side (fire-and-forget; ignore network errors)
       fetch(`${apiBase()}/auth/logout`, {
@@ -243,7 +301,7 @@ export function useAuth() {
         headers: { Authorization: t },
       }).catch(() => {})
     }
-  }, [])
+  }, [guest])
 
   const authFetch: AuthFetch = useCallback(async (url, options = {}) => {
     // String(token) matches fetch's own implicit coercion of a null header
@@ -258,6 +316,7 @@ export function useAuth() {
   }, [token, logout])
 
   const updateUsername = useCallback((name: string | null | undefined) => {
+    if (guest) return
     const v = (name || '').trim()
     setUsername(v)
     try {
@@ -267,7 +326,7 @@ export function useAuth() {
         sessionStorage.removeItem('wede_username')
       }
     } catch { /* ignore */ }
-  }, [])
+  }, [guest])
 
-  return { token, username, role, teacher, debug, login, loginWithToken, logout, redeem, error, locked, remaining, authFetch, updateUsername }
+  return { token, username, role, teacher, guest, debug, login, loginWithToken, loginAnonymous, logout, redeem, error, locked, remaining, authFetch, updateUsername }
 }

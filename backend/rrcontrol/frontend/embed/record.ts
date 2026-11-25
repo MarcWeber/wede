@@ -21,6 +21,11 @@ export function stopRecording(): void {
   }
 }
 
+export function takeFullSnapshot(): void {
+  if (!stopFn) return;
+  (record as any).takeFullSnapshot();
+}
+
 function nodeById(id: unknown): any {
   if (typeof id !== 'number') return null;
   try {

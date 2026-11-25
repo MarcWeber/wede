@@ -15,6 +15,8 @@ interface LoginProps {
   sessionsLoading?: boolean
   onJoinSession?: (id: string) => void
   onCreateSession?: (template: string, name: string) => Promise<unknown>
+  anonymousTemplates?: { name: string; lock: 'anon-ro' | 'anon-rw' }[]
+  onJoinAnonymous?: (template: string) => Promise<unknown>
   onLogout?: () => void
 }
 
@@ -36,7 +38,7 @@ function sessionLabel(s: WorkspaceSummary): string {
 export default function Login({
   onLogin, error, remaining, authenticated = false, username = '',
   sessions = [], templates = [], sessionsLoading = false,
-  onJoinSession, onCreateSession, onLogout,
+  onJoinSession, onCreateSession, anonymousTemplates = [], onJoinAnonymous, onLogout,
 }: LoginProps) {
   const branding = useBranding()
   const [password, setPassword] = useState('')
@@ -46,6 +48,9 @@ export default function Login({
   const [choice, setChoice] = useState('')
   const [sessionName, setSessionName] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [anonymousChoice, setAnonymousChoice] = useState('')
+  const [anonymousError, setAnonymousError] = useState<string | null>(null)
+  const [anonymousLoading, setAnonymousLoading] = useState(false)
 
   const options = useMemo(() => {
     const list: string[] = []
@@ -71,6 +76,20 @@ export default function Login({
     await onLogin(password, name.trim())
     setLoading(false)
     setPassword('')
+  }
+
+  const handleJoinAnonymous = async () => {
+    const template = anonymousChoice || anonymousTemplates[0]?.name
+    if (!template || !onJoinAnonymous) return
+    setAnonymousError(null)
+    setAnonymousLoading(true)
+    try {
+      await onJoinAnonymous(template)
+    } catch (err) {
+      setAnonymousError(err instanceof Error ? err.message : 'Could not join anonymously')
+    } finally {
+      setAnonymousLoading(false)
+    }
   }
 
   const handleJoin = async () => {
@@ -256,6 +275,38 @@ export default function Login({
             </>
           )}
         </form>
+
+        {!authenticated && anonymousTemplates.length > 0 && (
+          <div className="mt-4 bg-bg-elevated border border-border rounded-xl p-5 shadow-xl shadow-shadow">
+            <h2 className="text-[13px] font-semibold text-text-primary">Join without an account</h2>
+            <p className="mt-1 mb-3 text-[11px] text-text-muted">You will appear as anon. Access is set by the workspace owner.</p>
+            <select
+              value={anonymousChoice || anonymousTemplates[0]?.name || ''}
+              onChange={(e) => setAnonymousChoice(e.target.value)}
+              className="w-full bg-bg-input border border-border rounded-md px-3 py-2 text-[13px] text-text-primary"
+              disabled={anonymousLoading}
+            >
+              {anonymousTemplates.map((template) => (
+                <option key={template.name} value={template.name}>
+                  {template.name} ({template.lock === 'anon-ro' ? 'read-only' : 'read & write'})
+                </option>
+              ))}
+            </select>
+            {anonymousError && (
+              <div className="mt-3 px-3 py-2 bg-red/8 border border-red/20 rounded-md text-red text-[12px]">
+                {anonymousError}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleJoinAnonymous()}
+              disabled={anonymousLoading || !onJoinAnonymous}
+              className="mt-3 w-full bg-accent hover:bg-accent-hover text-white text-[13px] font-semibold py-2.5 rounded-md transition-all shadow-sm shadow-accent/25 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {anonymousLoading ? 'Joining…' : 'Join anonymously'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

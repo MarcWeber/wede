@@ -118,14 +118,14 @@ type WorkspaceConfig struct {
 	Timeout *int `json:"timeout,omitempty"`
 	// LSP optionally names the language servers enabled for this template.
 	LSP StringList `json:"lsp,omitempty"`
-	// VisibleTo restricts which users can see this workspace in the session
-	// picker. Empty means visible to everyone. Accepts a list of usernames.
+	// VisibleTo lists usernames allowed to use a workspace with lock: users.
 	VisibleTo StringList `json:"visible_to,omitempty"`
-	// OpenToAnybody controls whether any authenticated user can join this
-	// workspace. When false (default), only users listed in VisibleTo can see
-	// and join it. When true, the workspace is open to all authenticated users
-	// regardless of VisibleTo.
-	OpenToAnybody bool `json:"open_to_anybody,omitempty"`
+	// Lock controls who may join this workspace template.
+	Lock string `json:"lock,omitempty"`
+	// OpenToAnybody is retained to read legacy configs. New configs should use Lock.
+	OpenToAnybody *bool `json:"open_to_anybody,omitempty"`
+	// LegacyOpenToAnybody preserves the old authenticated-user-only behavior.
+	LegacyOpenToAnybody bool `json:"-"`
 	// VisibleTabTypes overrides which tab types are shown for this workspace.
 	// Merged with global config: workspace-level values override global values.
 	VisibleTabTypes map[string]bool `json:"visible_tab_types,omitempty"`
@@ -516,6 +516,9 @@ func (s *Store) build() (*Config, error) {
 	if err := normalizeViewModes(cfg); err != nil {
 		return nil, err
 	}
+	if err := normalizeWorkspaceLocks(cfg); err != nil {
+		return nil, err
+	}
 	resolveWorkspaceRoot(cfg)
 	return cfg, nil
 }
@@ -705,6 +708,9 @@ func parse(data []byte) (*Config, error) {
 	if err := normalizeViewModes(cfg); err != nil {
 		return nil, err
 	}
+	if err := normalizeWorkspaceLocks(cfg); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -741,6 +747,33 @@ func normalizeRRControl(cfg *Config) error {
 	default:
 		return fmt.Errorf("rrcontrol must be one of: off, ask, no, yes")
 	}
+}
+
+func normalizeWorkspaceLocks(cfg *Config) error {
+	for name, workspace := range cfg.Workspaces {
+		workspace.Lock = strings.ToLower(strings.TrimSpace(workspace.Lock))
+		if workspace.Lock != "" && workspace.OpenToAnybody != nil {
+			return fmt.Errorf("workspaces.%s: use lock instead of open_to_anybody, not both", name)
+		}
+		if workspace.Lock == "" {
+			switch {
+			case workspace.OpenToAnybody != nil && *workspace.OpenToAnybody:
+				workspace.Lock = "users"
+				workspace.LegacyOpenToAnybody = true
+			case len(workspace.VisibleTo) > 0:
+				workspace.Lock = "users"
+			default:
+				workspace.Lock = "closed"
+			}
+		}
+		switch workspace.Lock {
+		case "closed", "users", "anon-ro", "anon-rw":
+		default:
+			return fmt.Errorf("workspaces.%s.lock must be one of: closed, users, anon-ro, anon-rw", name)
+		}
+		cfg.Workspaces[name] = workspace
+	}
+	return nil
 }
 
 // normalizeViewModes applies defaults and validates the media view preferences.

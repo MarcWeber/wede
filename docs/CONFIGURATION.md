@@ -192,8 +192,8 @@ name and creates an isolated active session rooted at the template path.
 {
   "defaults": { "workspace_timeout_secs": 600 },
   "workspaces": {
-    "cs101": { "path": "/srv/classes/cs101", "timeout_secs": 1800, "lsp": ["go", "python"] },
-    "scratch": { "path": "/srv/scratch", "timeout_secs": 0 }
+    "cs101": { "path": "/srv/classes/cs101", "lock": "users", "visible_to": ["alice", "bob"], "timeout_secs": 1800 },
+    "scratch": { "path": "/srv/scratch", "lock": "anon-ro", "timeout_secs": 0 }
   }
 }
 ```
@@ -203,6 +203,17 @@ name and creates an isolated active session rooted at the template path.
 | `path` | `string` | Directory opened for the session. Defaults to `.`. |
 | `timeout_secs` | `int` | Idle timeout after the last user leaves. `0` never expires. Falls back to `defaults.workspace_timeout_secs`. `timeout` is accepted as an alias. |
 | `lsp` | `string[]` | Optional language-server names reserved for per-session LSP wiring. |
+| `lock` | `string` | Join policy: `closed`, `users`, `anon-ro`, or `anon-rw`. Defaults to `closed`; omitted `lock` with a nonempty `visible_to` infers `users` for compatibility. |
+| `visible_to` | `string[]` | Usernames allowed when `lock: users`. |
+
+`closed` denies all joins. `users` permits only names in `visible_to`;
+`open_to_anybody` is deprecated but still accepted for existing configs (when
+true, it behaves like `lock: users` with all authenticated users allowed).
+`anon-ro` exposes the workspace to anyone without login using the viewer role;
+`anon-rw` grants anyone editor access, including file writes and terminal use.
+Treat `anon-rw` like publishing an editable shell to the public internet. Both
+anonymous modes let guests see and join that workspace's active session, but do
+not expose other templates or sessions.
 
 If `workspaces` is empty, wede exposes a single `default` template pointing at
 the boot path (the positional CLI argument / container work dir), so solo use

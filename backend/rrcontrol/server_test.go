@@ -149,6 +149,9 @@ func TestSecondViewerDoesNotDisconnectWatchedClient(t *testing.T) {
 		}
 		return message
 	}
+	if got := readMessage(client)["type"]; got != "identity" {
+		t.Fatalf("initial client message = %v, want identity", got)
+	}
 	connectSupport := func() *websocket.Conn {
 		t.Helper()
 		conn, _, err := websocket.Dial(ctx, baseURL+"/ws?role=support", &websocket.DialOptions{
@@ -258,5 +261,103 @@ func TestDashboardLinksToStandaloneTestPage(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `href="test-page" target="_blank"`) || !strings.Contains(rec.Body.String(), "Open the test page") {
 		t.Fatal("dashboard empty state is missing the standalone test-page link")
+	}
+}
+
+func TestClientReloadWithinGraceKeepsViewerAttached(t *testing.T) {
+	server, err := New(Options{
+		ControlMode:  "yes",
+		Authenticate: func(next http.Handler) http.Handler { return next },
+		IsTeacher:    func(*http.Request) bool { return true },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	baseURL := "ws" + httpServer.URL[len("http"):]
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	readMessage := func(conn *websocket.Conn) map[string]any {
+		t.Helper()
+		readCtx, readCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer readCancel()
+		_, data, err := conn.Read(readCtx)
+		if err != nil {
+			t.Fatalf("read WebSocket message: %v", err)
+		}
+		var message map[string]any
+		if err := json.Unmarshal(data, &message); err != nil {
+			t.Fatalf("decode WebSocket message: %v", err)
+		}
+		return message
+	}
+
+	dialClient := func() *websocket.Conn {
+		t.Helper()
+		conn, _, err := websocket.Dial(ctx, baseURL+"/ws?role=client&tab_id=stable-tab", nil)
+		if err != nil {
+			t.Fatalf("dial client: %v", err)
+		}
+		if got := readMessage(conn)["type"]; got != "identity" {
+			t.Fatalf("client first message = %v, want identity", got)
+		}
+		return conn
+	}
+
+	firstClient := dialClient()
+	if err := firstClient.Write(ctx, websocket.MessageText, []byte(`{"type":"hello","who":"student"}`)); err != nil {
+		t.Fatalf("client hello: %v", err)
+	}
+
+	support, _, err := websocket.Dial(ctx, baseURL+"/ws?role=support", nil)
+	if err != nil {
+		t.Fatalf("dial support: %v", err)
+	}
+	defer support.Close(websocket.StatusNormalClosure, "test complete")
+	if got := readMessage(support)["type"]; got != "list" {
+		t.Fatalf("support first message = %v, want list", got)
+	}
+	if err := support.Write(ctx, websocket.MessageText, []byte(`{"type":"watch","target":"stable-tab"}`)); err != nil {
+		t.Fatalf("send watch: %v", err)
+	}
+	if got := readMessage(support)["type"]; got != "watch-started" {
+		t.Fatalf("support watch response = %v, want watch-started", got)
+	}
+	if got := readMessage(firstClient)["type"]; got != "watch-start" {
+		t.Fatalf("client watch message = %v, want watch-start", got)
+	}
+	readMessage(support) // list update after attach
+
+	// Simulate a reload: drop the socket and reconnect with the same tab id.
+	if err := firstClient.Close(websocket.StatusNormalClosure, "reload"); err != nil {
+		t.Fatalf("close first client: %v", err)
+	}
+	reloaded := dialClient()
+	defer reloaded.Close(websocket.StatusNormalClosure, "test complete")
+	if got := readMessage(reloaded)["type"]; got != "watch-start" {
+		t.Fatalf("reloaded client message = %v, want watch-start", got)
+	}
+
+	list := readMessage(support)
+	if list["type"] == "client-gone" {
+		t.Fatal("viewer was told the page disconnected despite reconnecting within the grace period")
+	}
+	clients, ok := list["clients"].([]any)
+	if list["type"] != "list" || !ok || len(clients) != 1 {
+		t.Fatalf("unexpected client list after reload: %#v", list)
+	}
+	info, ok := clients[0].(map[string]any)
+	if !ok || info["id"] != "stable-tab" || info["watchers"] != float64(1) {
+		t.Fatalf("reloaded client did not keep its viewer: %#v", clients[0])
+	}
+
+	if err := reloaded.Write(ctx, websocket.MessageText, []byte(`{"type":"rrweb","event":{"type":4,"data":{}}}`)); err != nil {
+		t.Fatalf("send rrweb: %v", err)
+	}
+	if got := readMessage(support)["type"]; got != "rrweb" {
+		t.Fatalf("support message after reload = %v, want rrweb", got)
 	}
 }

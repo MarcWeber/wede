@@ -26,6 +26,8 @@ type contextKey int
 const (
 	roleCtxKey contextKey = iota
 	usernameCtxKey
+	guestCtxKey
+	guestWorkspaceCtxKey
 )
 
 // GetRole returns the resolved Role that Middleware attached to the request
@@ -49,12 +51,26 @@ func GetUsername(r *http.Request) string {
 	return ""
 }
 
+// IsGuest reports whether Middleware authenticated a workspace-scoped guest.
+func IsGuest(r *http.Request) bool {
+	v, _ := r.Context().Value(guestCtxKey).(bool)
+	return v
+}
+
+// GuestWorkspaceID returns the only workspace a guest session may access.
+func GuestWorkspaceID(r *http.Request) string {
+	v, _ := r.Context().Value(guestWorkspaceCtxKey).(string)
+	return v
+}
+
 // sessionEntry holds a token's creation timestamp for absolute-TTL enforcement, the
 // display username chosen at (or after) login, and the session's role.
 type sessionEntry struct {
-	CreatedAt time.Time `json:"created_at"`
-	Username  string    `json:"username,omitempty"`
-	Role      Role      `json:"role,omitempty"` // empty (legacy) → owner
+	CreatedAt   time.Time `json:"created_at"`
+	Username    string    `json:"username,omitempty"`
+	Role        Role      `json:"role,omitempty"` // empty (legacy) → owner
+	Guest       bool      `json:"guest,omitempty"`
+	WorkspaceID string    `json:"workspace_id,omitempty"`
 }
 
 // maxUsernameLen bounds a stored username.
@@ -186,7 +202,7 @@ func (h *Handler) loadSessions() {
 	if json.Unmarshal(data, &stored) == nil {
 		now := time.Now()
 		for k, e := range stored {
-			if now.Sub(e.CreatedAt) < h.sessionTTL {
+			if !e.Guest && now.Sub(e.CreatedAt) < h.sessionTTL {
 				h.sessions[k] = e
 			}
 		}
@@ -198,7 +214,13 @@ func (h *Handler) loadSessions() {
 // hash, so no raw session token is ever persisted: an attacker who reads
 // ~/.wede/sessions.json cannot recover a usable token.
 func (h *Handler) saveSessions() {
-	data, _ := json.Marshal(h.sessions)
+	persisted := make(map[string]sessionEntry, len(h.sessions))
+	for key, session := range h.sessions {
+		if !session.Guest {
+			persisted[key] = session
+		}
+	}
+	data, _ := json.Marshal(persisted)
 	os.WriteFile(h.sessionsFile(), data, 0600)
 }
 
@@ -588,6 +610,30 @@ func (h *Handler) newSession(username string, role Role) string {
 	return token
 }
 
+// NewGuestSession creates an in-memory-only session restricted to one public
+// workspace. Guest sessions are intentionally not persisted across restarts.
+func (h *Handler) NewGuestSession(workspaceID string, role Role) string {
+	if workspaceID == "" || (role != RoleViewer && role != RoleEditor) {
+		return ""
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return ""
+	}
+	token := hex.EncodeToString(raw)
+	h.mu.Lock()
+	h.sessions[hashToken(token)] = sessionEntry{
+		CreatedAt:   time.Now(),
+		Username:    "anon",
+		Role:        role,
+		Guest:       true,
+		WorkspaceID: workspaceID,
+	}
+	h.pruneExpired()
+	h.mu.Unlock()
+	return token
+}
+
 // Role returns the role for a valid session token, or "" if unknown/expired.
 // A session with no stored role (created before Wave 9) is treated as owner.
 func (h *Handler) Role(token string) Role {
@@ -623,6 +669,11 @@ func (h *Handler) SetUsername(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+	if e.Guest {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "guest display name is fixed"})
 		return
 	}
 
@@ -757,9 +808,14 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 		valid := h.validSession(token)
 		role := Role("")
 		username := ""
+		guest := false
+		guestWorkspaceID := ""
 		if valid {
-			role = normalizeRole(h.sessions[key].Role)
-			username = h.sessions[key].Username
+			session := h.sessions[key]
+			role = normalizeRole(session.Role)
+			username = session.Username
+			guest = session.Guest
+			guestWorkspaceID = session.WorkspaceID
 		}
 		h.mu.Unlock()
 
@@ -771,6 +827,8 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), roleCtxKey, role)
 		ctx = context.WithValue(ctx, usernameCtxKey, username)
+		ctx = context.WithValue(ctx, guestCtxKey, guest)
+		ctx = context.WithValue(ctx, guestWorkspaceCtxKey, guestWorkspaceID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

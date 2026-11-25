@@ -38,6 +38,7 @@ and run `wede` from any subdirectory of it, and it will still be found.
 | `min_password_chars` | `int` | `12` | — | Minimum length for plaintext `password`/`users` values. `0` disables the check. `sha256:` entries are skipped. |
 | `session_timeout_hours` | `int` | `24` | — | Absolute login-session lifetime from creation, not an idle timeout. |
 | `token_link_login` | `string` | `off` | — | Allow file-backed login links: `remove` consumes the token file, `keep` allows reuse, `off` disables this feature. |
+| `rrcontrol` | `string` | `no` | — | Enable rrweb remote access: `no` permits teacher viewing only, `ask` asks the connected page for consent, `yes` permits control, `off` disables the feature. |
 | `teachers` | `string[]` | `[]` | — | Usernames allowed to start a forced-follow “Lead the rest” session. |
 | `workspaces` | `map[string]template` | `{}` | — | Named workspace templates offered in the login workspace picker. |
 | `defaults.workspace_timeout_secs` | `int` | `600` | — | Idle timeout after the last user leaves a session. `0` never expires. |
@@ -163,6 +164,26 @@ name, not a separate account identity. Use HTTPS and avoid logging or sharing
 the full URL: the application removes the token from browser history as soon as
 it starts the exchange.
 
+## `rrcontrol`
+
+Default `no`. The rrweb remote-access dashboard is available as a teacher-only
+IDE tab while the feature is enabled. Its page assets and client script are
+embedded in the Wede binary; support WebSocket connections are independently
+authenticated and rejected unless the logged-in user is a teacher.
+
+| Value | Behavior |
+|-------|----------|
+| `off` | Disable the client script, dashboard, and tab. |
+| `no` | Allow teachers to watch connected pages, but not control them; this is the default. |
+| `ask` | Ask each connected page for consent before recording; remote control stays disabled. |
+| `yes` | Allow teachers to watch and control connected pages without a consent prompt. |
+
+Each authenticated browser tab has a stable `tab_id`, while `who` is a
+changeable display name. Wede sets `who` to the logged-in username after login,
+so the tab identity stays stable while the displayed user name is corrected.
+Setting `rrcontrol` through a `--configs rrcontrol:hot:...` layer applies the
+mode change without restarting the server.
+
 ## `workspaces`
 
 Named templates shown in the login workspace picker after authentication.
@@ -173,8 +194,8 @@ name and creates an isolated active session rooted at the template path.
 {
   "defaults": { "workspace_timeout_secs": 600 },
   "workspaces": {
-    "cs101": { "path": "/srv/classes/cs101", "timeout_secs": 1800, "lsp": ["go", "python"] },
-    "scratch": { "path": "/srv/scratch", "timeout_secs": 0 }
+    "cs101": { "path": "/srv/classes/cs101", "lock": "users", "visible_to": ["alice", "bob"], "timeout_secs": 1800 },
+    "scratch": { "path": "/srv/scratch", "lock": "anon-ro", "timeout_secs": 0 }
   }
 }
 ```
@@ -184,6 +205,17 @@ name and creates an isolated active session rooted at the template path.
 | `path` | `string` | Directory opened for the session. Defaults to `.`. |
 | `timeout_secs` | `int` | Idle timeout after the last user leaves. `0` never expires. Falls back to `defaults.workspace_timeout_secs`. `timeout` is accepted as an alias. |
 | `lsp` | `string[]` | Optional language-server names reserved for per-session LSP wiring. |
+| `lock` | `string` | Join policy: `closed`, `users`, `anon-ro`, or `anon-rw`. Defaults to `closed`; omitted `lock` with a nonempty `visible_to` infers `users` for compatibility. |
+| `visible_to` | `string[]` | Usernames allowed when `lock: users`. |
+
+`closed` denies all joins. `users` permits only names in `visible_to`;
+`open_to_anybody` is deprecated but still accepted for existing configs (when
+true, it behaves like `lock: users` with all authenticated users allowed).
+`anon-ro` exposes the workspace to anyone without login using the viewer role;
+`anon-rw` grants anyone editor access, including file writes and terminal use.
+Treat `anon-rw` like publishing an editable shell to the public internet. Both
+anonymous modes let guests see and join that workspace's active session, but do
+not expose other templates or sessions.
 
 If `workspaces` is empty, wede exposes a single `default` template pointing at
 the boot path (the positional CLI argument / container work dir), so solo use

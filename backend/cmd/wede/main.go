@@ -242,6 +242,36 @@ func main() {
 	mux.HandleFunc("POST /api/auth/login", authHandler.Login)
 	mux.HandleFunc("GET /api/auth/check", authHandler.Check)
 	mux.HandleFunc("POST /api/auth/redeem", authHandler.HandleRedeem) // public: exchange an invite token for a session
+	mux.HandleFunc("GET /api/anonymous/sessions", wsMgr.HandleAnonymousTemplates)
+	mux.HandleFunc("POST /api/anonymous/sessions", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Template string `json:"template"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Template == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "template required"})
+			return
+		}
+		session, role, err := wsMgr.CreateAnonymousSession(body.Template, "")
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "this public workspace cannot be joined"})
+			return
+		}
+		token := authHandler.NewGuestSession(session.ID, role)
+		if token == "" {
+			http.Error(w, "could not create guest session", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"token": token, "username": "anon", "role": string(role),
+			"session": map[string]string{"id": session.ID, "name": session.Name, "template": session.Template},
+		})
+	})
 	mux.Handle("DELETE /api/auth/logout", authHandler.Middleware(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("POST /api/auth/username", authHandler.Middleware(http.HandlerFunc(authHandler.SetUsername)))
 
@@ -419,7 +449,7 @@ func main() {
 	// authFetch now rewrites them to /api/workspaces/{activeId}/... so every
 	// request follows the focused workspace.
 
-	mux.Handle("/api/", authHandler.Middleware(protected))
+	mux.Handle("/api/", authHandler.Middleware(wsMgr.AccessControl(protected)))
 
 	// Standalone marketing site (landing + docs viewer) for wede.vulos.org,
 	// mounted at /site/* so it never shadows the IDE app at / (behind sign-in).
@@ -543,9 +573,10 @@ func templatesFrom(c *config.Config, bootPath string) map[string]workspace.Templ
 		path = expandTilde(path)
 		out[name] = workspace.Template{
 			Name: name, Path: path, TimeoutSecs: w.EffectiveTimeout(def), LSP: append([]string(nil), w.LSP...),
-			VisibleTo:       append([]string(nil), w.VisibleTo...),
-			OpenToAnybody:   w.OpenToAnybody,
-			VisibleTabTypes: w.EffectiveVisibleTabTypes(c.VisibleTabTypes),
+			VisibleTo:           append([]string(nil), w.VisibleTo...),
+			Lock:                w.Lock,
+			LegacyOpenToAnybody: w.LegacyOpenToAnybody,
+			VisibleTabTypes:     w.EffectiveVisibleTabTypes(c.VisibleTabTypes),
 		}
 	}
 	if len(out) == 0 && bootPath != "" {

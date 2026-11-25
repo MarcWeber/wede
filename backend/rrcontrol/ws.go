@@ -104,6 +104,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			id = r.URL.Query().Get("id")
 		}
 		if id == "" {
+			id = r.URL.Query().Get("rrweb-remote-access")
+		}
+		if id == "" {
 			id = randomID(8)
 		}
 		if !s.hub.addClient(conn, id, r.URL.Query().Get("who")) {

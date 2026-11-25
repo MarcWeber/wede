@@ -585,6 +585,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	// never from a client-supplied query param, so a peer can't post as someone else.
 	// Color is purely cosmetic and not part of the session, so it stays client-chosen.
 	username := auth.GetUsername(r)
+	readOnlyGuest := auth.IsGuest(r) && !auth.GetRole(r).CanMutate()
 	color := r.URL.Query().Get("color")
 	if username == "" {
 		username = "anon"
@@ -612,7 +613,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(raw, &in); err != nil {
 			continue
 		}
-		if in.Type == "msg" && strings.TrimSpace(in.Text) != "" {
+		if !readOnlyGuest && in.Type == "msg" && strings.TrimSpace(in.Text) != "" {
 			h.Post(username, color, strings.TrimSpace(in.Text))
 		}
 	}

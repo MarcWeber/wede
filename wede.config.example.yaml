@@ -14,7 +14,7 @@ session_timeout_hours: 24
 # directory: remove consumes the file, keep allows reuse, off disables (default).
 # Empty token files do not expire; write YYYY-MM-DD or YYYY-MM-DD HH:mm to set
 # an inclusive expiry (24-hour, server local time).
-# http://.../&login_token=<token>&workspace=<workspace>:<collab>:<directory>
+# http://.../?user=<user>&login_token=<token>&workspace=<workspace>:<collab>:<directory>
 token_link_login: keep
 
 # RR remote-access mode: off, no (watch only), ask (request consent), yes (control).
@@ -110,18 +110,15 @@ visible_tab_types:
 workspace_allow_custom_directory: true
 
 # Workspace templates shown in the session picker.
+# lock: closed (default) = nobody can join; users = only visible_to users;
+# anon-ro = anyone, including logged-out visitors, can read; anon-rw = anyone can edit.
 workspaces:
   myproject:
     path: /path/to/project
-    # open_to_anybody: if true, any authenticated user can see and join.
-    # If false (default), only users listed in visible_to can see it.
-    # If visible_to is empty and open_to_anybody is false, the workspace is hidden.
-    open_to_anybody: true
-    # visible_to: optional list of usernames allowed to see this workspace.
-    # Only checked when open_to_anybody is false.
-    # visible_to:
-    #   - marc
-    #   - alice
+    lock: users
+    visible_to: [marc, bailo]
+    # lock: anon-ro
+    # lock: anon-rw
     # visible_tab_types: override which tabs are shown for this workspace.
     visible_tab_types:
       terminals: false

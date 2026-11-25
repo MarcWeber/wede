@@ -25,9 +25,15 @@ type ClientInfo struct {
 	Watchers int    `json:"watchers"`
 }
 
+// clientGrace keeps a client entry alive briefly after its socket drops so a
+// reload or short network blip can reconnect under the same tab id without
+// tearing down the viewer.
+const clientGrace = 20 * time.Second
+
 type client struct {
 	info       ClientInfo
 	conn       *Conn
+	goneTimer  *time.Timer
 	watchers   int
 	inviteSent bool
 	events     int64
@@ -35,13 +41,14 @@ type client struct {
 }
 
 type Conn struct {
-	ws         *websocket.Conn
-	writeMu    sync.Mutex
-	role       string
-	clientID   string
-	target     string
-	wire       *countingConn
-	compressed bool
+	ws               *websocket.Conn
+	writeMu          sync.Mutex
+	role             string
+	clientID         string
+	target           string
+	wire             *countingConn
+	compressed       bool
+	awaitingSnapshot bool
 }
 
 func (c *Conn) wireIn() int64 {
@@ -63,6 +70,9 @@ func newConn(ws *websocket.Conn, role string) *Conn {
 }
 
 func (c *Conn) send(v any) {
+	if c.ws == nil {
+		return
+	}
 	data, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("ws marshal (%s): %v", c.role, err)
@@ -122,28 +132,51 @@ func (h *Hub) addClient(c *Conn, id, who string) bool {
 		h.mu.Unlock()
 		return false
 	}
-	// A page that reconnects keeps its id. Carry active watchers over to the
-	// new connection so the viewer can continue without clicking again.
+	// A page that reconnects (e.g. after a reload) keeps its id. Carry active
+	// watchers over to the new connection so the viewer continues without
+	// asking again, and cancel any pending grace timer.
 	watchers := 0
-	if old := h.clients[id]; old != nil {
-		watchers = old.watchers
+	needInvite := false
+	cl := h.clients[id]
+	if cl != nil {
+		if cl.goneTimer != nil {
+			cl.goneTimer.Stop()
+			cl.goneTimer = nil
+		}
+		watchers = cl.watchers
+		if who != "" {
+			cl.info.Who = who
+		}
+		cl.info.Watching = watchers > 0
+		cl.info.Watchers = watchers
+		cl.events = 0
+		cl.payload = 0
+		needInvite = len(h.pending[id]) > 0
+		cl.inviteSent = needInvite
+	} else {
+		cl = &client{
+			info: ClientInfo{
+				ID:       id,
+				TabID:    id,
+				Who:      who,
+				Watching: false,
+				Watchers: 0,
+			},
+		}
+		h.clients[id] = cl
 	}
-	h.clients[id] = &client{
-		info: ClientInfo{
-			ID:       id,
-			TabID:    id,
-			Who:      who,
-			Watching: watchers > 0,
-			Watchers: watchers,
-		},
-		conn:     c,
-		watchers: watchers,
-	}
+	cl.conn = c
+	cl.info.URL = ""
+	cl.info.Title = ""
 	canControl := h.cfg.Control != "no"
 	h.mu.Unlock()
 
+	c.send(map[string]any{"type": "identity", "id": id})
 	if watchers > 0 {
-		c.send(map[string]any{"type": "watch-start", "canControl": canControl})
+		c.send(map[string]any{"type": "watch-start", "id": id, "canControl": canControl})
+	}
+	if needInvite {
+		c.send(map[string]any{"type": "watch-request"})
 	}
 	h.broadcastList()
 	log.Printf("client connected: id=%s who=%q watchers=%d", id, who, watchers)
@@ -194,26 +227,27 @@ func (h *Hub) removeConn(c *Conn) {
 	if c.role == "client" {
 		id := c.clientID
 		h.mu.Lock()
+		cl := h.clients[id]
 		// Ignore the old socket if this page already reconnected under the same id.
-		if cl := h.clients[id]; cl != nil && cl.conn != c {
+		if cl == nil || cl.conn != c {
 			h.mu.Unlock()
 			return
 		}
-		delete(h.clients, id)
-		delete(h.pending, id)
-		var watchers []*Conn
-		for s := range h.supports {
-			if s.target == id {
-				s.target = ""
-				watchers = append(watchers, s)
-			}
+		if cl.watchers == 0 && len(h.pending[id]) == 0 {
+			delete(h.clients, id)
+			h.mu.Unlock()
+			h.broadcastList()
+			log.Printf("client disconnected: id=%s", id)
+			return
 		}
+		// Keep the entry alive for a short grace period so a reload can
+		// reconnect and keep the viewer attached.
+		cl.conn = nil
+		watchers := cl.watchers
+		pending := len(h.pending[id])
+		cl.goneTimer = time.AfterFunc(clientGrace, func() { h.expireClient(id, cl) })
 		h.mu.Unlock()
-		for _, s := range watchers {
-			s.send(map[string]any{"type": "client-gone", "target": id})
-		}
-		h.broadcastList()
-		log.Printf("client disconnected: id=%s", id)
+		log.Printf("client disconnected (grace %s): id=%s watchers=%d pending=%d", clientGrace, id, watchers, pending)
 		return
 	}
 
@@ -222,6 +256,35 @@ func (h *Hub) removeConn(c *Conn) {
 	delete(h.supports, c)
 	h.mu.Unlock()
 	log.Printf("support disconnected")
+}
+
+func (h *Hub) expireClient(id string, cl *client) {
+	h.mu.Lock()
+	if h.clients[id] != cl || cl.conn != nil {
+		h.mu.Unlock()
+		return
+	}
+	delete(h.clients, id)
+	pending := h.pending[id]
+	delete(h.pending, id)
+	var watchers []*Conn
+	for s := range h.supports {
+		if s.target == id {
+			s.target = ""
+			watchers = append(watchers, s)
+		}
+	}
+	h.mu.Unlock()
+
+	gone := map[string]any{"type": "client-gone", "target": id}
+	for _, s := range pending {
+		s.send(gone)
+	}
+	for _, s := range watchers {
+		s.send(gone)
+	}
+	h.broadcastList()
+	log.Printf("client expired: id=%s", id)
 }
 
 func (h *Hub) readLoop(c *Conn) {
@@ -252,7 +315,7 @@ func (h *Hub) handleClient(c *Conn, m *inMsg) {
 	switch m.Type {
 	case "hello":
 		h.mu.Lock()
-		if cl := h.clients[c.clientID]; cl != nil {
+		if cl := h.clients[c.clientID]; cl != nil && cl.conn == c {
 			if m.Who != "" {
 				cl.info.Who = sanitizeWho(m.Who)
 			}
@@ -263,7 +326,7 @@ func (h *Hub) handleClient(c *Conn, m *inMsg) {
 		h.broadcastList()
 	case "who-update":
 		h.mu.Lock()
-		if cl := h.clients[c.clientID]; cl != nil {
+		if cl := h.clients[c.clientID]; cl != nil && cl.conn == c {
 			cl.info.Who = sanitizeWho(m.Who)
 		}
 		h.mu.Unlock()
@@ -272,20 +335,35 @@ func (h *Hub) handleClient(c *Conn, m *inMsg) {
 		if len(m.Event) == 0 {
 			return
 		}
+		kind := eventType(m.Event)
 		h.mu.Lock()
 		if h.cfg.Control == "off" {
 			h.mu.Unlock()
 			return
 		}
-		if cl := h.clients[c.clientID]; cl != nil {
-			cl.events++
-			cl.payload += int64(len(m.Event))
+		cl := h.clients[c.clientID]
+		if cl == nil || cl.conn != c {
+			// A reloaded page already owns this id; ignore the stale socket.
+			h.mu.Unlock()
+			return
 		}
+		cl.events++
+		cl.payload += int64(len(m.Event))
 		var targets []*Conn
 		for s := range h.supports {
-			if s.target == c.clientID {
-				targets = append(targets, s)
+			if s.target != c.clientID {
+				continue
 			}
+			if s.awaitingSnapshot {
+				if kind == 4 {
+					// Meta is useful before the full snapshot.
+				} else if kind == 2 {
+					s.awaitingSnapshot = false
+				} else {
+					continue
+				}
+			}
+			targets = append(targets, s)
 		}
 		h.mu.Unlock()
 		if len(targets) == 0 {
@@ -298,6 +376,16 @@ func (h *Hub) handleClient(c *Conn, m *inMsg) {
 	case "invite-response":
 		h.inviteResponse(c.clientID, m.Accepted)
 	}
+}
+
+func eventType(raw json.RawMessage) int {
+	var ev struct {
+		Type int `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		return -1
+	}
+	return ev.Type
 }
 
 func (h *Hub) handleSupport(c *Conn, m *inMsg) {
@@ -327,8 +415,12 @@ func (h *Hub) sendStats(c *Conn) {
 		return
 	}
 	events, payload := cl.events, cl.payload
-	pageUp, pageDown := cl.conn.wireIn(), cl.conn.wireOut()
-	compressed := cl.conn.compressed && c.compressed
+	var pageUp, pageDown int64
+	compressed := false
+	if cl.conn != nil {
+		pageUp, pageDown = cl.conn.wireIn(), cl.conn.wireOut()
+		compressed = cl.conn.compressed && c.compressed
+	}
 	h.mu.Unlock()
 
 	c.send(map[string]any{
@@ -402,7 +494,7 @@ func (h *Hub) watch(c *Conn, target string) {
 		h.mu.Unlock()
 
 		c.send(map[string]any{"type": "watch-pending"})
-		if needNotify {
+		if needNotify && conn != nil {
 			conn.send(map[string]any{"type": "watch-request"})
 		}
 		return
@@ -430,13 +522,18 @@ func (h *Hub) attach(c *Conn, target string) {
 	cl.info.Watchers = cl.watchers
 	cl.info.Watching = true
 	first := cl.watchers == 1
+	c.awaitingSnapshot = !first
 	info := cl.info
 	conn := cl.conn
 	canControl := h.cfg.Control != "no"
+	needSnapshot := !first && conn != nil
 	h.mu.Unlock()
 
-	if first {
-		conn.send(map[string]any{"type": "watch-start", "canControl": canControl})
+	if first && conn != nil {
+		conn.send(map[string]any{"type": "watch-start", "id": target, "canControl": canControl})
+	}
+	if needSnapshot {
+		conn.send(map[string]any{"type": "full-snapshot"})
 	}
 	c.send(map[string]any{
 		"type":       "watch-started",
@@ -490,9 +587,13 @@ func (h *Hub) unwatch(c *Conn) {
 		cl.info.Watching = cl.watchers > 0
 		if cl.watchers == 0 {
 			stopConn = cl.conn
+			var pageUp int64
+			if cl.conn != nil {
+				pageUp = cl.conn.wireIn()
+			}
 			summary = fmt.Sprintf(
 				"watch ended: client=%s events=%d rrweb_payload=%dB page_wire_up=%dB",
-				target, cl.events, cl.payload, cl.conn.wireIn(),
+				target, cl.events, cl.payload, pageUp,
 			)
 		}
 	}
