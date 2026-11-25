@@ -24,14 +24,15 @@ import (
 // legacy single-password fields for backwards compatibility; when Users is
 // non-empty each configured user signs in with their own entry.
 type Config struct {
-	Branding   string                     `json:"branding,omitempty"`
-	Password   string                     `json:"password,omitempty"`
-	Users      map[string]string          `json:"users,omitempty"`
-	Teachers   StringList                 `json:"teachers,omitempty"`
-	Port       string                     `json:"port,omitempty"`
-	Host       string                     `json:"host,omitempty"`
-	Workspaces map[string]WorkspaceConfig `json:"workspaces,omitempty"`
-	Defaults   Defaults                   `json:"defaults,omitempty"`
+	Branding       string                     `json:"branding,omitempty"`
+	Password       string                     `json:"password,omitempty"`
+	Users          map[string]string          `json:"users,omitempty"`
+	Teachers       StringList                 `json:"teachers,omitempty"`
+	Port           string                     `json:"port,omitempty"`
+	Host           string                     `json:"host,omitempty"`
+	Workspaces     map[string]WorkspaceConfig `json:"workspaces,omitempty"`
+	Defaults       Defaults                   `json:"defaults,omitempty"`
+	TokenLinkLogin string                     `json:"token_link_login,omitempty"`
 
 	// MinPasswordChars is the minimum length for a plaintext password or user
 	// entry. 0 disables the check. Defaults to 12.
@@ -464,6 +465,7 @@ func (s *Store) build() (*Config, error) {
 		Host:             "127.0.0.1",
 		Defaults:         Defaults{WorkspaceTimeoutSecs: 600},
 		MinPasswordChars: 12,
+		TokenLinkLogin:   "off",
 		ViewImage:        "tab-viewer",
 		ViewPdf:          "tab-pdf-js",
 	}
@@ -484,6 +486,9 @@ func (s *Store) build() (*Config, error) {
 	}
 	if len(cfg.Branding) > 64 {
 		return nil, fmt.Errorf("branding must be at most 64 characters")
+	}
+	if err := normalizeTokenLinkLogin(cfg); err != nil {
+		return nil, err
 	}
 	if cfg.Defaults.Timeout() < 0 {
 		return nil, fmt.Errorf("defaults.workspace_timeout_secs must be >= 0")
@@ -533,7 +538,7 @@ func findLegacy() (string, []byte, error) {
 			return p, d, nil
 		}
 	}
- return "", nil, fmt.Errorf("wede.config.yaml not found (searched cwd, parent dirs, ~/.config/wede/, and next to executable)")
+	return "", nil, fmt.Errorf("wede.config.yaml not found (searched cwd, parent dirs, ~/.config/wede/, and next to executable)")
 }
 
 func decodeMap(data []byte, source string) (map[string]any, error) {
@@ -650,17 +655,21 @@ func parse(data []byte) (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{
-		Branding:  "wede",
-		Port:      "9090",
-		Host:      "127.0.0.1",
-		Defaults:  Defaults{WorkspaceTimeoutSecs: 600},
-		ViewImage: "tab-viewer",
-		ViewPdf:   "tab-pdf-js",
+		Branding:       "wede",
+		Port:           "9090",
+		Host:           "127.0.0.1",
+		Defaults:       Defaults{WorkspaceTimeoutSecs: 600},
+		TokenLinkLogin: "off",
+		ViewImage:      "tab-viewer",
+		ViewPdf:        "tab-pdf-js",
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
- if err := dec.Decode(cfg); err != nil {
+	if err := dec.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("invalid wede.config.yaml: %w", err)
+	}
+	if err := normalizeTokenLinkLogin(cfg); err != nil {
+		return nil, err
 	}
 	if len(cfg.Users) == 0 && cfg.Password == "" {
 		return nil, fmt.Errorf("password is required in wede.config.yaml")
@@ -669,6 +678,18 @@ func parse(data []byte) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func normalizeTokenLinkLogin(cfg *Config) error {
+	if cfg.TokenLinkLogin == "" {
+		cfg.TokenLinkLogin = "off"
+	}
+	switch cfg.TokenLinkLogin {
+	case "off", "keep", "remove":
+		return nil
+	default:
+		return fmt.Errorf("token_link_login must be one of: off, keep, remove")
+	}
 }
 
 // normalizeViewModes applies defaults and validates the media view preferences.

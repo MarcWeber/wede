@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from './hooks/useAuth'
-import { useTheme } from './hooks/useTheme'
 import { useWorkspaces, urlCustomDirectory, urlCollabContext, urlTabViewState } from './hooks/useWorkspaces'
 import Logo from './components/Logo'
 import Login from './components/Login'
@@ -18,8 +17,7 @@ interface WorkspaceFolderState {
 }
 
 function App() {
-  const { token, username, role, teacher, debug, login, logout, redeem, error, remaining, authFetch, updateUsername } = useAuth()
-  const { theme, setTheme } = useTheme()
+  const { token, username, role, teacher, debug, login, loginWithToken, logout, redeem, error, remaining, authFetch, updateUsername } = useAuth()
   const workspacesApi = useWorkspaces(token, authFetch)
   const { createWorkspace, setActiveWorkspaceId, workspaces } = workspacesApi
   const activeWs = workspaces.find((w) => w.id === workspacesApi.activeWorkspaceId)
@@ -55,15 +53,28 @@ function App() {
   }, [token, fetchWorkspace])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // Handle ?invite=TOKEN in the URL: redeem the token then strip the param so
-  // the invite link isn't reusable by copy-pasting from the address bar.
+  // Exchange link credentials immediately, then remove them from browser
+  // history. Keep workspace and other navigation parameters intact.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
+    const loginToken = params.get('login_token')
+    if (loginToken) {
+      const name = params.get('user') || ''
+      params.delete('login_token')
+      params.delete('user')
+      const qs = params.toString()
+      history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash)
+      void loginWithToken(loginToken, name)
+      return
+    }
+
     const invite = params.get('invite')
     if (!invite) return
-    history.replaceState({}, '', window.location.pathname)
+    params.delete('invite')
+    const qs = params.toString()
+    history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash)
     redeem(invite).catch(() => {})
-  }, [redeem])
+  }, [loginWithToken, redeem])
 
   // Custom directories are opt-in per deployment. The flag also gates the
   // WorkspaceSwitcher's manual path entry.

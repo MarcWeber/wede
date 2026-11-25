@@ -27,6 +27,26 @@ func TestParseDefaults(t *testing.T) {
 	if cfg.TunnelEnabled {
 		t.Error("TunnelEnabled should default to false")
 	}
+	if cfg.TokenLinkLogin != "off" {
+		t.Errorf("TokenLinkLogin = %q, want default off", cfg.TokenLinkLogin)
+	}
+}
+
+func TestParseTokenLinkLoginModes(t *testing.T) {
+	for _, mode := range []string{"off", "keep", "remove"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, err := parse([]byte(`{"password":"x","token_link_login":"` + mode + `"}`))
+			if err != nil {
+				t.Fatalf("parse token_link_login %q: %v", mode, err)
+			}
+			if cfg.TokenLinkLogin != mode {
+				t.Errorf("TokenLinkLogin = %q, want %q", cfg.TokenLinkLogin, mode)
+			}
+		})
+	}
+	if _, err := parse([]byte(`{"password":"x","token_link_login":"yes"}`)); err == nil {
+		t.Fatal("expected invalid token_link_login mode to be rejected")
+	}
 }
 
 func TestParseTunnelEnabled(t *testing.T) {
@@ -118,6 +138,7 @@ func TestLayeredConfigMergeYAML(t *testing.T) {
 	if err := os.WriteFile(base, []byte(`{
 		"password":"legacy",
 		"min_password_chars":0,
+		"token_link_login":"keep",
 		"port":"9090",
 		"users":{"alice":"a","bob":"b"},
 		"teachers":["alice"],
@@ -128,6 +149,7 @@ func TestLayeredConfigMergeYAML(t *testing.T) {
 	}
 	if err := os.WriteFile(over, []byte(`
 port: "8080"
+token_link_login: remove
 users:
   bob: b2
   carol: c
@@ -155,6 +177,9 @@ workspaces:
 	cfg := st.Current()
 	if cfg.Port != "8080" {
 		t.Errorf("port = %q, want 8080", cfg.Port)
+	}
+	if cfg.TokenLinkLogin != "remove" {
+		t.Errorf("TokenLinkLogin = %q, want remove", cfg.TokenLinkLogin)
 	}
 	if _, ok := cfg.Users["bob"]; ok {
 		t.Error("bob should be deleted")

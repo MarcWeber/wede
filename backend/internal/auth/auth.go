@@ -58,6 +58,8 @@ type sessionEntry struct {
 // maxUsernameLen bounds a stored username.
 const maxUsernameLen = 32
 
+const oneTimeLoginFilePrefix = ".wede_one_time_login_"
+
 // sanitizeUsername trims and length-caps a chosen username. An empty result is
 // allowed; the presence layer substitutes a default ("anon").
 func sanitizeUsername(s string) string {
@@ -103,7 +105,9 @@ type Handler struct {
 	password      string
 	users         map[string]string // username -> password (plain or "sha256:hex")
 	teachers      map[string]bool   // set of teacher usernames
-	debug         bool              // when true, server-log and client-log are available
+	tokenLinkMode string
+	tokenLinkDir  string
+	debug         bool // when true, server-log and client-log are available
 	mu            sync.Mutex
 	attempts      map[string]clientAttempt // client address -> failures
 	maxAttempts   int
@@ -129,6 +133,7 @@ func NewWithDataDir(password, dir string) *Handler {
 	os.MkdirAll(dir, 0700)
 	h := &Handler{
 		password:      password,
+		tokenLinkMode: "off",
 		maxAttempts:   defaultMaxAttempts,
 		lockoutWindow: defaultLockoutWindow,
 		attempts:      make(map[string]clientAttempt),
@@ -290,14 +295,20 @@ func (h *Handler) validSession(token string) bool {
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 
 	var body struct {
-		Password string `json:"password"`
-		Username string `json:"username"`
+		Password   string `json:"password"`
+		Username   string `json:"username"`
+		LoginToken string `json:"login_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request"})
+		return
+	}
+	if body.LoginToken != "" {
+		h.loginWithOneTimeToken(w, r, body.LoginToken, body.Username)
 		return
 	}
 
@@ -378,6 +389,93 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		"username": username,
 		"role":     string(RoleOwner),
 		"teacher":  true,
+	})
+}
+
+func validOneTimeLoginToken(token string) bool {
+	if len(token) < 32 || len(token) > 128 {
+		return false
+	}
+	for i := 0; i < len(token); i++ {
+		c := token[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func validOneTimeLoginExpiry(contents []byte, now time.Time) bool {
+	if len(contents) == 0 {
+		return true
+	}
+
+	expiry := strings.TrimSpace(string(contents))
+	for _, layout := range []string{"2006-01-02", "2006-01-02 15:04"} {
+		date, err := time.ParseInLocation(layout, expiry, time.Local)
+		if err == nil && date.Format(layout) == expiry {
+			return now.In(time.Local).Format(layout) <= expiry
+		}
+	}
+	return false
+}
+
+func (h *Handler) loginWithOneTimeToken(w http.ResponseWriter, r *http.Request, token, username string) {
+	if !h.allowRedeem(clientIP(r)) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]string{"error": "too many attempts; try again later"})
+		return
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if (h.tokenLinkMode != "remove" && h.tokenLinkMode != "keep") || !validOneTimeLoginToken(token) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+		return
+	}
+
+	username = sanitizeUsername(username)
+	// Link usernames are display names, not proof of identity. In particular,
+	// they must not impersonate a configured teacher account.
+	if h.teachers[username] {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+		return
+	}
+
+	path := filepath.Join(h.tokenLinkDir, oneTimeLoginFilePrefix+token)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+		return
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil || !validOneTimeLoginExpiry(contents, time.Now()) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+		return
+	}
+	if h.tokenLinkMode == "remove" {
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"error": "invalid or unavailable login token"})
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "could not consume login token"})
+			return
+		}
+	}
+
+	sessionToken := h.newSession(username, RoleEditor)
+	json.NewEncoder(w).Encode(map[string]any{
+		"token":    sessionToken,
+		"username": username,
+		"role":     string(RoleEditor),
+		"teacher":  false,
 	})
 }
 
@@ -652,6 +750,13 @@ func (h *Handler) SetCredentials(password string, users map[string]string) {
 	defer h.mu.Unlock()
 	h.password = password
 	h.users = users
+}
+
+func (h *Handler) SetTokenLinkLogin(mode, dir string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.tokenLinkMode = mode
+	h.tokenLinkDir = dir
 }
 
 // SetTeachers updates the set of teacher usernames.

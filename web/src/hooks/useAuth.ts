@@ -139,6 +139,40 @@ export function useAuth() {
     }
   }, [])
 
+  const loginWithToken = useCallback(async (token: string, name = ''): Promise<boolean> => {
+    setError(null)
+    try {
+      const res = await fetch(`${apiBase()}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login_token: token, username: name }),
+      })
+      const data = await res.json() as LoginResponse
+      if (!res.ok || !data.token) {
+        setError('This login link is invalid, expired, or disabled.')
+        return false
+      }
+      sessionStorage.setItem('wede_token', data.token)
+      sessionStorage.removeItem('wede_session_id')
+      setToken(data.token)
+      const resolved = data.username || name || ''
+      sessionStorage.setItem('wede_username', resolved)
+      setUsername(resolved)
+      const resolvedRole = data.role || 'editor'
+      sessionStorage.setItem('wede_role', resolvedRole)
+      setRole(resolvedRole)
+      const resolvedTeacher = !!data.teacher
+      sessionStorage.setItem('wede_teacher', resolvedTeacher ? '1' : '0')
+      setTeacher(resolvedTeacher)
+      setLocked(false)
+      setRemaining(undefined)
+      return true
+    } catch {
+      setError('Cannot connect to server')
+      return false
+    }
+  }, [])
+
   // redeem exchanges a raw invite token for a new session and stores the result
   // exactly like login does.
   const redeem = useCallback(async (inviteToken: string): Promise<boolean> => {
@@ -211,5 +245,5 @@ export function useAuth() {
     } catch { /* ignore */ }
   }, [])
 
-  return { token, username, role, teacher, debug, login, logout, redeem, error, locked, remaining, authFetch, updateUsername }
+  return { token, username, role, teacher, debug, login, loginWithToken, logout, redeem, error, locked, remaining, authFetch, updateUsername }
 }

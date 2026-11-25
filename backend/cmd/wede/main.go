@@ -133,10 +133,16 @@ func main() {
 	wsMgr := workspace.NewManager(cfg.FrameAncestors, cfg.WorkspaceRoot)
 
 	authHandler := auth.New(cfg.Password)
+	tokenLinkDir, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		log.Printf("token link login: could not determine working directory: %v", cwdErr)
+		tokenLinkDir = "."
+	}
 	wsMgr.SetTeacherChecker(authHandler.IsTeacher)
 
 	applyConfig := func(c *config.Config) {
 		authHandler.SetCredentials(c.Password, c.Users)
+		authHandler.SetTokenLinkLogin(c.TokenLinkLogin, tokenLinkDir)
 		authHandler.SetTeachers(c.Teachers)
 		authHandler.SetDebug(c.Debug)
 		wsMgr.SetDefaultTimeout(c.Defaults.Timeout())

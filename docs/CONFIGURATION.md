@@ -34,6 +34,7 @@ and run `wede` from any subdirectory of it, and it will still be found.
 | `password` | `string` | *(none)* | — | Legacy shared login password. Required only when `users` is empty. |
 | `users` | `map[string]string` | `{}` | — | Per-user passwords. When non-empty, each user signs in with their own entry; the legacy `password` is ignored. |
 | `min_password_chars` | `int` | `12` | — | Minimum length for plaintext `password`/`users` values. `0` disables the check. `sha256:` entries are skipped. |
+| `token_link_login` | `string` | `off` | — | Allow file-backed login links: `remove` consumes the token file, `keep` allows reuse, `off` disables this feature. |
 | `teachers` | `string[]` | `[]` | — | Usernames allowed to start a forced-follow “Lead the rest” session. |
 | `workspaces` | `map[string]template` | `{}` | — | Named workspace templates offered in the login workspace picker. |
 | `defaults.workspace_timeout_secs` | `int` | `600` | — | Idle timeout after the last user leaves a session. `0` never expires. |
@@ -111,6 +112,39 @@ weak passwords even when they satisfy the minimum length.
   "min_password_chars": 12
 }
 ```
+
+## `token_link_login`
+
+Default `off`. Set this to `remove` or `keep` to allow a URL containing
+`?user=<name>&login_token=<token>&workspace=<workspace-id>` to create an editor
+session without a password. The workspace parameter continues to use the normal
+workspace/session URL handling.
+
+The server checks for a regular file named
+`.wede_one_time_login_<token>` in its current working directory. Tokens must be
+32–128 URL-safe characters (`A-Z`, `a-z`, `0-9`, `_`, or `-`). An empty token
+file does not expire; otherwise, its contents must be an expiry in
+`YYYY-mm-dd` or `YYYY-mm-dd HH:mm` format (24-hour time). It is interpreted
+using the server's local date and time. A date-only expiry is valid through
+that date; a date-time expiry is valid through the specified minute. Values
+already past or malformed non-empty contents are rejected. For example, create
+a token that expires at the end of December 31, 2026, from the directory where
+wede is launched:
+
+```sh
+TOKEN=$(openssl rand -hex 32)
+(umask 077; printf '%s\n' '2026-12-31 23:59' > ".wede_one_time_login_${TOKEN}")
+printf '%s\n' "https://wede.example/?user=alice&login_token=${TOKEN}&workspace=<workspace-id>"
+```
+
+`remove` deletes the file when login succeeds, so only one request can redeem
+it, including concurrent requests. `keep` leaves the file in place and the link
+can create multiple editor sessions. `off` rejects these links and is the
+default. Link sessions are editors, never owners; a configured teacher username
+cannot be claimed through a link. The username is still a user-chosen display
+name, not a separate account identity. Use HTTPS and avoid logging or sharing
+the full URL: the application removes the token from browser history as soon as
+it starts the exchange.
 
 ## `workspaces`
 

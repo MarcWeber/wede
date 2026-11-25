@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -32,6 +33,172 @@ func login(t *testing.T, h *Handler, password, username string) map[string]any {
 	var out map[string]any
 	json.NewDecoder(rec.Result().Body).Decode(&out)
 	return out
+}
+
+func oneTimeLogin(t *testing.T, h *Handler, token, username string) (int, map[string]any) {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"login_token": token, "username": username})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	h.Login(rec, req)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
+func createOneTimeLoginFile(t *testing.T, dir, token string) string {
+	t.Helper()
+	path := filepath.Join(dir, oneTimeLoginFilePrefix+token)
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestOneTimeLoginDisabledByDefault(t *testing.T) {
+	h := newTestHandler(t)
+	dir := t.TempDir()
+	token := strings.Repeat("a", 64)
+	path := createOneTimeLoginFile(t, dir, token)
+
+	status, _ := oneTimeLogin(t, h, token, "alice")
+	if status != http.StatusUnauthorized {
+		t.Fatalf("disabled token login status = %d, want 401", status)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("disabled token login changed token file: %v", err)
+	}
+}
+
+func TestOneTimeLoginRemoveConsumesTokenAndCreatesEditor(t *testing.T) {
+	h := newTestHandler(t)
+	dir := t.TempDir()
+	token := strings.Repeat("b", 64)
+	path := createOneTimeLoginFile(t, dir, token)
+	h.SetTokenLinkLogin("remove", dir)
+
+	status, out := oneTimeLogin(t, h, token, " alice ")
+	if status != http.StatusOK {
+		t.Fatalf("token login status = %d, want 200: %v", status, out)
+	}
+	if out["username"] != "alice" || out["role"] != string(RoleEditor) || out["teacher"] != false {
+		t.Errorf("token login response = %+v, want alice/editor/non-teacher", out)
+	}
+	if got := h.Role(out["token"].(string)); got != RoleEditor {
+		t.Errorf("session role = %q, want editor", got)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("consumed token file still exists (stat err = %v)", err)
+	}
+	if status, _ := oneTimeLogin(t, h, token, "alice"); status != http.StatusUnauthorized {
+		t.Errorf("second token login status = %d, want 401", status)
+	}
+}
+
+func TestOneTimeLoginKeepAllowsReuse(t *testing.T) {
+	h := newTestHandler(t)
+	dir := t.TempDir()
+	token := strings.Repeat("c", 64)
+	path := createOneTimeLoginFile(t, dir, token)
+	h.SetTokenLinkLogin("keep", dir)
+
+	firstStatus, first := oneTimeLogin(t, h, token, "alice")
+	secondStatus, second := oneTimeLogin(t, h, token, "bob")
+	if firstStatus != http.StatusOK || secondStatus != http.StatusOK {
+		t.Fatalf("keep login statuses = %d, %d; want 200, 200", firstStatus, secondStatus)
+	}
+	if first["token"] == second["token"] {
+		t.Error("reused link should issue distinct session tokens")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("keep mode removed token file: %v", err)
+	}
+}
+
+func TestOneTimeLoginExpiryDate(t *testing.T) {
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+	validThroughMinute := now.Add(5 * time.Minute).Format("2006-01-02 15:04")
+	expiredMinute := now.Add(-5 * time.Minute).Format("2006-01-02 15:04")
+
+	for _, tc := range []struct {
+		name       string
+		contents   string
+		wantStatus int
+	}{
+		{name: "today is valid", contents: today, wantStatus: http.StatusOK},
+		{name: "future date is valid", contents: tomorrow, wantStatus: http.StatusOK},
+		{name: "future date and time is valid", contents: validThroughMinute, wantStatus: http.StatusOK},
+		{name: "past date is expired", contents: yesterday, wantStatus: http.StatusUnauthorized},
+		{name: "past date and time is expired", contents: expiredMinute, wantStatus: http.StatusUnauthorized},
+		{name: "invalid date is rejected", contents: "not-a-date", wantStatus: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHandler(t)
+			dir := t.TempDir()
+			token := strings.Repeat("f", 64)
+			path := createOneTimeLoginFile(t, dir, token)
+			if err := os.WriteFile(path, []byte(tc.contents+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			h.SetTokenLinkLogin("keep", dir)
+
+			status, _ := oneTimeLogin(t, h, token, "alice")
+			if status != tc.wantStatus {
+				t.Fatalf("login status = %d, want %d", status, tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestOneTimeLoginRejectsUnsafeTokenAndTeacherUsername(t *testing.T) {
+	h := newTestHandler(t)
+	dir := t.TempDir()
+	h.SetTokenLinkLogin("keep", dir)
+	if status, _ := oneTimeLogin(t, h, "../../etc/passwd", "alice"); status != http.StatusUnauthorized {
+		t.Errorf("unsafe token status = %d, want 401", status)
+	}
+
+	token := strings.Repeat("d", 64)
+	path := createOneTimeLoginFile(t, dir, token)
+	h.SetTeachers([]string{"teacher"})
+	if status, _ := oneTimeLogin(t, h, token, "teacher"); status != http.StatusUnauthorized {
+		t.Errorf("teacher username token login status = %d, want 401", status)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("rejected teacher login consumed token file: %v", err)
+	}
+}
+
+func TestOneTimeLoginRemoveIsSingleUseUnderConcurrency(t *testing.T) {
+	h := newTestHandler(t)
+	dir := t.TempDir()
+	token := strings.Repeat("e", 64)
+	createOneTimeLoginFile(t, dir, token)
+	h.SetTokenLinkLogin("remove", dir)
+
+	var wg sync.WaitGroup
+	statuses := make([]int, 2)
+	for i := range statuses {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			body := `{"login_token":"` + token + `","username":"alice"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+			h.Login(rec, req)
+			statuses[i] = rec.Code
+		}(i)
+	}
+	wg.Wait()
+	if (statuses[0] == http.StatusOK) == (statuses[1] == http.StatusOK) {
+		t.Errorf("concurrent statuses = %v, want exactly one success", statuses)
+	}
 }
 
 func TestLoginStoresAndReturnsUsername(t *testing.T) {
