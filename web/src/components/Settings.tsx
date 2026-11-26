@@ -9,6 +9,10 @@ import type { useWorkspaces } from '../hooks/useWorkspaces'
 import { useMediaSettings, type ImageViewMode, type PdfViewMode } from '../lib/mediaSettings'
 import { Eye, EyeOff } from 'lucide-react'
 
+const TAB_LABELS: Record<string, string> = {
+  'session-tabs': 'Session tabs',
+}
+
 interface TrustState {
   trusted: boolean
   hasProjectConfig: boolean
@@ -287,13 +291,13 @@ export default function Settings({ visible, onClose, workspace, editorSettings, 
         {visibleTabTypes && (
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">Tab visibility</h3>
-            <p className="text-[10px] text-text-muted mb-2">Show or hide tab types in the menu. Controlled by workspace config.</p>
+            <p className="text-[10px] text-text-muted mb-2">Show or hide menu entries. Changes are saved in this browser.</p>
             <div className="flex flex-wrap gap-1.5">
-              {Object.entries(visibleTabTypes).map(([kind, shown]) => (
+              {Object.entries(visibleTabTypes).filter(([kind]) => kind !== 'rrcontrol').map(([kind, shown]) => (
                 <label key={kind} className="flex items-center gap-3 bg-bg-primary border border-border rounded-lg px-3 py-2 cursor-pointer group">
                   <div className="flex items-center gap-2">
                     {shown ? <Eye className="w-3.5 h-3.5 text-text-muted" /> : <EyeOff className="w-3.5 h-3.5 text-text-muted" />}
-                    <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors capitalize">{kind}</span>
+                    <span className="text-xs text-text-secondary group-hover:text-text-primary transition-colors capitalize">{TAB_LABELS[kind] ?? kind}</span>
                   </div>
                   <Toggle checked={shown} onChange={(v) => {
                     const next = { ...visibleTabTypes, [kind]: v }

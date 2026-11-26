@@ -1336,8 +1336,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     for (const [k, v] of Object.entries(localVisibleTabTypes)) {
       merged[k] = v
     }
+    // Keep RR Control available to teachers whenever enabled; it is not a
+    // user-toggleable tab, and old saved visibility preferences must not hide it.
+    if (rrControlEnabled && teacher) merged['rrcontrol'] = true
     return merged
-  }, [visibleTabTypes, localVisibleTabTypes])
+  }, [visibleTabTypes, localVisibleTabTypes, rrControlEnabled, teacher])
 
   // Expose FileExplorer's refresh + new-file/folder triggers for the command palette and SSE watcher.
   const explorerActionsRef = useRef<ExplorerActions | null>(null)
@@ -3343,7 +3346,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       onOpenSharedTab={(rel) => { void openFile({ path: rel, rel, workspaceId }) }}
       selfId={selfId}
       teacher={teacher}
-      onOpenRemoteControl={rrControlEnabled ? () => {
+      onOpenRemoteControl={rrControlEnabled && mergedVisibleTabTypes.rrcontrol !== false ? () => {
         const viewer = window.open(`${basePath()}/remote-control`, '_blank')
         if (viewer) viewer.opener = null
       } : undefined}
