@@ -28,8 +28,8 @@ export function basePath(pathname?: string): string {
 /**
  * Returns the API base URL (e.g. '/api' or '/wede/api').
  */
-export function apiBase(): string {
-  return `${basePath()}/api`
+export function apiBase(pathname?: string): string {
+  return `${basePath(pathname)}/api`
 }
 
 // Legacy constant kept for backward compatibility — resolves to the same value

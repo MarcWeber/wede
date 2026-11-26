@@ -6,7 +6,7 @@ import Login from './components/Login'
 import IDE from './components/IDE'
 import ChooseWorkspaceAndTabSession from './components/ChooseWorkspaceAndTabSession'
 import { navigateToSession } from './lib/sessionNav'
-import { basePath, workspaceUrl } from './api'
+import { apiBase, basePath, workspaceUrl } from './api'
 
 interface WorkspaceFolderState {
   hasWorkspace?: boolean
@@ -127,7 +127,7 @@ function App() {
   // WorkspaceSwitcher's manual path entry.
   useEffect(() => {
     let cancelled = false
-    fetch('/api/ui-config')
+    fetch(`${apiBase()}/ui-config`)
       .then((r) => r.json())
       .then((data: { workspace_allow_custom_directory?: unknown; rrcontrol?: unknown }) => {
         if (!cancelled) {
@@ -152,9 +152,9 @@ function App() {
   }, [token, username])
 
   useEffect(() => {
-    if (!token || !rrControlMode || rrControlMode === 'off') return
+    if (!rrControlMode || rrControlMode === 'off') return
     const script = document.createElement('script')
-    const params = new URLSearchParams({ tab_id: rrControlTabID, who: username.trim() || 'wede-user' })
+    const params = new URLSearchParams({ tab_id: rrControlTabID })
     script.src = `${basePath()}/rrcontrol/script.js?${params}`
     script.async = true
     script.dataset.wedeRrcontrol = 'true'
@@ -165,7 +165,7 @@ function App() {
       delete rrWindow.__rrwebRemote
       script.remove()
     }
-  }, [token, username, rrControlMode, rrControlTabID])
+  }, [rrControlMode, rrControlTabID])
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {

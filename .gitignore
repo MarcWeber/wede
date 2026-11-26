@@ -31,6 +31,7 @@ scripts/demo-workspace/.wede/
 test-results/
 playwright-report/
 blob-report/
+web/.playwright-dist/
 # Large local artifacts (never commit)
 ai2.md
 experimental-build-with-esbuild.sh

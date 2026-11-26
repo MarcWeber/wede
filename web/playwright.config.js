@@ -48,9 +48,12 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     serviceWorkers: 'block',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+  ],
   webServer: {
-    command: `npx vite preview --port ${PORT} --strictPort`,
+    command: `npx vite preview --outDir .playwright-dist --port ${PORT} --strictPort`,
     url: BASE_URL,
     // Never reuse a server on this port — it could be another app, and we would
     // silently test the wrong bundle.

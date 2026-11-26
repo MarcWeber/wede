@@ -102,6 +102,112 @@ func TestSupportSocketNegotiatesAuthenticationSubprotocolThroughProxyPrefix(t *t
 	}
 }
 
+func TestConcurrentClientSocketsWithCopiedTabIDGetDistinctIdentities(t *testing.T) {
+	server, err := New(Options{
+		ControlMode:  "yes",
+		Authenticate: func(next http.Handler) http.Handler { return next },
+		IsTeacher:    func(*http.Request) bool { return true },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	baseURL := "ws" + httpServer.URL[len("http"):]
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	dial := func() (*websocket.Conn, string) {
+		t.Helper()
+		conn, _, err := websocket.Dial(ctx, baseURL+"/ws?role=client&tab_id=copied-tab-id", nil)
+		if err != nil {
+			t.Fatalf("dial client: %v", err)
+		}
+		readCtx, readCancel := context.WithTimeout(ctx, 3*time.Second)
+		defer readCancel()
+		_, data, err := conn.Read(readCtx)
+		if err != nil {
+			t.Fatalf("read client identity: %v", err)
+		}
+		var message map[string]any
+		if err := json.Unmarshal(data, &message); err != nil {
+			t.Fatalf("decode client identity: %v", err)
+		}
+		if message["type"] != "identity" {
+			t.Fatalf("first client message = %v, want identity", message["type"])
+		}
+		id, ok := message["id"].(string)
+		if !ok || id == "" {
+			t.Fatalf("client identity id = %v, want non-empty string", message["id"])
+		}
+		return conn, id
+	}
+
+	first, firstID := dial()
+	defer first.Close(websocket.StatusNormalClosure, "test complete")
+	second, secondID := dial()
+	defer second.Close(websocket.StatusNormalClosure, "test complete")
+
+	if firstID != "copied-tab-id" {
+		t.Fatalf("first identity = %q, want original tab id", firstID)
+	}
+	if secondID == firstID {
+		t.Fatalf("concurrent client received duplicate identity %q", secondID)
+	}
+
+	server.hub.mu.Lock()
+	defer server.hub.mu.Unlock()
+	if len(server.hub.clients) != 2 {
+		t.Fatalf("registered clients = %d, want 2", len(server.hub.clients))
+	}
+}
+
+func TestWebSocketKeepaliveSendsPing(t *testing.T) {
+	pingReceived := make(chan struct{}, 1)
+	server, err := New(Options{
+		ControlMode:  "no",
+		Authenticate: func(next http.Handler) http.Handler { return next },
+		IsTeacher:    func(*http.Request) bool { return true },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server.hub.keepaliveInterval = 10 * time.Millisecond
+	server.hub.keepaliveTimeout = time.Second
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	wsURL := "ws" + httpServer.URL[len("http"):] + "/ws?role=client"
+	client, _, err := websocket.Dial(context.Background(), wsURL, &websocket.DialOptions{
+		OnPingReceived: func(context.Context, []byte) bool {
+			pingReceived <- struct{}{}
+			return true
+		},
+	})
+	if err != nil {
+		t.Fatalf("websocket.Dial: %v", err)
+	}
+	readDone := make(chan struct{})
+	defer func() {
+		_ = client.Close(websocket.StatusNormalClosure, "test complete")
+		<-readDone
+	}()
+	go func() {
+		defer close(readDone)
+		for {
+			if _, _, err := client.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-pingReceived:
+	case <-time.After(time.Second):
+		t.Fatal("server did not send a WebSocket ping")
+	}
+}
+
 func TestSecondViewerDoesNotDisconnectWatchedClient(t *testing.T) {
 	authenticate := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -359,5 +465,105 @@ func TestClientReloadWithinGraceKeepsViewerAttached(t *testing.T) {
 	}
 	if got := readMessage(support)["type"]; got != "rrweb" {
 		t.Fatalf("support message after reload = %v, want rrweb", got)
+	}
+}
+
+// rrweb wraps a full DOM snapshot in a single message. Those are routinely
+// larger than coder/websocket's 32 KiB default read limit, and the resulting
+// StatusMessageTooBig close used to send the client into a reconnect loop.
+func TestLargeRRWebFrameKeepsClientConnected(t *testing.T) {
+	server, err := New(Options{
+		ControlMode:  "yes",
+		Authenticate: func(next http.Handler) http.Handler { return next },
+		IsTeacher:    func(*http.Request) bool { return true },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	baseURL := "ws" + httpServer.URL[len("http"):]
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	readMessage := func(conn *websocket.Conn) map[string]any {
+		t.Helper()
+		readCtx, readCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer readCancel()
+		_, data, err := conn.Read(readCtx)
+		if err != nil {
+			t.Fatalf("read WebSocket message: %v", err)
+		}
+		var message map[string]any
+		if err := json.Unmarshal(data, &message); err != nil {
+			t.Fatalf("decode WebSocket message: %v", err)
+		}
+		return message
+	}
+
+	client, _, err := websocket.Dial(ctx, baseURL+"/ws?role=client&tab_id=snapshot-tab", nil)
+	if err != nil {
+		t.Fatalf("dial client: %v", err)
+	}
+	defer client.Close(websocket.StatusNormalClosure, "test complete")
+	client.SetReadLimit(websocketReadLimit)
+	if got := readMessage(client)["type"]; got != "identity" {
+		t.Fatalf("client first message = %v, want identity", got)
+	}
+	if err := client.Write(ctx, websocket.MessageText, []byte(`{"type":"hello","who":"student"}`)); err != nil {
+		t.Fatalf("client hello: %v", err)
+	}
+
+	support, _, err := websocket.Dial(ctx, baseURL+"/ws?role=support", nil)
+	if err != nil {
+		t.Fatalf("dial support: %v", err)
+	}
+	defer support.Close(websocket.StatusNormalClosure, "test complete")
+	support.SetReadLimit(websocketReadLimit)
+	if got := readMessage(support)["type"]; got != "list" {
+		t.Fatalf("support first message = %v, want list", got)
+	}
+	if err := support.Write(ctx, websocket.MessageText, []byte(`{"type":"watch","target":"snapshot-tab"}`)); err != nil {
+		t.Fatalf("send watch: %v", err)
+	}
+	if got := readMessage(support)["type"]; got != "watch-started" {
+		t.Fatalf("support watch response = %v, want watch-started", got)
+	}
+	if got := readMessage(client)["type"]; got != "watch-start" {
+		t.Fatalf("client watch message = %v, want watch-start", got)
+	}
+	readMessage(support) // list update after attach
+
+	payload, err := json.Marshal(map[string]any{
+		"type":  "rrweb",
+		"event": map[string]any{"type": 4, "data": strings.Repeat("x", 256<<10)},
+	})
+	if err != nil {
+		t.Fatalf("marshal rrweb: %v", err)
+	}
+	if len(payload) <= 32768 {
+		t.Fatalf("test payload is %d bytes, want more than the 32 KiB default limit", len(payload))
+	}
+	if err := client.Write(ctx, websocket.MessageText, payload); err != nil {
+		t.Fatalf("send large rrweb: %v", err)
+	}
+	if got := readMessage(support)["type"]; got != "rrweb" {
+		t.Fatalf("support message after large frame = %v, want rrweb", got)
+	}
+
+	if err := client.Write(ctx, websocket.MessageText, []byte(`{"type":"hello","who":"still-connected"}`)); err != nil {
+		t.Fatalf("client hello after large frame: %v", err)
+	}
+	list := readMessage(support)
+	if list["type"] == "client-gone" {
+		t.Fatal("client was disconnected after sending an rrweb frame larger than 32 KiB")
+	}
+	clients, ok := list["clients"].([]any)
+	if list["type"] != "list" || !ok || len(clients) != 1 {
+		t.Fatalf("unexpected client list after large frame: %#v", list)
+	}
+	if info, ok := clients[0].(map[string]any); !ok || info["who"] != "still-connected" {
+		t.Fatalf("client did not stay connected after large frame: %#v", clients[0])
 	}
 }

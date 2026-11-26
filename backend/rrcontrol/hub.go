@@ -30,6 +30,11 @@ type ClientInfo struct {
 // tearing down the viewer.
 const clientGrace = 20 * time.Second
 
+const (
+	websocketKeepaliveInterval = 20 * time.Second
+	websocketKeepaliveTimeout  = 10 * time.Second
+)
+
 type client struct {
 	info       ClientInfo
 	conn       *Conn
@@ -100,19 +105,23 @@ type inMsg struct {
 }
 
 type Hub struct {
-	cfg      *Config
-	mu       sync.Mutex
-	clients  map[string]*client
-	supports map[*Conn]struct{}
-	pending  map[string][]*Conn
+	cfg               *Config
+	mu                sync.Mutex
+	clients           map[string]*client
+	supports          map[*Conn]struct{}
+	pending           map[string][]*Conn
+	keepaliveInterval time.Duration
+	keepaliveTimeout  time.Duration
 }
 
 func NewHub(cfg *Config) *Hub {
 	return &Hub{
-		cfg:      cfg,
-		clients:  make(map[string]*client),
-		supports: make(map[*Conn]struct{}),
-		pending:  make(map[string][]*Conn),
+		cfg:               cfg,
+		clients:           make(map[string]*client),
+		supports:          make(map[*Conn]struct{}),
+		pending:           make(map[string][]*Conn),
+		keepaliveInterval: websocketKeepaliveInterval,
+		keepaliveTimeout:  websocketKeepaliveTimeout,
 	}
 }
 
@@ -125,13 +134,23 @@ func randomID(n int) string {
 }
 
 func (h *Hub) addClient(c *Conn, id, who string) bool {
-	c.clientID = id
 	who = sanitizeWho(who)
 	h.mu.Lock()
 	if h.cfg.Control == "off" {
 		h.mu.Unlock()
 		return false
 	}
+	if existing := h.clients[id]; existing != nil && existing.conn != nil && existing.conn != c {
+		// sessionStorage can be copied when a browser duplicates or opens a tab.
+		// Keep both live pages addressable rather than replacing the first socket.
+		for {
+			id = randomID(8)
+			if h.clients[id] == nil {
+				break
+			}
+		}
+	}
+	c.clientID = id
 	// A page that reconnects (e.g. after a reload) keeps its id. Carry active
 	// watchers over to the new connection so the viewer continues without
 	// asking again, and cancel any pending grace timer.
@@ -288,13 +307,40 @@ func (h *Hub) expireClient(id string, cl *client) {
 }
 
 func (h *Hub) readLoop(c *Conn) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go websocketKeepalive(ctx, c, h.keepaliveInterval, h.keepaliveTimeout)
 	for {
 		_, data, err := c.ws.Read(ctx)
 		if err != nil {
+			if status := websocket.CloseStatus(err); status != -1 && status != websocket.StatusNormalClosure && ctx.Err() == nil {
+				log.Printf("ws read (%s): %v (status %d %s)", c.role, err, status, status)
+			}
 			return
 		}
 		h.handle(c, data)
+	}
+}
+
+func websocketKeepalive(ctx context.Context, c *Conn, interval, timeout time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, timeout)
+			err := c.ws.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				if ctx.Err() == nil {
+					log.Printf("ws keepalive (%s): %v", c.role, err)
+				}
+				c.ws.CloseNow()
+				return
+			}
+		}
 	}
 }
 

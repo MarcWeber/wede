@@ -30,3 +30,26 @@ func TestOffModeRejectsNewConnections(t *testing.T) {
 		t.Fatal("off mode retained a rejected connection")
 	}
 }
+
+func TestConcurrentTabsWithCopiedTabIDGetDistinctIDs(t *testing.T) {
+	hub := NewHub(&Config{Control: "yes"})
+	first := &Conn{}
+	second := &Conn{}
+
+	if !hub.addClient(first, "copied-tab-id", "first") {
+		t.Fatal("first client was rejected")
+	}
+	if !hub.addClient(second, "copied-tab-id", "second") {
+		t.Fatal("second client was rejected")
+	}
+
+	if first.clientID == second.clientID {
+		t.Fatalf("concurrent clients share id %q", first.clientID)
+	}
+	if got := hub.clients[first.clientID]; got == nil || got.conn != first {
+		t.Fatal("adding the second client replaced the first connection")
+	}
+	if got := hub.clients[second.clientID]; got == nil || got.conn != second {
+		t.Fatal("second client was not registered under its assigned id")
+	}
+}

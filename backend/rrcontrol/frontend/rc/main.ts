@@ -55,6 +55,7 @@ let viewer: Viewer | null = null;
 let viewerGen = 0;
 let pendingEvents: any[] = [];
 let requestedWatchStarted = false;
+let rewatchSelectedOnList = false;
 let authToken = '';
 
 function socketUrl(): string {
@@ -96,6 +97,7 @@ function connect(): void {
   ws.onclose = (event) => {
     const detail = `code ${event.code}${event.reason ? `: ${event.reason}` : ''}`;
     setConn(authToken ? `reconnecting… (${detail})` : `disconnected (${detail})`);
+    rewatchSelectedOnList = !!selected;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (authToken) reconnectTimer = setTimeout(connect, 2500);
   };
@@ -121,6 +123,12 @@ function handle(msg: any): void {
     case 'list':
       clients = Array.isArray(msg.clients) ? msg.clients : [];
       renderList();
+      if (rewatchSelectedOnList) {
+        rewatchSelectedOnList = false;
+        if (selected && clients.some((client) => client.id === selected)) {
+          send({ type: 'watch', target: selected });
+        }
+      }
       if (requestedTarget && !requestedWatchStarted) {
         const target = clients.find((client) => client.id === requestedTarget);
         if (target) {
@@ -131,6 +139,7 @@ function handle(msg: any): void {
       if (selected && !clients.some((c) => c.id === selected)) {
         teardownViewer();
         selected = null;
+        if (viewerOnly) requestedWatchStarted = false;
         showPlaceholder();
       }
       break;
@@ -148,7 +157,11 @@ function handle(msg: any): void {
       onWatchStarted(msg);
       break;
     case 'watch-denied':
-      showWatchDenied(typeof msg.reason === 'string' ? msg.reason : '');
+      {
+        const reason = typeof msg.reason === 'string' ? msg.reason : '';
+        showWatchDenied(reason);
+        if (viewerOnly && reason === 'page is gone') requestedWatchStarted = false;
+      }
       teardownViewer();
       selected = null;
       renderList();
@@ -158,6 +171,7 @@ function handle(msg: any): void {
         setStatus('The page disconnected.');
         teardownViewer();
         selected = null;
+        if (viewerOnly) requestedWatchStarted = false;
         showPlaceholder();
       }
       break;
@@ -257,6 +271,42 @@ function showViewerMessage(title: string, description: string): void {
   el.placeholder.hidden = false;
   el.viewer.hidden = true;
   el.toolbar.hidden = true;
+}
+
+function showWatchDenied(reason: string): void {
+  let status: string;
+  let title: string;
+  let description: string;
+
+  switch (reason) {
+    case 'missing target':
+      status = 'No page was selected.';
+      title = 'No page selected';
+      description = 'Choose a connected page to start watching.';
+      break;
+    case 'rrcontrol is disabled':
+      status = 'Remote control is disabled.';
+      title = 'Remote control is disabled';
+      description = 'The server has disabled remote control.';
+      break;
+    case 'page is gone':
+      status = 'The page is no longer connected.';
+      title = 'Page not connected';
+      description = 'The selected page closed or expired. This viewer will retry when it reconnects.';
+      break;
+    case 'declined by visitor':
+      status = 'The visitor declined access.';
+      title = 'Access was denied';
+      description = 'The visitor declined the request to view this page.';
+      break;
+    default:
+      status = reason ? `Unable to watch page: ${reason}` : 'Unable to watch the selected page.';
+      title = 'Unable to watch page';
+      description = reason || 'The server could not start the remote-control session.';
+  }
+
+  setStatus(status);
+  if (viewerOnly) showViewerMessage(title, description);
 }
 
 function setStatus(text: string): void {

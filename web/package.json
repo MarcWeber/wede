@@ -15,7 +15,7 @@
     "typecheck": "tsgo --noEmit",
     "check:lint-config": "node scripts/check-lint-config.mjs",
     "test": "vitest run",
-    "pretest:e2e": "node scripts/ensure-native-deps.mjs && vite build",
+    "pretest:e2e": "npm run build:rrcontrol && node scripts/ensure-native-deps.mjs && vite build --outDir .playwright-dist",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "preview": "vite preview",

@@ -12,6 +12,11 @@ import (
 	"github.com/coder/websocket"
 )
 
+// rrweb sends a whole DOM snapshot as one message. Those routinely exceed the
+// 32 KiB default read limit of coder/websocket, which would close the client
+// socket right after recording starts (StatusMessageTooBig / reconnect loop).
+const websocketReadLimit = 64 << 20
+
 // countingConn counts real bytes on the wire (after permessage-deflate).
 type countingConn struct {
 	net.Conn
@@ -92,6 +97,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer ws.CloseNow()
+	ws.SetReadLimit(websocketReadLimit)
 
 	conn := newConn(ws, role)
 	conn.wire = hc.conn

@@ -14,6 +14,7 @@ export function createViewer(
   const replayer = new Replayer([], {
     root,
     liveMode: true,
+    pauseAnimation: false,
     mouseTail: false,
     showDebug: false,
     showWarning: false,

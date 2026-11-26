@@ -90,8 +90,11 @@ export interface WriteBody {
 
 export interface InstallBackendOptions {
   badPassword?: boolean
+  teacher?: boolean
+  rrcontrol?: string
   // Optional collab-socket handler. The default is a silent, connected socket.
   collab?: (ws: WebSocketRoute) => void
+  websocket?: (ws: WebSocketRoute) => void
 }
 
 export interface InstallBackendHandles {
@@ -105,7 +108,7 @@ export interface InstallBackendHandles {
  */
 export async function installBackend(
   page: Page,
-  { badPassword = false, collab }: InstallBackendOptions = {},
+  { badPassword = false, teacher = false, rrcontrol = 'off', collab, websocket }: InstallBackendOptions = {},
 ): Promise<InstallBackendHandles> {
   const wrote: WriteBody[] = []
   const loginAttempts: LoginAttempt[] = []
@@ -132,14 +135,15 @@ export async function installBackend(
         attemptsLeft -= 1
         return json(route, { error: 'wrong_password', remaining: Math.max(0, attemptsLeft) })
       }
-      return json(route, { token: TOKEN, username: body.username || 'dev', role: 'owner' })
+      return json(route, { token: TOKEN, username: body.username || 'dev', role: 'owner', teacher })
     }
     if (p === '/api/auth/check') {
       const ok = req.headers().authorization === TOKEN
-      return json(route, { authenticated: ok, role: ok ? 'owner' : '' })
+      return json(route, { authenticated: ok, role: ok ? 'owner' : '', teacher: ok && teacher })
     }
     if (p === '/api/auth/logout') return json(route, { ok: true })
     if (p === '/api/auth/tokens') return json(route, { tokens: [] })
+    if (p === '/api/ui-config') return json(route, { rrcontrol })
 
     // ── workspace / folder ──────────────────────────────────────────────────
     if (p === '/api/folder') return json(route, { hasWorkspace: true, current: ROOT, recents: [ROOT] })
@@ -245,6 +249,7 @@ export async function installBackend(
   // backoff, which is not what these specs are about.
   await page.routeWebSocket(/.*/, (ws) => {
     /* accept the connection; send nothing unless a spec needs collab traffic */
+    websocket?.(ws)
     if (collab && /\/collab(?:\?|$)/.test(ws.url())) collab(ws)
   })
 

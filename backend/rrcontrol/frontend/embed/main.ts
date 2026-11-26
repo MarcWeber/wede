@@ -7,7 +7,7 @@ const serverOrigin = here.origin;
 const sessionKey = 'rrw_session_id';
 const identityKeys = ['rrweb-remote-access', 'rrweb_remote_access', 'tab_id'];
 let who = here.searchParams.get('who') || 'anonymous-' + randomId(4);
-let tabID = explicitIdentity() || storedIdentity() || '';
+let tabID = storedIdentity() || explicitIdentity() || '';
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -120,6 +120,7 @@ function connect(): void {
 
 async function startWatching(msg: any): Promise<void> {
   if (!recordMod) recordMod = await import('./record');
+  document.getElementById('rrw-invite')?.remove();
   controlEnabled = !!msg.canControl;
   if (watching) {
     setBadge(controlEnabled);
@@ -249,4 +250,4 @@ connect();
 };
 
 const wedeWho = (window as any).__wedeRRControlWho;
-if (typeof wedeWho === 'string') (window as any).__rrwebRemote.setWho(wedeWho);
+if (typeof wedeWho === 'string' && wedeWho.trim()) (window as any).__rrwebRemote.setWho(wedeWho);
