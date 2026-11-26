@@ -357,7 +357,9 @@ export default function ChooseWorkspaceAndTabSession({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Boxes className="w-4 h-4 text-accent" />
-          <h2 className="text-sm font-semibold text-text-primary">Workspace &amp; session</h2>
+          <h2 className="text-sm font-semibold text-text-primary">
+            Workspace &amp; session{username ? ` (${username})` : ''}
+          </h2>
         </div>
         {showCancel && (
           <button type="button" onClick={onCancel} className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover" title="Close">

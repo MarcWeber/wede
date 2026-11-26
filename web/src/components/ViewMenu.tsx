@@ -307,21 +307,6 @@ export default function ViewMenu({
           />
         ))}
 
-        {teacher && onOpenRemoteControl && (
-          <>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={onOpenRemoteControl}
-              title={slim ? 'RR Control' : undefined}
-              className={`w-full flex items-center gap-2.5 h-9 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors ${slim ? 'justify-center px-0' : 'pl-2.5 pr-3'}`}
-            >
-              <MonitorPlay className="w-3.5 h-3.5 shrink-0 text-text-muted" />
-              {!slim && <span className="text-[12px] font-medium truncate">RR Control</span>}
-            </button>
-          </>
-        )}
-
         {sharedTabsOpen && (
           <div className="mx-2 my-1 rounded-md border border-border bg-bg-primary/60 p-1.5">
             <div className="flex items-center justify-between px-1 pb-1">
@@ -389,6 +374,18 @@ export default function ViewMenu({
               onToggle={() => onLeadChange?.(!isLeading)}
               slim={slim}
             />
+            {onOpenRemoteControl && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={onOpenRemoteControl}
+                title={slim ? 'RR Control' : undefined}
+                className={`w-full flex items-center gap-2.5 h-9 text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors ${slim ? 'justify-center px-0' : 'pl-2.5 pr-3'}`}
+              >
+                <MonitorPlay className="w-3.5 h-3.5 shrink-0 text-text-muted" />
+                {!slim && <span className="text-[12px] font-medium truncate">RR Control</span>}
+              </button>
+            )}
             <div className="my-1 border-t border-border" />
           </>
         )}
