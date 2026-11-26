@@ -1326,6 +1326,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     const merged: Record<string, boolean> = {}
     const hiddenByDefault = new Set(['api', 'log', 'chat'])
     for (const kind of VIEW_TABS.map(v => v.kind)) merged[kind] = !hiddenByDefault.has(kind)
+    if (rrControlEnabled && teacher) merged['rrcontrol'] = true
     // Apply server config
     if (visibleTabTypes) {
       for (const [k, v] of Object.entries(visibleTabTypes)) {
@@ -1336,9 +1337,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     for (const [k, v] of Object.entries(localVisibleTabTypes)) {
       merged[k] = v
     }
-    // Keep RR Control available to teachers whenever enabled; it is not a
-    // user-toggleable tab, and old saved visibility preferences must not hide it.
-    if (rrControlEnabled && teacher) merged['rrcontrol'] = true
+    // Settings is the only place to change tab visibility, so it must never
+    // become hidden itself.
+    merged['settings'] = true
     return merged
   }, [visibleTabTypes, localVisibleTabTypes, rrControlEnabled, teacher])
 
