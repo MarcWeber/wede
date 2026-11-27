@@ -7,15 +7,15 @@ function point(x: number, y: number) {
   return [{ x, y }]
 }
 
-async function swipeUpRight(page: Page, x: number, y: number) {
+async function swipeDownRight(page: Page, x: number, y: number) {
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: point(x, y) })
-  // Stay inside the 2*D directional-button cap.
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: point(x + 28, y - 28) })
+  // Stay inside the 5*D directional-button cap.
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: point(x + 28, y + 28) })
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
 }
 
-test('swiping a tab up-right closes it', async ({ wede }) => {
+test('swiping a tab down-right closes it', async ({ wede }) => {
   const { page } = wede
   await seed(page, 'authed')
   await page.goto('/')
@@ -27,6 +27,6 @@ test('swiping a tab up-right closes it', async ({ wede }) => {
   const box = await tab.boundingBox()
   expect(box).not.toBeNull()
 
-  await swipeUpRight(page, box!.x + box!.width / 2, box!.y + box!.height / 2)
+  await swipeDownRight(page, box!.x + box!.width / 2, box!.y + box!.height / 2)
   await expect(matches).toHaveCount(1)
 })

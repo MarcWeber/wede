@@ -53,7 +53,7 @@ Tabs
   - Click a tab type to show/hide all tabs of that type
   - Drag or swipe left/right to scroll the strip
   - Swipe a tab up to expand/collapse the strip; swipe down for its menu
-  - Swipe a tab to the top-right to close it (locked tabs stay)
+  - Swipe a tab to the bottom-right to close it (locked tabs stay)
   - Labels appear while dragging so the gesture is visible near the screen centre
   - Long-press a tab to enter select mode; long-press again or right-click for the menu
   - On desktop you can make tabs float above or dock
@@ -75,7 +75,7 @@ Desktop and mobile mode
 Mobile optimization
   Tabs:
     Swipe left/right to scroll. Swipe up to expand/collapse; swipe down for the menu;
-    swipe top-right to close (locked tabs stay).
+    swipe bottom-right to close (locked tabs stay).
   Tab strip:
     Action labels are pulled toward the middle of the screen so your finger does not hide them.
   Keyboard layout:

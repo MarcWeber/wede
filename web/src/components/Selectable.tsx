@@ -29,6 +29,11 @@ export interface MenuEntry {
 
 const LONG_PRESS_MS = 450
 
+// A finger that drifts more than this before the long-press timer fires is a
+// swipe/scroll, not a long press. Keep it small so a swipe never enters
+// multi-select mode.
+const LONG_PRESS_MOVE_CANCEL_PX = 10
+
 // useRowMenu — the reusable long-press hook. Attach `bind` to any row; a long
 // press (450ms) or right-click opens the popup at the pointer. `openMenu(x, y)`
 // is exposed so a caller can open the popup programmatically.
@@ -54,6 +59,9 @@ export function useRowMenu(
   const timer = useRef<number | null>(null)
   const longFired = useRef(false)
   const origin = useRef<{ x: number; y: number } | null>(null)
+  // Set once the pointer has moved far enough that this is a swipe/scroll and
+  // must not turn into a long press (even if the browser fires contextmenu).
+  const movedFar = useRef(false)
   const swipeFired = useRef(false)
   const openedAt = useRef(0)
 
@@ -114,6 +122,7 @@ export function useRowMenu(
       if (e.button !== 0) return
       longFired.current = false
       swipeFired.current = false
+      movedFar.current = false
       const pt = { x: e.clientX, y: e.clientY }
       origin.current = pt
       clearTimer()
@@ -134,14 +143,20 @@ export function useRowMenu(
         : false
       if (fired) {
         clearTimer()
+        movedFar.current = true
         if (!swipeFired.current) {
           swipeFired.current = true
           opts.onSwipe?.()
         }
         return
       }
-      const moveThreshold = e.pointerType === 'touch' ? 32 : 12
-      if (Math.abs(dx) > moveThreshold || Math.abs(dy) > moveThreshold) clearTimer()
+      // Touch must not long-press after any real movement: a swipe that starts
+      // as a finger drag would otherwise still enter multi-select at 450 ms.
+      const moveThreshold = e.pointerType === 'touch' ? LONG_PRESS_MOVE_CANCEL_PX : 12
+      if (Math.hypot(dx, dy) > moveThreshold) {
+        movedFar.current = true
+        clearTimer()
+      }
     },
     onPointerUp: () => {
       clearTimer()
@@ -164,6 +179,12 @@ export function useRowMenu(
       // on some browsers. Treat that as the long press instead of swallowing
       // the gesture; otherwise selection never starts on those devices.
       if (origin.current) {
+        // A swipe/scroll that the browser turns into contextmenu must not
+        // enter multi-select mode.
+        if (movedFar.current) {
+          clearTimer()
+          return
+        }
         if (!longFired.current) {
           longFired.current = true
           clearTimer()
@@ -443,6 +464,7 @@ export interface SelectableProps {
   locked?: boolean
   onToggle: () => void
   onActivate?: () => void
+  onShiftClick?: () => void
   onDoubleClick?: () => void
   menu?: MenuEntry[]
   className?: string
@@ -470,7 +492,7 @@ export interface SelectableProps {
 // row's actions menu. There is no swipe-to-select. Selected rows get a yellow
 // inset ring (red when locked).
 export default function Selectable({
-  checked, locked, onToggle, onActivate, onDoubleClick,
+  checked, locked, onToggle, onActivate, onShiftClick, onDoubleClick,
   menu = [], className = '', style, label,
   tabIndex, itemRef, onKeyDown, onMiddleClick, tone,
   dragId,
@@ -533,8 +555,13 @@ export default function Selectable({
         ...selectedStyle,
         ...style,
       }}
-      onClick={() => {
+      onClick={(e) => {
         if (consumeLongPress() || consumeSwipe()) return
+        if (e.shiftKey && onShiftClick) {
+          if (group && group.mode !== 'selecting') group.setMode('selecting')
+          onShiftClick()
+          return
+        }
         if (group && group.mode !== 'normal') { onToggle(); return }
         onActivate?.()
       }}

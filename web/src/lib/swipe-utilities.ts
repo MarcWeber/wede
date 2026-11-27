@@ -33,10 +33,11 @@ export interface Bounds {
 
 export const SWIPE_Y_ACCURACY = 15
 
-// Base gesture unit. Directional buttons only win within 2*D of the start;
-// a longer drag becomes a tab drag at 3*D.
-export const D = 20
-export const MAX_BUTTON_DISTANCE = 2 * D
+// Base gesture unit. Directional buttons win within 5*D of the start; a
+// directionless drag becomes a tab drag at 3*D, while a drag along a button
+// direction only takes over past the button cap.
+export const D = 15
+export const MAX_BUTTON_DISTANCE = 14 * D
 export const TAB_DRAG_THRESHOLD = 3 * D
 
 const toD2 = (p: Point2D): D2 => [p.x, p.y]

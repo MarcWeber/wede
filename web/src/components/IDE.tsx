@@ -299,6 +299,14 @@ interface FileReadResponse {
   size?: number
 }
 
+interface FetchedTabContent {
+  path: string
+  content: string
+  fileType?: 'image' | 'binary' | 'pdf' | 'video'
+  dataUrl?: string
+  size?: number
+}
+
 export default function IDE({ token, authFetch, onLogout, workspace, home, allowCustomDirectory, workspacesApi, workspaceId, username, onUsernameChange, role, guest = false, teacher = false, rrControlMode = null, debug = false, collabContext = null, tabViewState = null }: IDEProps) {
   const isMobile = useMobile()
   const { desktopMode, setDesktopMode } = useDesktopMode()
@@ -570,7 +578,13 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     }
     setLayout(prev => ({
       ...prev,
-      tabs: restoredTabs,
+      // Keep tabs the user managed to open before init arrived instead of
+      // letting the restored layout silently drop them.
+      tabs: (() => {
+        const restoredPaths = new Set(restoredTabs.map((t) => t.path))
+        const extra = prev.tabs.filter((t) => !restoredPaths.has(t.path))
+        return extra.length ? [...restoredTabs, ...extra] : restoredTabs
+      })(),
       activeTab: restoredActiveTab,
       visible: l.visible ? { ...DEFAULT_VISIBLE, ...(l.visible as Partial<Record<ViewKind, boolean>>) } : prev.visible,
       tabOrder: prev.tabOrder,
@@ -1326,7 +1340,6 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     const merged: Record<string, boolean> = {}
     const hiddenByDefault = new Set(['api', 'log', 'chat'])
     for (const kind of VIEW_TABS.map(v => v.kind)) merged[kind] = !hiddenByDefault.has(kind)
-    if (rrControlEnabled && teacher) merged['rrcontrol'] = true
     // Apply server config
     if (visibleTabTypes) {
       for (const [k, v] of Object.entries(visibleTabTypes)) {
@@ -1337,9 +1350,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     for (const [k, v] of Object.entries(localVisibleTabTypes)) {
       merged[k] = v
     }
-    // Settings is the only place to change tab visibility, so it must never
-    // become hidden itself.
-    merged['settings'] = true
+    // Keep RR Control available to teachers whenever enabled; it is not a
+    // user-toggleable tab, and old saved visibility preferences must not hide it.
+    if (rrControlEnabled && teacher) merged['rrcontrol'] = true
     return merged
   }, [visibleTabTypes, localVisibleTabTypes, rrControlEnabled, teacher])
 
@@ -1434,31 +1447,48 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
   // Layout state (tabs, activeTab, etc.) is saved to the server only via saveLayout.
   // No localStorage persistence — the server is the single source of truth.
 
-  // Re-fetch content for restored tabs on mount
+  // Restored file tabs arrive from the layout without their contents. Fetch them
+  // once init has populated `tabs` (the effect cannot run at mount because tabs
+  // is empty until the WebSocket init packet arrives). `contentInFlight` dedupes
+  // requests shared with openFile.
+  const contentInFlight = useRef<Set<string>>(new Set())
+  const fetchTabContent = useCallback(async (t: Tab): Promise<FetchedTabContent | null> => {
+    if (contentInFlight.current.has(t.path)) return null
+    contentInFlight.current.add(t.path)
+    const wsId = t.workspaceId || workspaceId
+    const rel = t.rel ?? parseFileKey(t.path).rel
+    try {
+      const res = await authFetch(workspaceUrl(wsId as string, `/files/read?path=${encodeURIComponent(rel)}`))
+      const data: FileReadResponse = await res.json()
+      if (data.fileType === 'image') return { path: t.path, content: '', fileType: 'image', dataUrl: data.dataUrl }
+      if (data.fileType === 'binary') return { path: t.path, content: '', fileType: 'binary', size: data.size }
+      if (data.fileType === 'pdf') return { path: t.path, content: '', fileType: 'pdf', size: data.size }
+      if (data.fileType === 'video') return { path: t.path, content: '', fileType: 'video', size: data.size }
+      return { path: t.path, content: data.content ?? '' }
+    } catch {
+      return { path: t.path, content: '' }
+    } finally {
+      contentInFlight.current.delete(t.path)
+    }
+  }, [authFetch, workspaceId])
+
+  const applyFetchedContent = useCallback((results: FetchedTabContent[]) => {
+    if (results.length === 0) return
+    setTabs(prev => prev.map(t => {
+      const r = results.find(r => r.path === t.path)
+      if (r) return { ...t, content: r.content, originalContent: r.content, modified: false, fileType: r.fileType, dataUrl: r.dataUrl, size: r.size }
+      return t
+    }))
+  }, [setTabs])
+
   useEffect(() => {
-    if (tabs.length === 0) return
-    const needsContent = tabs.filter(t => t.type !== 'browser' && t.content === undefined)
+    if (!initReceived) return
+    const needsContent = tabs.filter(t => t.type !== 'browser' && t.content === undefined && !contentInFlight.current.has(t.path))
     if (needsContent.length === 0) return
-    void Promise.all(needsContent.map(async (t) => {
-      const wsId = t.workspaceId || workspaceId
-      const rel = t.rel ?? parseFileKey(t.path).rel
-      try {
-        const res = await authFetch(workspaceUrl(wsId as string, `/files/read?path=${encodeURIComponent(rel)}`))
-        const data: FileReadResponse = await res.json()
-        if (data.fileType === 'image') return { path: t.path, content: '', fileType: 'image' as const, dataUrl: data.dataUrl }
-        if (data.fileType === 'binary') return { path: t.path, content: '', fileType: 'binary' as const, size: data.size }
-        if (data.fileType === 'pdf') return { path: t.path, content: '', fileType: 'pdf' as const, size: data.size }
-        if (data.fileType === 'video') return { path: t.path, content: '', fileType: 'video' as const, size: data.size }
-        return { path: t.path, content: data.content }
-      } catch { return { path: t.path, content: '' } }
-    })).then(results => {
-      setTabs(prev => prev.map(t => {
-        const r = results.find(r => r.path === t.path)
-        if (r) return { ...t, content: r.content, originalContent: r.content, modified: false, fileType: 'fileType' in r ? r.fileType : undefined, dataUrl: 'dataUrl' in r ? r.dataUrl : undefined, size: 'size' in r ? r.size : undefined }
-        return t
-      }))
+    void Promise.all(needsContent.map(fetchTabContent)).then(results => {
+      applyFetchedContent(results.filter((r): r is FetchedTabContent => r !== null))
     })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initReceived, tabs, fetchTabContent, applyFetchedContent])
 
   // Fetch git branch + change count for status bar
   useEffect(() => {
@@ -2074,7 +2104,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     setVisible((prev) => {
       const next = { ...prev }
       for (const e of nestedEntries) {
-        if (e.kind) next[e.kind] = true
+        if (e.kind !== 'container') next[e.kind] = true
       }
       return next
     })
@@ -2145,31 +2175,36 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     }
   }, [entries, closeTab, terminalsApi, lockedShells, forgetShellMapping, fileIds])
 
-  // hideSelectedShells hides the given tabs by toggling their visibility off
-  // instead of closing them — the layout position is preserved.
+  // hideSelectedShells hides the given tabs instead of closing them — the
+  // layout position is preserved. File tabs are hidden individually (their
+  // content survives); view tabs and containers are hidden as a whole.
   const hideSelectedShells = useCallback((ids: string[]) => {
-    const kindsToHide = new Set<string>()
+    const filePaths: string[] = []
+    const containerIds: number[] = []
+    const kindsToHide = new Set<ViewKind>()
     for (const id of ids) {
       const e = entries.find((x) => x.id === id)
       if (!e) continue
-      if (e.kind === 'file') {
-        // For file tabs, hide by setting the kind's visibility — but files
-        // are individual tabs, so we hide the whole "files" view if all
-        // selected are files, or we just hide the specific file's kind.
-        // Since files share the "files" kind, we hide the files view.
-        kindsToHide.add('files')
-      } else if (e.kind === 'term') {
-        kindsToHide.add('terminals')
+      if (e.kind === 'code') {
+        if (e.filePath) filePaths.push(e.filePath)
+      } else if (e.kind === 'container') {
+        if (e.containerId != null) containerIds.push(e.containerId)
       } else {
         kindsToHide.add(e.kind)
       }
     }
-    setVisible((v) => {
-      const next = { ...v }
-      for (const kind of kindsToHide) next[kind] = false
-      return next
-    })
-  }, [entries])
+    for (const path of filePaths) hideTab(path)
+    if (containerIds.length > 0) {
+      setContainers((prev) => prev.map((c) => (containerIds.includes(c.id) ? { ...c, visible: false } : c)))
+    }
+    if (kindsToHide.size > 0) {
+      setVisible((v) => {
+        const next = { ...v }
+        for (const kind of kindsToHide) next[kind] = false
+        return next
+      })
+    }
+  }, [entries, hideTab])
 
   const reorderShell = useCallback((from: string, to: string, after = false) => {
     setTabOrder((prev) => {
@@ -2362,7 +2397,11 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
     const existing = tabs.find((t) => t.path === key)
     if (existing) {
       const hasTarget = targetLine != null || targetSelection !== undefined || targetPdf != null || targetImage != null
-      if ((!preview && existing.preview) || hasTarget || existing.hidden) {
+      // A restored tab can exist with its content still unloaded (e.g. after a
+      // mobile browser discarded and restored the page). Re-clicking the file
+      // must heal it instead of leaving a blank editor.
+      const needsContent = existing.type !== 'browser' && existing.content === undefined
+      if ((!preview && existing.preview) || hasTarget || existing.hidden || needsContent) {
         setTabs((prev) => prev.map((t) => {
           if (t.path !== key) return t
           const next = { ...t }
@@ -2377,6 +2416,9 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
           if (hasTarget) next.targetSeq = (t.targetSeq || 0) + 1
           return next
         }))
+      }
+      if (needsContent) {
+        void fetchTabContent(existing).then((r) => { if (r) applyFetchedContent([r]) })
       }
       setVisible((v) => ({ ...v, code: true }))
       if (shouldActivate) {
@@ -2410,7 +2452,14 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
         tab.fileType = 'video'
         tab.size = data.size
       }
-      setTabs((prev) => [...prev, tab])
+      setTabs((prev) => {
+        if (!prev.some((t) => t.path === key)) return [...prev, tab]
+        // A concurrent open already added this tab; only fill in content if it
+        // is still unloaded rather than clobbering live edits.
+        return prev.map((t) => t.path === key && t.content === undefined
+          ? { ...t, content: tab.content, originalContent: tab.originalContent, fileType: tab.fileType, dataUrl: tab.dataUrl, size: tab.size }
+          : t)
+      })
       setVisible((v) => ({ ...v, code: true }))
       if (shouldActivate) {
         setActiveTab(key)
@@ -2419,7 +2468,7 @@ export default function IDE({ token, authFetch, onLogout, workspace, home, allow
       return true
     } catch { /* ignore */ }
     return false
-  }, [tabs, authFetch, workspaceId])
+  }, [tabs, authFetch, workspaceId, fetchTabContent, applyFetchedContent])
 
   // Open a tab listed in the session-tabs panel in the current view. Hidden
   // local tabs are revealed by openFile instead of being duplicated.

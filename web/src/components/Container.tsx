@@ -46,17 +46,17 @@ function layoutTabToEntry(lt: LayoutTab, workspaceId: string | null) {
   const Icon = iconForType(lt.type)
   if (lt.type === 'file') {
     const path = workspaceId ? `${workspaceId}\0${lt.name}` : lt.name
-    return { id: `file:${path}`, kind: 'code', title: lt.name, icon: Icon, filePath: path }
+    return { id: `file:${path}`, kind: 'code', title: lt.name, label: lt.name, icon: Icon, filePath: path }
   }
   if (lt.type === 'term') {
-    return { id: lt.name, kind: 'terminals', title: lt.name, icon: TerminalSquare, termId: Number(lt.name.split('-')[1]) }
+    return { id: lt.name, kind: 'terminals', title: lt.name, label: lt.name, icon: TerminalSquare, termId: Number(lt.name.split('-')[1]) }
   }
   if (lt.type === 'files') {
-    return { id: lt.name, kind: 'files', title: `Files`, icon: Files, fileId: Number(lt.name.split(':')[1]) }
+    return { id: lt.name, kind: 'files', title: `Files`, label: `Files`, icon: Files, fileId: Number(lt.name.split(':')[1]) }
   }
   // View tabs
   const kind = lt.type as string
-  return { id: `view:${kind}`, kind, title: lt.name, icon: Icon }
+  return { id: `view:${kind}`, kind, title: lt.name, label: lt.name, icon: Icon }
 }
 
 export default function Container({ main, container, tabs, activeTab, visible, workspaceId }: ContainerProps) {
@@ -91,8 +91,8 @@ export default function Container({ main, container, tabs, activeTab, visible, w
       {tabEntries.length > 0 && (
         <Tabbed
           tabs={tabEntries}
-          active={selectedId}
-          onSelect={(id) => {}}
+          active={selectedId ?? ''}
+          onActivate={() => {}}
           onClose={() => {}}
           onReorder={() => {}}
           onDragDetach={() => {}}

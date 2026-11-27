@@ -110,7 +110,7 @@ export interface UseDragHintsOptions {
   restMinDistance?: number
   // Optional cap for directional buttons. Past it the gesture is treated as a
   // rest/drag instead of firing a button. Defaults to no cap (a row swipe must
-  // still fire after crossing the whole row). Tabbed caps at 2*D.
+  // still fire after crossing the whole row). Tabbed caps at 5*D.
   buttonMaxDistance?: number
   disabled?: boolean
   mode?: string
@@ -170,9 +170,9 @@ const DIRECTION_POSITION: Record<SwipeDirection, DragHintPosition> = {
 
 const LABEL_DISTANCE = 50 // Distance from gesture start to labels
 const LABEL_HALF_WIDTH = 58
-const LABEL_HALF_HEIGHT = 16
+const LABEL_HALF_HEIGHT = 10
 const DOT_HALF_SIZE = 5
-// Max drag distance for tab-strip directional buttons is 2*D (see
+// Max drag distance for tab-strip directional buttons is 5*D (see
 // swipe-utilities). Other DragHint users (menu rows) leave this uncapped.
 
 function clampPoint(x: number, y: number, halfW: number, halfH: number) {
@@ -448,7 +448,7 @@ export function useDragHints(opts: UseDragHintsOptions) {
       }
     }
     // 2. Directional button action — a matching button always wins, even if
-    // the pointer has left the strip (e.g. Close tab dragged upward).
+    // the pointer has left the strip (e.g. Close tab dragged downward).
     // The release-point check below is only used for drag & drop.
     // Use findElementAtPoint which checks bounding rects when elementFromPoint
     // fails due to pointerEvents:none on floating containers.

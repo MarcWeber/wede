@@ -7,7 +7,7 @@ async function boot(page: Page) {
   await page.getByText('main.go', { exact: true }).click()
 }
 
-test('mouse drag up-right shows the close label and closes the tab', async ({ wede }) => {
+test('mouse drag down-right shows the close label and closes the tab', async ({ wede }) => {
   const { page } = wede
   await boot(page)
 
@@ -21,8 +21,8 @@ test('mouse drag up-right shows the close label and closes the tab', async ({ we
   const y = box!.y + box!.height / 2
   await page.mouse.move(x, y)
   await page.mouse.down()
-  // Stay inside the 2*D button cap so release fires Close instead of a drag.
-  await page.mouse.move(x + 28, y - 28, { steps: 8 })
+  // Stay inside the 5*D button cap so release fires Close instead of a drag.
+  await page.mouse.move(x + 28, y + 28, { steps: 8 })
 
   await expect(page.getByText('Close tab')).toBeVisible()
   await expect(page.getByTestId('drag-hint-dot')).toBeVisible()
@@ -60,6 +60,39 @@ test('mouse drag left/right scrolls an overflowing tab strip', async ({ wede }) 
 
   const after = await strip.evaluate((el) => el.scrollLeft)
   expect(after).not.toBe(before)
+})
+
+test('shift-click selects from the last clicked tab and keeps the anchor', async ({ wede }) => {
+  const { page } = wede
+  await boot(page)
+
+  for (const name of ['README.md', 'long.txt']) {
+    await page.getByLabel('Select Files').first().click()
+    await page.getByText(name, { exact: true }).click()
+  }
+
+  const first = page.getByLabel('Select main.go').first()
+  const middle = page.getByLabel('Select README.md').first()
+  const last = page.getByLabel('Select long.txt').first()
+  const beforeRange = page.getByLabel('Select Files').first()
+
+  await expect(first).toBeVisible()
+  await expect(middle).toBeVisible()
+  await expect(last).toBeVisible()
+  await first.click()
+  await last.click({ modifiers: ['Shift'] })
+
+  await expect(first).toHaveAttribute('aria-selected', 'true')
+  await expect(middle).toHaveAttribute('aria-selected', 'true')
+  await expect(last).toHaveAttribute('aria-selected', 'true')
+  await expect(beforeRange).toHaveAttribute('aria-selected', 'false')
+
+  // A second shift-click must still extend from the first tab (the anchor),
+  // not from the tab that was shift-clicked last.
+  await middle.click({ modifiers: ['Shift'] })
+  await expect(first).toHaveAttribute('aria-selected', 'true')
+  await expect(middle).toHaveAttribute('aria-selected', 'true')
+  await expect(last).toHaveAttribute('aria-selected', 'false')
 })
 
 test('left swipe on Files lists tabs other people have open', async ({ page }) => {
@@ -107,7 +140,7 @@ test('tab drag enters drop mode only past the threshold and docks in a corner', 
   await page.mouse.move(x, y)
   await page.mouse.down()
 
-  // Inside the 2*D button cap and below 60px: still just a hint, not a tab drag.
+  // Inside the 5*D button cap and below 60px: still just a hint, not a tab drag.
   await page.mouse.move(x + 25, y + 25, { steps: 5 })
   await expect(page.locator('[data-drop-corner="left"]')).toHaveCount(0)
   await expect(page.getByTestId('drag-hint-dot')).toBeVisible()
@@ -186,7 +219,7 @@ test('tab drag ending with a horizontal move still drops and clears drop mode', 
   await page.mouse.move(x, y)
   await page.mouse.down()
 
-  // Start a tab drag (past the 2*D button cap and the tab-drag threshold).
+  // Start a tab drag (past the 5*D button cap and the tab-drag threshold).
   await page.mouse.move(x, y + 130, { steps: 10 })
   await expect(page.locator('[data-drop-corner="left"]')).toBeVisible()
 
@@ -224,7 +257,7 @@ test('gesture dot is relocated away from the pointer under UI scale', async ({ w
   const x = box!.x + box!.width / 2
   const y = box!.y + box!.height / 2
   const px = x + 28
-  const py = y - 28
+  const py = y + 28
 
   await page.mouse.move(x, y)
   await page.mouse.down()
@@ -242,7 +275,7 @@ test('gesture dot is relocated away from the pointer under UI scale', async ({ w
   const dotY = dotBox!.y + dotBox!.height / 2
   expect(Math.hypot(dotX - px, dotY - py)).toBeGreaterThan(20)
 
-  // The "Close tab" label should be active (the drag direction is up-right).
+  // The "Close tab" label should be active (the drag direction is down-right).
   await expect(page.getByText('Close tab')).toBeVisible()
 
   await page.mouse.up()

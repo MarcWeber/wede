@@ -52,6 +52,15 @@ export default function Tabbed({
   const [selectionMode, setSelectionMode] = useState<'normal' | 'selecting' | 'menu'>('normal')
   const [floatMenu, setFloatMenu] = useState<{ x: number; y: number; id: string; target: 'current' | 'selected' } | null>(null)
   const tabRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  // Shift-click range anchor: the last plainly clicked/selected tab. Unlike the
+  // active tab it must not move when a shift-click extends the selection.
+  const anchorRef = useRef<string | null>(null)
+
+  // While not selecting, the anchor follows the active tab so a plain click
+  // followed by a shift-click behaves like a browser.
+  useEffect(() => {
+    if (selectionMode === 'normal') anchorRef.current = active || null
+  }, [active, selectionMode])
 
   // Keep the active tab visible. Followers open tabs programmatically and the
   // leader may click a tab that is scrolled out of the strip; both should scroll
@@ -73,8 +82,8 @@ export default function Tabbed({
     { type: 'chosen_by_mouse', position: (dx, dy) => is_x_scroll(dx, dy), label: 'Scroll', passive: true },
     // Top: expand/collapse tabs
     ...(multilineSwipe ? [{ type: 'button' as const, position: offset_pos('top'), label: multiline ? 'Collapse tabs' : 'Expand tabs' }] : []),
-    // Top-right: close tab
-    { type: 'button' as const, position: offset_pos('top-right'), label: 'Close tab' },
+    // Bottom-right: close tab (near the thumb and easy to see).
+    { type: 'button' as const, position: offset_pos('bottom-right'), label: 'Close tab' },
     // Down-left / bottom-left: select the tab, or cancel while selecting.
     { type: 'button' as const, position: offset_pos('bottom-left'), label: 'Cancel', modes: ['selecting'] },
     { type: 'button' as const, position: offset_pos('bottom-left'), label: 'Select', modes: ['normal'] },
@@ -153,13 +162,14 @@ export default function Tabbed({
       if (action.type === 'button' && typeof action.position === 'string') {
         if (action.position === 'top') {
           setMultiline((v) => !v)
-        } else if (action.position === 'top-right') {
+        } else if (action.position === 'bottom-right') {
           if (tabId && !lockedIds.includes(tabId)) onClose(tabId)
         } else if (action.position === 'bottom-left') {
           if (selectionMode === 'selecting') {
             setSelected(new Set())
             setSelectionMode('normal')
           } else if (tabId) {
+            anchorRef.current = tabId
             setSelected((prev) => {
               const next = new Set(prev)
               next.add(tabId)
@@ -183,12 +193,28 @@ export default function Tabbed({
 
   if (tabs.length === 0) return null
 
-  const toggle = (id: string) => setSelected((prev) => {
-    const next = new Set(prev)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    return next
-  })
+  const toggle = (id: string) => {
+    anchorRef.current = id
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const selectRange = (id: string) => {
+    const anchor = anchorRef.current ?? active
+    const anchorIndex = tabs.findIndex((tab) => tab.id === anchor)
+    const targetIndex = tabs.findIndex((tab) => tab.id === id)
+    if (anchorIndex < 0 || targetIndex < 0) {
+      setSelected(new Set([id]))
+      return
+    }
+    const start = Math.min(anchorIndex, targetIndex)
+    const end = Math.max(anchorIndex, targetIndex)
+    setSelected(new Set(tabs.slice(start, end + 1).map((tab) => tab.id)))
+  }
 
   const openFloatMenu = (id: string, target: 'current' | 'selected') => {
     const rect = tabRefs.current[id]?.getBoundingClientRect()
@@ -305,7 +331,11 @@ export default function Tabbed({
             checked={isChecked}
             locked={isLocked}
             onToggle={() => toggle(tab.id)}
-            onActivate={() => onActivate(tab.id)}
+            onActivate={() => {
+              anchorRef.current = tab.id
+              onActivate(tab.id)
+            }}
+            onShiftClick={() => selectRange(tab.id)}
             onMiddleClick={() => onClose(tab.id)}
             menu={menu}
             label={`Select ${tab.ariaLabel ?? tab.label ?? tab.kind}`}
